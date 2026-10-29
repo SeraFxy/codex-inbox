@@ -1782,6 +1782,11 @@ class App:
 
     def board(self):
         with self.lock:
+            try:
+                sync_cmux(self.conn)   # 关掉的 cmux 标签页不等下次扫描：读的是 cmux 自己的文件，没变就只 stat 一下
+                self.conn.commit()
+            except Exception:
+                log("sync_cmux 出错：%s" % traceback.format_exc())
             return build_board(self.conn, self.cfg)
 
     def action(self, body):
