@@ -216,12 +216,19 @@ def fmt_time(ts, now=None):
     return "%d月%d日 %s" % (d.month, d.day, hm)
 
 
+def fmt_hm(ts, now=None):
+    """今天的只写钟点（「14:30」），其余同 fmt_time。"""
+    t = fmt_time(ts, now)
+    return t[3:] if t.startswith("今天 ") else t
+
+
 def fmt_ago(sec):
     sec = max(0, sec)
     if sec < 3600:
         return "%d 分钟" % max(1, int(sec // 60))
     if sec < 86400:
-        return "%d 小时" % int(sec // 3600)
+        h, m = int(sec // 3600), int(sec % 3600 // 60)
+        return "%d 小时 %d 分" % (h, m) if m else "%d 小时" % h
     return "%d 天" % int(sec // 86400)
 
 
@@ -1087,9 +1094,10 @@ def search_sessions(conn, q, limit=50, offset=0):
         ex = session_extras(conn, key, limit=0)
         out.append({"key": key, "title": head["title"], "project": head["project"], "projectKey": head["projectKey"],
                     "color": head["color"], "tool": head["tool"], "toolLabel": head["toolLabel"], "count": n,
-                    "hits": r["hits"], "lastText": fmt_time(r["last_ts"], now), "resume": head["resume"],
+                    "hits": r["hits"], "lastTs": r["last_ts"], "lastText": fmt_time(r["last_ts"], now), "resume": head["resume"],
                     "goal": ex["goal"], "linksTotal": ex["linksTotal"],
-                    "preview": [{"timeText": it["timeText"], "text": it["text"], "images": it["images"]} for it in items]})
+                    "preview": [{"ts": it["ts"], "timeText": it["timeText"], "text": it["text"], "images": it["images"]}
+                                for it in items]})
     first = conn.execute("SELECT MIN(ts), COUNT(*), COUNT(DISTINCT session_key) FROM prompts").fetchone()
     return {"q": q, "total": total, "sessions": out, "all": first[1], "allSessions": first[2],
             "since": fmt_time(first[0], now) if first[0] else ""}
@@ -1148,6 +1156,14 @@ def clean_line(s):
     s = re.sub(r"\[([^\]]+)\]\([^)]*\)", r"\1", s)
     s = re.sub(r"^\s*(#+|[-*>]|\d+[.、)])\s*", "", s)
     s = CLEAN_RE.sub("", s).strip()
+    return s
+
+
+def unquote(s):
+    """整句本身就包在「」或引号里时去掉外层，免得再套一层「」变成「「…」」。"""
+    s = s.strip()
+    if len(s) > 2 and (s[0], s[-1]) in (("「", "」"), ("“", "”"), ('"', '"')) and not any(c in s[1:-1] for c in "「」“”"):
+        return s[1:-1].strip()
     return s
 
 
@@ -1247,17 +1263,15 @@ def make_item(st, now, cfg, ov, sched, titles, goals, ctx):
         if idle > cfg["interrupted_min"] * 60:
             group, kind, sort = "need", "interrupted", 0
             if st.get("last_kind") == "user":
-                ask = clean_line((st.get("last_prompt") or "").splitlines()[0] if st.get("last_prompt") else "")[:40]
-                headline = "你%s 发的消息它没回，可能卡住了：「%s」" % (fmt_time(last, now), ask)
+                ask = unquote(clean_line((st.get("last_prompt") or "").splitlines()[0] if st.get("last_prompt") else ""))[:40].rstrip(" ：:，,")
+                headline = "你 %s 发的消息，它一直没回：「%s」" % (fmt_hm(last, now), ask)
             else:
                 headline = "%s前停在半路，可能已中断，点「打开会话」接着做" % fmt_ago(idle)
         else:
             group, kind = "ai", "ai"
-            ask = clean_line((st.get("last_prompt") or "").splitlines()[0] if st.get("last_prompt") else "")[:40]
-            since = st.get("last_user_ts") or 0
-            dur = "（已跑 %s）" % fmt_ago(now - since) if since and now - since < 86400 else ""
+            ask = unquote(clean_line((st.get("last_prompt") or "").splitlines()[0] if st.get("last_prompt") else ""))[:40].rstrip(" ：:，,")
             prog = excerpt(st.get("progress_text"), 60)
-            headline = ("在做你交代的：「%s」%s" % (ask, dur)) if ask else ("在做：" + prog if prog else "AI 在做")
+            headline = ("在做「%s」" % ask) if ask else ("在做：" + prog if prog else "AI 在做")
     elif sched and sched["status"] == "pending":
         group, kind = "time", "sched"
         headline = "%s 自动唤醒会话：%s" % (fmt_time(sched["at"], now), sched["note"] or sched["prompt"][:60])
@@ -1283,7 +1297,7 @@ def make_item(st, now, cfg, ov, sched, titles, goals, ctx):
                 headline = "%s 到点后：%s" % (fmt_time(at, now), desc)
             else:
                 group, sort = "need", 0
-                headline = "已到点（%s）：%s" % (fmt_time(at, now), desc)
+                headline = "%s 提醒：%s" % (fmt_hm(at, now), desc)
         elif k == "me":
             group = "stale" if idle > stale_sec else "need"
             kind, sort = "me", 2
@@ -1300,7 +1314,7 @@ def make_item(st, now, cfg, ov, sched, titles, goals, ctx):
             kind = "time"
             if at and at <= now:
                 group, sort = "need", 0
-                headline = "已到点（%s）：%s" % (fmt_time(at, now), desc)
+                headline = "%s 提醒：%s" % (fmt_hm(at, now), desc)
             elif at:
                 group, sort = "time", at
                 headline = "%s：%s" % (fmt_time(at, now), desc)
@@ -1345,6 +1359,7 @@ def make_item(st, now, cfg, ov, sched, titles, goals, ctx):
         "headline": headline, "badges": badges, "sort": sort, "idle": idle, "last": last,
         "meta": "最后动静 %s（%s前）" % (fmt_time(last, now), fmt_ago(idle)) if last else "",
         "scheduleId": sched["id"] if sched and sched["status"] == "pending" else None,
+        "since": (st.get("last_user_ts") or 0) if group == "ai" else 0, "snoozed": bool(snoozed and group == "time"),
         "statusKey": "%s|%s" % ((status or {}).get("ts"), (status or {}).get("at")),
         "details": {
             "goal": goal_obj.get("goal") or codex_goal.get("objective") or saved.get("goal") or "",
@@ -1410,6 +1425,8 @@ def build_board(conn, cfg, now=None):
     return {
         "now": now, "nowText": "%d月%d日 周%s %s" % (clock(now).month, clock(now).day, WEEK[clock(now).weekday()], clock(now).strftime("%H:%M")),
         "lastScan": last_scan, "lastScanText": fmt_time(last_scan, now) if last_scan else "从未",
+        "tzOffsetMin": int(clock(now).astimezone(WORK_TZ).utcoffset().total_seconds() // 60),
+        "staleHours": cfg["stale_hours"], "interruptedMin": cfg["interrupted_min"], "windowDays": cfg["window_days"],
         "scanMs": int(meta_get(conn, "last_scan_ms", 0) or 0), "scanIntervalMin": cfg["scan_interval_min"],
         "groups": groups, "hidden": hidden, "digestTime": cfg["digest_time"], "tzText": tz_text(cfg),
     }
@@ -1739,9 +1756,9 @@ class App:
                     fresh.append(it)
             self.conn.commit()
         if len(fresh) == 1:
-            mac_notify("⏰ 到点了：" + fresh[0]["title"], fresh[0]["headline"])
+            mac_notify("到点了 · " + fresh[0]["title"], fresh[0]["headline"])
         elif fresh:
-            mac_notify("⏰ %d 件事到点了" % len(fresh), "；".join(it["title"] for it in fresh))
+            mac_notify("%d 件事到点了" % len(fresh), "；".join(it["title"] for it in fresh))
 
     def maybe_digest(self, now):
         if not self.cfg.get("feishu_open_id"):

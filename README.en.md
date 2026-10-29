@@ -10,13 +10,13 @@ The name only says Codex to keep it short. **Both Codex (desktop app and CLI) an
 
 ## What it does
 
-- **Groups sessions by who they are waiting on**: needs you / AI working / waiting for your sign-off / waiting for a time / waiting on a colleague / to tidy up. The grouping comes from a status line the AI writes at the end of each reply. Sessions without one are still listed, marked as "status unknown".
+- **Groups sessions by who they are waiting on**: four tabs on the left: your turn (needs you, waiting for your sign-off) / AI working / waiting (for a time, on a colleague) / to tidy up. Click a row to see details on the right. Keys: J / K to move, O to open the session, E to mark done, S to snooze, ⌘K to search. The grouping comes from a status line the AI writes at the end of each reply. Sessions without one are still listed, marked as "status unknown".
 - **Spots stuck sessions**: an AI waiting on a question or an approval prompt, a message of yours that has had no reply for 30 minutes, or a turn that stopped halfway and went quiet are all moved to "needs you".
 - **Reminders**: if the status line carries a future time, the session waits under "waiting for a time"; when it is due it moves to "needs you" and a Mac notification pops up. Clicking the notification opens the dashboard. Every card can be snoozed for 15 minutes, 1 hour, 3 hours, until tonight, until tomorrow morning or until next Monday.
 - **"What I said"**: every message you sent to Codex or Claude, grouped by session, with multi-keyword search and per-message copy. Claude Code deletes transcripts after 30 days by default; this keeps a plain-text copy (about 20 MB a year).
 - **Keeps goals, links and images**: Codex goals, the 🎯 goal lines, links the AI gave you in its replies (Feishu docs, merge requests, GitHub and so on; links inside code blocks and command lines are skipped), and images you sent to the AI (deduplicated by content). They stay even if the original session is deleted.
 - **"Done" is not lost**: a session you mark done moves to the bottom and comes back by itself when you talk to it again.
-- **Session names and tags**: a session's name comes from the name you gave it in the cmux terminal sidebar, if any. Project tags can be renamed and given an emoji and a color.
+- **Session names and tags**: a session's name comes from the name you gave it in the cmux terminal sidebar, if any. Project tags can be renamed and given an emoji (they stay gray: color is reserved for status).
 - **Optional features** (they need extra tools; without them only these features are unavailable, everything else works):
   - Scheduled wake-ups: a Claude session running in the cmux terminal can use `ledger schedule` to resume itself at a set time (for example, a release tonight). Needs cmux, with cmux set to allow background programs to control it (see "Known limitations").
   - Daily Feishu digest: with the Feishu CLI `lark-cli` installed and `feishu_open_id` set in the config, a summary is sent to you as a Feishu direct message every morning.
@@ -130,5 +130,5 @@ MIT, see [LICENSE](LICENSE).
 |---|---|
 | `ledger.py` (`ledger` is a shortcut to it) | All the logic, Python standard library only |
 | `board.html` | The dashboard page |
-| `notifier/` | Source of the notifier app (`notify.applescript`), its build script and the robot icon (drawn with Codex image generation) |
+| `notifier/` | Source of the notifier app (`notify.applescript`), its build script and the icon (drawn to the Blink design spec; source in `icon/icon.svg`) |
 | `install.sh` / `uninstall.sh` | Install / remove the login service |
