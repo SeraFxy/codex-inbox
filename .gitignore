@@ -1,0 +1,14 @@
+# 个人数据和运行产物，不进仓库
+data/
+logs/
+backup/
+config.json
+__pycache__/
+*.pyc
+.DS_Store
+notifier/icon/AppIcon.iconset/
+notifier/icon/mask
+notifier/icon/run.log
+notifier/icon/last.txt
+# 通知小程序由 install.sh 在安装目录现编，不进仓库
+notifier/*.app/
