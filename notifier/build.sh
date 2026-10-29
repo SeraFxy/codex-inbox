@@ -18,4 +18,4 @@ rm -f "$APP/Contents/Resources/Assets.car"
 cp "$DIR/icon/AppIcon.icns" "$APP/Contents/Resources/applet.icns"
 codesign --force --deep --sign - "$APP"
 /System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister -f "$APP" || true
-echo "已生成 $APP（$BUNDLE_ID）"
+echo "已生成 ${APP}（${BUNDLE_ID}）"

@@ -21,7 +21,7 @@ done
 if [ -z "$DEST" ]; then
   PLIST="$HOME/Library/LaunchAgents/${CODEX_INBOX_LABEL:-local.codex-inbox}.plist"
   py=$(/usr/libexec/PlistBuddy -c "Print :ProgramArguments:1" "$PLIST" 2>/dev/null || true)
-  [ -n "$py" ] || { echo "找不到开机自启服务（$PLIST），请写明安装目录：./deploy.sh <安装目录>"; exit 1; }
+  [ -n "$py" ] || { echo "找不到开机自启服务（${PLIST}），请写明安装目录：./deploy.sh <安装目录>"; exit 1; }
   DEST=$(dirname "$py")
 fi
 [ -d "$DEST" ] || { echo "安装目录不存在：$DEST"; exit 1; }
@@ -40,7 +40,7 @@ BRANCH=$(git rev-parse --abbrev-ref HEAD)
 
 # 两个会话同时部署时只让一个进来
 LOCK="$DEST/.deploy.lock"
-mkdir "$LOCK" 2>/dev/null || { echo "部署被拦下：另一个部署正在进行（$LOCK）。等它结束；确认没有部署在跑，就删掉这个目录再试。"; exit 1; }
+mkdir "$LOCK" 2>/dev/null || { echo "部署被拦下：另一个部署正在进行（${LOCK}）。等它结束；确认没有部署在跑，就删掉这个目录再试。"; exit 1; }
 trap 'rmdir "$LOCK" 2>/dev/null' EXIT
 
 REC="$DEST/.deployed"
@@ -49,7 +49,7 @@ if [ -f "$REC" ]; then
   if ! git cat-file -e "$prev^{commit}" 2>/dev/null || ! git merge-base --is-ancestor "$prev" HEAD; then
     echo "部署被拦下：安装目录正在跑的版本不在这次要部署的版本里，直接覆盖会冲掉那边的改动。正在跑的是："
     sed 's/^/  /' "$REC"
-    echo "先把它合并进来再部署：git merge $prev（这个仓库里找不到它，就先去上面 source 那个目录提交）。"
+    echo "先把它合并进来再部署：git merge ${prev}（这个仓库里找不到它，就先去上面 source 那个目录提交）。"
     exit 1
   fi
 else
