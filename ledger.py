@@ -46,6 +46,7 @@ CMUX_STATE = os.path.join(HOME, "Library", "Application Support", "cmux", "sessi
 CLAUDE_PROJECTS = os.path.join(HOME, ".claude", "projects")
 CLAUDE_LIVE = os.path.join(HOME, ".claude", "sessions")
 CODEX_HOME = os.path.join(HOME, ".codex")
+CODEX_WORKTREES = os.path.join(CODEX_HOME, "worktrees")
 CMUX = "/Applications/cmux.app/Contents/Resources/bin/cmux"
 SUB_ENV = {
     "HOME": HOME,
@@ -1512,6 +1513,10 @@ def make_item(st, now, cfg, ov, sched, titles, goals, ctx):
         if status and status.get("label") and status["label"] not in ("等你", "等同事", "等时间点", "已定时", "AI在做", "待你确认完成"):
             badges.append(status["label"])
 
+    cwd = st.get("cwd") or ""
+    if st["tool"] == "codex" and cwd.startswith(CODEX_WORKTREES + os.sep) and not os.path.isdir(cwd):
+        # Codex 过一阵会删掉不活跃线程的 worktree，对话记录里不留痕迹；接着做要先在 Codex 里点「Restore worktree」
+        badges.append("worktree 已清理")
     if group in ("unknown", "stale"):
         badges.insert(0, "状态不明" if group == "unknown" else "%s没动静" % fmt_ago(idle))
         group = "backlog"
@@ -1884,6 +1889,11 @@ class App:
 
     def board(self):
         with self.lock:
+            try:
+                sync_cmux(self.conn)   # 关掉的 cmux 标签页不等下次扫描：读的是 cmux 自己的文件，没变就只 stat 一下
+                self.conn.commit()
+            except Exception:
+                log("sync_cmux 出错：%s" % traceback.format_exc())
             return build_board(self.conn, self.cfg)
 
     def action(self, body):
