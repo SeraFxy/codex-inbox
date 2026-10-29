@@ -265,13 +265,10 @@ kbd.k.lg { min-width: 22px; height: 22px; padding: 0 6px; border-radius: 6px; fo
   border: 0; border-radius: 8px; background: transparent; color: var(--bk-ink-1); font-size: 13px; cursor: pointer;
 }
 .menu button:hover, .menu button:focus-visible { background: var(--bk-ground); }
-.menu button span:last-child { font: 12px var(--bk-mono); color: var(--bk-ink-3); }
+.menu button > span:last-child { flex: none; font: 12px var(--bk-mono); color: var(--bk-ink-3); }
 .menu button > span:first-child { display: inline-flex; align-items: center; gap: 6px; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.menu button > span:last-child { flex: none; }
 .menu button.sub { padding-left: 24px; }
 .menu button[aria-current="true"] { font-weight: 600; }
-.menu button span.count { font: 600 11px/18px var(--bk-mono); }
-.menu button span.count.hot { color: #FFFFFF; }
 /* 归到主题：搜索框 + 可滚动的主题列表 */
 .menu.wide { width: 280px; }
 .menu input {
@@ -760,9 +757,9 @@ function railData() {
     })).sort((a, b) => GENERIC.has(a.key) - GENERIC.has(b.key) || a.label.localeCompare(b.label, "zh"))
   };
 }
-function fixScope() {
+function fixScope(d) {
   // 选中的主题被删了、项目里没会话了，就回到「全部」
-  const ok = scope.t === "t" ? !!topicById(scope.id) : scope.t === "p" || scope.t === "n" ? railData().projects.some(p => p.key === scope.p) : scope.t === "all";
+  const ok = scope.t === "t" ? !!topicById(scope.id) : scope.t === "p" || scope.t === "n" ? d.projects.some(p => p.key === scope.p) : scope.t === "all";
   if (!ok) { scope = { t: "all" }; store("ledger.scope", scope); }
 }
 function manual(v) { return !!(state && state.order && (state.order[v] || []).length); }
@@ -946,8 +943,8 @@ function railItem(label, sc, c, cls, drop) {
     '<span class="nm" title="' + esc(label) + '">' + esc(label) + "</span>" + cntHtml(c) + "</button>";
 }
 function renderRail() {
-  fixScope();
   const d = railData();
+  fixScope(d);
   document.getElementById("split").classList.toggle("railx", !railOpen);
   document.getElementById("scopebtn").innerHTML = "<span>" + esc(scopeName(scope)) + "</span>" + ico("down", 14);
   let html = '<div class="rhead"><span>项目与主题</span>' +
@@ -1013,7 +1010,7 @@ function openTopics(el, key) {
   q.addEventListener("input", () => { picker.q = q.value; pickerList(); });
   q.addEventListener("keydown", e => {
     const first = document.querySelector("#tp-list button");
-    if (e.key === "Enter" && first) { e.preventDefault(); first.click(); }
+    if (e.key === "Enter" && first && q.value.trim()) { e.preventDefault(); first.click(); }   // 空着按回车不乱归
     else if (e.key === "ArrowDown" && first) { e.preventDefault(); first.focus(); }
   });
   pickerList();
@@ -1584,7 +1581,7 @@ document.addEventListener("keydown", e => {
   if (tab !== "board" || !state) return;
   const k = e.key.toLowerCase(), it = findItem(selKey);
   // [ 收起或展开左栏：按键位认，按着 ⇧ 或开着中文输入法（出来的是 { 或 【）也算
-  if (e.code === "BracketLeft" || (e.key.length === 1 && "[{【「".includes(e.key))) { e.preventDefault(); toggleRail(); return; }
+  if ((e.code === "BracketLeft" || (e.key.length === 1 && "[{【「".includes(e.key))) && !e.target.closest("#menu")) { e.preventDefault(); toggleRail(); return; }
   if ((e.key === "Enter" || e.key === " ") && e.target.classList.contains("row")) { e.preventDefault(); pick(e.target.dataset.key); return; }
   if (e.target.closest("#menu, button, a")) return;
   if (e.shiftKey && (k === "j" || k === "k")) { if (view !== "hidden") shift(k === "j" ? 1 : -1); return; }

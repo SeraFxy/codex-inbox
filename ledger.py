@@ -434,24 +434,40 @@ def note_links(st, ts, text):
 HASHTAG_RE = re.compile(r"(?<![A-Za-z0-9_/&#.:?=@-])#([^\s#]{1,24})(#?)")
 TAG_STOP_RE = re.compile(r"[，。、,.;；:：!！?？()（）\[\]【】{}<>《》\"'“”‘’「」『』|｜/\\~～`*]")
 HEX_RE = re.compile(r"[0-9a-fA-F]{3}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8}")
+CODE_RE = re.compile(r"```.*?```|`[^`\n]*`", re.S)
+
+
+def is_color(name):
+    # #fff、#CCFB5B 是色值；#add、#cafe 这种全是字母的英文词不算
+    return bool(HEX_RE.fullmatch(name)) and (any(c.isdigit() for c in name) or len(set(name.lower())) == 1)
 
 
 def note_hashtag(st, ts, text):
-    """记下这条消息里最后一个 #主题，以最后写的为准。exact = 写得完整，认不出时可以新建主题：#评测#，或前后都是空格（或在开头、结尾）的 #评测。
-    中文里连着写的（看下#评测的进度、#评测把…）只拿来认已有的主题，免得建出一堆半句话的主题。到看板上再对名字，见 topic_by_tag。"""
-    tag = None
-    for m in HASHTAG_RE.finditer(text or ""):
+    """记下消息里的 #主题（最近 5 个），看板上从最近写的往前找第一个认得出的，见 topic_by_tag。kind：
+    new = 认不出时可以新建主题：#评测#，或在消息开头、结尾，前后空格隔开的 #评测；
+    name = 夹在消息中间、前后空格隔开的，只认同名的已有主题，贴进来的代码、聊天记录里的 #xxx 不会建出一堆主题；
+    prefix = 中文里连着写的（看下#评测的进度），只认名字是它开头的已有主题。代码块里的不算。"""
+    text = CODE_RE.sub(" ", text or "")
+    tags = st.get("hashtags") or []
+    for m in HASHTAG_RE.finditer(text):
         raw = m.group(1)
         stop = TAG_STOP_RE.search(raw)
         name = raw[:stop.start()] if stop else raw
-        if not name or name.isdigit() or HEX_RE.fullmatch(name):
+        if not name or name.isdigit() or is_color(name):
             continue
         a, b = m.start(), m.end(1)
         spaced = (a == 0 or text[a - 1].isspace()) and not stop and (b == len(text) or text[b].isspace())
-        closed = bool(m.group(2)) and not stop
-        tag = {"name": name, "exact": closed or (spaced and len(name) <= 12), "ts": ts}
-    if tag:
-        st["hashtag"] = tag
+        nxt = text[b:].lstrip(" \t")[:1]
+        if m.group(2) and not stop:
+            kind = "new"
+        elif spaced and len(name) <= 12:
+            edge = not text[:a].strip() or not text[b:].strip()
+            kind = "new" if edge and not (nxt and nxt in "{(<=;:") else "name"   # #include <x>、#main { 是代码
+        else:
+            kind = "prefix"
+        tags = [t for t in tags if t["name"] != name] + [{"name": name, "kind": kind, "ts": ts}]
+    if tags:
+        st["hashtags"] = tags[-5:]
 
 
 def save_image(b64, mime):
@@ -1079,6 +1095,14 @@ def find_topic(rows, project, name):
     return next((r for r in rows if r["project"] == project and name in topic_names(r)), None)
 
 
+def insert_topic(conn, project, name, now):
+    """新建主题。看板服务和命令行（ledger digest 等）可能同时建同名的，所以不报错，用已有的那条。"""
+    conn.execute("INSERT OR IGNORE INTO topics (project, name, aliases, created, deleted) VALUES (?, ?, '[]', ?, 0)", (project, name, now))
+    r = dict(conn.execute("SELECT * FROM topics WHERE project=? AND name=?", (project, name)).fetchone())
+    r["aliases"] = json.loads(r["aliases"] or "[]")
+    return r
+
+
 def ensure_topic(conn, project, name, now):
     """按名字找这个项目的主题（含改名前的旧名），删掉的恢复，没有就新建。返回 id。"""
     hit = find_topic(load_topics(conn), project, name)
@@ -1086,30 +1110,33 @@ def ensure_topic(conn, project, name, now):
         if hit["deleted"]:
             conn.execute("UPDATE topics SET deleted=0 WHERE id=?", (hit["id"],))
         return hit["id"]
-    return conn.execute("INSERT INTO topics (project, name, aliases, created, deleted) VALUES (?, ?, '[]', ?, 0)",
-                        (project, name, now)).lastrowid
+    return insert_topic(conn, project, name, now)["id"]
 
 
-def topic_by_tag(conn, rows, project, tag, now):
-    """#标签 对到主题：先在本项目里认全名（含改名前的旧名），再认前缀（中文连着写的 #评测把…），再认别的项目里唯一同名的；
-    都认不出、标签又写得完整时，在本项目下新建一个。认出来的是删掉的主题就算未归类，标签不会把它重新建出来。"""
-    name = tag["name"].lower()
-    hit = find_topic(rows, project, name)
-    if hit is None:
-        pre = [(len(n), r) for r in rows if r["project"] == project for n in topic_names(r) if name.startswith(n)]
-        hit = max(pre, key=lambda x: x[0])[1] if pre else None
-    if hit is None:
-        other = [r for r in rows if r["project"] != project and not r["deleted"] and name in topic_names(r)]
-        hit = other[0] if len(other) == 1 else None
-    if hit is not None:
-        return None if hit["deleted"] else hit
-    if not tag.get("exact"):
-        return None
-    hit = {"project": project, "name": tag["name"], "aliases": [], "created": now, "deleted": 0}
-    hit["id"] = conn.execute("INSERT INTO topics (project, name, aliases, created, deleted) VALUES (?, ?, '[]', ?, 0)",
-                             (project, tag["name"], now)).lastrowid
-    rows.append(hit)
-    return hit
+GENERIC_PROJECTS = ("桌面", "主目录", "其他")   # 杂项目录：在这里开的会话常常是别的项目的事
+
+
+def topic_by_tag(conn, rows, project, tags, now):
+    """消息里的 #标签 对到主题：从最近写的往前找，用第一个认得出的（各种 kind 见 note_hashtag），认不出的随口一提不会把会话挤出原来的主题。
+    先认本项目里同名的（含改名前的旧名）；中文连着写的再认名字是它开头的；会话在桌面这类杂项目录时，再认别的项目里唯一同名的。
+    都认不出、标签又写得完整（kind=new）时，在本项目下新建一个。认出来的是删掉的主题就算未归类，标签不会把它重新建出来。"""
+    for tag in reversed(tags):
+        name = tag["name"].lower()
+        hit = find_topic(rows, project, name)
+        if hit is None and tag["kind"] == "prefix":
+            pre = [(len(n), r) for r in rows if r["project"] == project and not r["deleted"]
+                   for n in topic_names(r) if len(n) >= 2 and name.startswith(n)]
+            hit = max(pre, key=lambda x: x[0])[1] if pre else None
+        if hit is None and project in GENERIC_PROJECTS:
+            other = [r for r in rows if not r["deleted"] and name in topic_names(r)]
+            hit = other[0] if len(other) == 1 else None
+        if hit is not None:
+            return None if hit["deleted"] else hit
+        if tag["kind"] == "new":
+            hit = insert_topic(conn, project, tag["name"], now)
+            rows.append(hit)
+            return hit
+    return None
 
 
 def attach_images(conn, items):
@@ -1597,7 +1624,7 @@ def build_board(conn, cfg, now=None):
         it = make_item(st, now, cfg, overrides.get(key), scheds.get(key), titles, goals, ctx)
         if it is None:
             continue
-        hashtags[key] = st.get("hashtag")
+        hashtags[key] = st.get("hashtags")
         if it["group"] == "hidden":
             if now - it["last"] < cfg["window_days"] * 86400:
                 hidden.append(it)
@@ -1608,11 +1635,11 @@ def build_board(conn, cfg, now=None):
     by_id = {t["id"]: t for t in topics}
     pinned = {r["session_key"]: r["topic_id"] for r in conn.execute("SELECT session_key, topic_id FROM session_topics")}
     for it in items + hidden:
-        tag = hashtags.get(it["key"])
+        tags = hashtags.get(it["key"])
         if it["key"] in pinned:
             t = by_id.get(pinned[it["key"]])
         else:
-            t = topic_by_tag(conn, topics, it["projectKey"], tag, now) if tag else None
+            t = topic_by_tag(conn, topics, it["projectKey"], tags, now) if tags else None
         it["topic"] = {"id": t["id"], "name": t["name"], "project": t["project"]} if t and not t["deleted"] else None
         it["topicPinned"] = it["key"] in pinned
     if len(topics) > known:
