@@ -117,6 +117,26 @@ section { margin-bottom: 30px; }
 .status-pill { display: inline-block; margin-left: 6px; font-size: 11px; padding: 0 6px; border-radius: 5px; background: var(--card); color: var(--sub); }
 .showmore { margin-top: 2px; }
 
+/* 待你决定 */
+.decide { margin-top: 12px; border: 1px solid var(--line2); border-radius: 12px; overflow: hidden; }
+.decide-head { display: flex; justify-content: space-between; align-items: baseline; padding: 10px 14px 8px; font-size: 13px; font-weight: 600; }
+.decide-head span { font-weight: 400; color: var(--faint); font-size: 12px; font-variant-numeric: tabular-nums; }
+.dq { display: grid; grid-template-columns: 18px 1fr auto; gap: 6px 10px; align-items: center; padding: 8px 14px; border-top: 1px solid var(--line); }
+.dq .n { color: var(--faint); font-size: 12px; font-variant-numeric: tabular-nums; }
+.dq .q { word-break: break-word; }
+.dq .opts { display: flex; gap: 4px; flex-wrap: wrap; justify-content: flex-end; }
+.btn.on, .btn.on:hover { background: var(--btn); border-color: var(--btn); color: var(--btn-text); }
+.reply { padding: 10px 14px 12px; border-top: 1px solid var(--line); background: var(--soft); }
+.reply .lab { color: var(--faint); font-size: 12px; margin-bottom: 4px; }
+.rpre { white-space: pre-wrap; word-break: break-word; font-size: 13px; color: var(--sub); margin-bottom: 8px; }
+.reply textarea {
+  display: block; width: 100%; min-height: 56px; resize: vertical; font: inherit; font-size: 13px; padding: 7px 10px;
+  border: 1px solid var(--line2); border-radius: 8px; background: var(--card); color: var(--text); outline: none;
+}
+.reply textarea:focus { border-color: var(--accent); }
+.reply-foot { display: flex; align-items: center; gap: 6px; margin-top: 8px; }
+.reply-foot .rhint { margin-right: auto; color: var(--faint); font-size: 12px; }
+
 /* 我说过的话 */
 .searchbox { position: relative; margin-bottom: 8px; }
 .searchbox svg { position: absolute; left: 14px; top: 50%; transform: translateY(-50%); color: var(--faint); }
@@ -186,6 +206,8 @@ mark { background: var(--mark); color: inherit; border-radius: 3px; padding: 0 1
   .actions { width: 100%; margin-top: 6px; }
   .details dl { grid-template-columns: 1fr; gap: 2px; }
   .details dd { margin-bottom: 6px; }
+  .dq { grid-template-columns: 18px 1fr; }
+  .dq .opts { grid-column: 2; justify-content: flex-start; }
   .hline { grid-template-columns: 1fr; }
 }
 </style>
@@ -245,12 +267,13 @@ function esc(s) {
 function plain(title) { return title.replace(/^\S+\s/, ""); }  // 去掉分组名前面的 emoji
 function clip(text) { clips[++clipN] = text; return clipN; }
 function selecting() { return !!String(window.getSelection()); }
+function typing() { const el = document.activeElement; return !!(el && el.matches(".reply textarea")); }
 
 async function load(refresh) {
   try {
     const r = await fetch("/api/state" + (refresh ? "?refresh=" + refresh : ""), { cache: "no-store" });
     state = await r.json();
-    if (selecting()) return;  // 正在选中文字时先不重画，下次刷新再画
+    if (selecting() || typing()) return;  // 正在选中文字或写回复时先不重画，下次刷新再画
     render();
   } catch (e) {
     document.getElementById("sync").innerHTML = '<span class="bad">连不上本机服务（launchd 会自动拉起，稍等再刷新）</span>';
@@ -358,7 +381,7 @@ function card(it, gid) {
     '</div><div class="actions">' + actions + menu + "</div></div>" +
     '<div class="headline" onclick="toggleCard(\'' + k + '\')">' + esc(it.headline) + "</div>" +
     '<div class="meta" onclick="toggleCard(\'' + k + '\')">' + esc(bits.filter(Boolean).join(" · ")) + "</div>" +
-    (openKey === it.key ? details(it, gid) : "") + "</div>";
+    (openKey === it.key ? (gid !== "hidden" ? decideBox(it) : "") + details(it, gid) : "") + "</div>";
 }
 
 function details(it, gid) {
@@ -394,6 +417,66 @@ function bulkUntrack(gid) {
 }
 async function copyClip(id) {
   try { await navigator.clipboard.writeText(clips[id]); toast("已复制"); } catch (e) { toast("复制失败，请手动选中"); }
+}
+
+// ---------------- 待你决定：选项拼成一条回复，只复制、打开会话，由你自己粘贴发出去（不替你发，见 AGENTS.md 设计原则）
+const picks = {};  // 会话 key → { sig: 这一轮的选项, sel: { 第几件: 第几个选项 }, note: 补充 }
+function findItem(key) {
+  for (const g of state.groups) { const it = g.items.find(x => x.key === key); if (it) return it; }
+  return null;
+}
+function pickOf(it) {
+  const sig = JSON.stringify(it.details.decisions);
+  if (!picks[it.key] || picks[it.key].sig !== sig) picks[it.key] = { sig, sel: {}, note: "" };  // AI 又回了一轮，旧的选择作废
+  return picks[it.key];
+}
+function replyLines(it) {
+  const p = pickOf(it);
+  return it.details.decisions.map((d, i) => (i + 1) + ". " + d.q.replace(/[？?：:。.\s]+$/, "") + "：" +
+    (p.sel[i] != null ? d.opts[p.sel[i]] : !d.opts.length && p.note.trim() ? "见下面" : "待定")).join("\n");
+}
+function replyText(it) {
+  const note = pickOf(it).note.trim();
+  return replyLines(it) + (note ? "\n\n" + note : "");
+}
+function decideBox(it) {
+  const ds = it.details.decisions || [];
+  if (!ds.length) return "";
+  const p = pickOf(it), k = esc(it.key);
+  const chosen = Object.keys(p.sel).length, left = ds.filter((d, i) => d.opts.length && p.sel[i] == null).length;
+  return '<div class="decide"><div class="decide-head">待你决定 · ' + ds.length + "<span>已选 " + chosen + " / " + ds.length + "</span></div>" +
+    ds.map((d, i) => '<div class="dq"><span class="n">' + (i + 1) + '</span><span class="q">' + esc(d.q) + '</span><span class="opts">' +
+      d.opts.map((o, j) => btn(esc(o), "pick('" + k + "'," + i + "," + j + ")", "sm" + (p.sel[i] === j ? " on" : ""))).join("") +
+      "</span></div>").join("") +
+    '<div class="reply"><div class="lab">会复制成这样</div><div class="rpre">' + esc(replyLines(it)) + "</div>" +
+    '<textarea placeholder="还想补充的写在这里，会接在后面（可不填）" oninput="setNote(\'' + k + '\',this)">' + esc(p.note) + "</textarea>" +
+    '<div class="reply-foot"><span class="rhint">' + (left ? "还有 " + left + " 件没选，会写成「待定」" : "都选好了") + "</span>" +
+    btn("复制", "copyReply('" + k + "')", "sm") +
+    btn("复制并打开会话 →", "copyReply('" + k + "',true)", "sm primary", "复制到剪贴板并打开这个会话，你在输入框按 ⌘V 再回车") +
+    "</div></div></div>";
+}
+function pick(key, i, j) {
+  const it = findItem(key);
+  if (!it) return;
+  const p = pickOf(it);
+  if (p.sel[i] === j) delete p.sel[i]; else p.sel[i] = j;
+  render();
+}
+function setNote(key, el) {
+  const it = findItem(key);
+  if (!it) return;
+  pickOf(it).note = el.value;
+  el.closest(".decide").querySelector(".rpre").textContent = replyLines(it);
+}
+async function copyReply(key, open) {
+  const it = findItem(key);
+  if (!it) return;
+  try { await navigator.clipboard.writeText(replyText(it)); } catch (e) { toast("复制失败，请手动选中"); return; }
+  if (!open) return toast("已复制");
+  try {
+    const res = await post("open", key);
+    toast(res.ok ? "已复制。" + res.message + "，在输入框按 ⌘V 再回车" : "已复制，但没打开会话：" + (res.message || "没成功"));
+  } catch (e) { toast("已复制，但没打开会话：本机服务没响应"); }
 }
 
 // ---------------- 标签：改名字、颜色、加 emoji

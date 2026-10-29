@@ -13,6 +13,7 @@ The name only says Codex to keep it short. **Both Codex (desktop app and CLI) an
 - **Groups sessions by who they are waiting on**: needs you / AI working / waiting for your sign-off / waiting for a time / waiting on a colleague / to tidy up. The grouping comes from a status line the AI writes at the end of each reply. Sessions without one are still listed, marked as "status unknown".
 - **Spots stuck sessions**: an AI waiting on a question or an approval prompt, a message of yours that has had no reply for 30 minutes, or a turn that stopped halfway and went quiet are all moved to "needs you".
 - **Reminders**: if the status line carries a future time, the session waits under "waiting for a time"; when it is due it moves to "needs you" and a Mac notification pops up. Clicking the notification opens the dashboard. Every card can be snoozed for 15 minutes, 1 hour, 3 hours, until tonight, until tomorrow morning or until next Monday.
+- **Decisions waiting on you**: when the AI lists what it needs you to decide as `❓ question｜option｜option` lines, the expanded card shows each one with option buttons and builds a single reply from your picks (unpicked ones are written as 「待定」, "undecided", and you can add a note). The 「复制并打开会话」 (copy and open) button copies the reply and opens the session; you paste it with ⌘V and press Enter yourself. The dashboard never sends for you: every message makes the AI re-read the whole conversation, so you decide when to send.
 - **"What I said"**: every message you sent to Codex or Claude, grouped by session, with multi-keyword search and per-message copy. Claude Code deletes transcripts after 30 days by default; this keeps a plain-text copy (about 20 MB a year).
 - **Keeps goals, links and images**: Codex goals, the 🎯 goal lines, links the AI gave you in its replies (Feishu docs, merge requests, GitHub and so on; links inside code blocks and command lines are skipped), and images you sent to the AI (deduplicated by content). They stay even if the original session is deleted.
 - **"Done" is not lost**: a session you mark done moves to the bottom and comes back by itself when you talk to it again.
@@ -56,6 +57,9 @@ Use exactly one of these six status words, in Chinese:
 Write times as `YYYY-MM-DD HH:MM` in the same time zone as the dashboard. Do not use 📌 or 🎯 anywhere else in the reply.
 In the first reply of a task, and whenever the goal or the completion criteria change, add this line above the 📌 line:
 `🎯 目标：<one-line goal>｜完成标准：<what counts as done>`
+When you need me to decide things, put one line per decision above the 📌 line (not inside a code block):
+`❓ <what I need to decide>｜<option 1>｜<option 2>`
+Keep each option short enough to stand as my answer, at most 6; leave them out when there are no fixed choices. These lines are the list itself; don't repeat it in the body. I will answer one per line as `1. <decision>：<my pick>`, with 「待定」 for anything I haven't decided.
 ```
 
 For Claude Code sessions to use 已定时, also tell them to schedule the wake-up with this command (replace the path with your install directory):
