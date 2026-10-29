@@ -1422,7 +1422,7 @@ def cmux(*args, timeout=10):
 
 
 _surface_cache = {"at": 0, "map": {}}
-CMUX_DENIED = "cmux 目前不允许后台程序控制它，所以没法替你跳转（设置见看板说明）"
+CMUX_DENIED = "cmux 不允许看板控制它，没法替你跳转：到 cmux 设置 → 自动化，把「套接字控制模式」改成「密码模式」并设一个套接字密码"
 
 
 def cmux_surfaces():

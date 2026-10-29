@@ -551,7 +551,7 @@ document.addEventListener("click", e => {
 });
 document.addEventListener("keydown", e => { if (e.key === "Escape" && tagEdit) closeTag(); });
 document.addEventListener("visibilitychange", () => { if (!document.hidden) load("1"); });
-setInterval(() => { if (!document.hidden && !tagEdit) load(); }, 60000);
+setInterval(() => { if (!document.hidden && !tagEdit) load("1"); }, 60000);  // 顺带读新记录，服务端一分钟最多读一次
 load("1");
 setTab(tab);
 </script>

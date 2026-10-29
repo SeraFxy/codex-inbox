@@ -71,7 +71,7 @@ The first install copies `config.example.json` to `config.json`. Run `install.sh
 | Key | Default | Meaning |
 |---|---|---|
 | `port` | `47800` | Dashboard port |
-| `scan_interval_min` | `15` | How often the service reads transcripts in the background; opening the dashboard also triggers a read |
+| `scan_interval_min` | `15` | How often the service reads transcripts in the background; while the dashboard page is open it also reads once a minute |
 | `window_days` | `14` | Only sessions active within this many days are shown |
 | `stale_hours` | `48` | Sessions quiet for longer than this go to "to tidy up" |
 | `interrupted_min` | `30` | How long a turn can sit stopped halfway before it counts as possibly stuck |
@@ -116,7 +116,7 @@ The Codex side reads Codex's internal files, whose names carry a version number:
 ## Known limitations
 
 - Only sessions active within the last 14 days are shown. Subagents, review agents, Codex automation threads and `claude -p` runs are left out.
-- "Open session": Codex sessions open through `codex://threads/<id>`. Claude sessions jump to their cmux window, but by default cmux only accepts control from programs started inside cmux, so the login service is refused; the dashboard then shows a hint and does not start a new session for you. To allow it, switch cmux's socket access to password mode in the cmux settings. Scheduled wake-ups have the same limitation.
+- "Open session": Codex sessions open through `codex://threads/<id>`. Claude sessions jump to their cmux window, but by default cmux only accepts control from programs started in cmux terminals, so the login service is refused; the dashboard then shows a hint and does not start a new session for you. Scheduled wake-ups have the same limitation. To allow it, switch cmux to password mode: add `"automation": {"socketControlMode": "password", "socketPassword": "<a long random password>"}` to `~/.config/cmux/cmux.json` and run `cmux reload-config` (or change "Socket Control Mode" and set a password under cmux Settings → Automation). The cmux CLI reads this password on its own, so the dashboard needs no extra configuration; programs running in cmux terminals are not affected.
 - While the Mac sleeps the service sleeps too; notifications and wake-ups catch up after it wakes. Wake-ups late by more than `wake_expire_hours` are skipped.
 - The dashboard's read endpoints have no password. Web pages cannot read them (the server checks the Host and Origin headers), but any program on this Mac can read the session list, your messages and images. Changes (marking done, snoozing, editing tags and so on) require a token. Programs running under your own account could read the database in `data/` directly anyway, so a password would not stop them; if other people have accounts on this Mac, keep this in mind.
 
