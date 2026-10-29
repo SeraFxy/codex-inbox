@@ -99,6 +99,10 @@ CREATE TABLE IF NOT EXISTS goals (session_key TEXT PRIMARY KEY, goal TEXT, crite
 CREATE TABLE IF NOT EXISTS links (session_key TEXT, url TEXT, label TEXT, ts REAL, PRIMARY KEY (session_key, url));
 CREATE TABLE IF NOT EXISTS images (session_key TEXT, sha TEXT, ts REAL, file TEXT, bytes INTEGER, PRIMARY KEY (session_key, sha));
 CREATE INDEX IF NOT EXISTS images_session ON images(session_key, ts);
+CREATE TABLE IF NOT EXISTS topics (id INTEGER PRIMARY KEY AUTOINCREMENT, project TEXT, name TEXT, aliases TEXT DEFAULT '[]',
+  created REAL, deleted INTEGER DEFAULT 0);
+CREATE UNIQUE INDEX IF NOT EXISTS topics_name ON topics(project, name);
+CREATE TABLE IF NOT EXISTS session_topics (session_key TEXT PRIMARY KEY, topic_id INTEGER, at REAL);
 """
 
 
@@ -425,6 +429,30 @@ def note_links(st, ts, text):
             st.setdefault("new_links", []).extend([ts, u, l] for u, l in found)
 
 
+# 你在消息里写「#主题」，会话就归到这个主题。# 前面紧跟字母数字或网址符号的不算（C#、网址锚点），纯数字（[Image #9]）和色值也不算
+HASHTAG_RE = re.compile(r"(?<![A-Za-z0-9_/&#.:?=@-])#([^\s#]{1,24})(#?)")
+TAG_STOP_RE = re.compile(r"[，。、,.;；:：!！?？()（）\[\]【】{}<>《》\"'“”‘’「」『』|｜/\\~～`*]")
+HEX_RE = re.compile(r"[0-9a-fA-F]{3}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8}")
+
+
+def note_hashtag(st, ts, text):
+    """记下这条消息里最后一个 #主题，以最后写的为准。exact = 写得完整，认不出时可以新建主题：#评测#，或前后都是空格（或在开头、结尾）的 #评测。
+    中文里连着写的（看下#评测的进度、#评测把…）只拿来认已有的主题，免得建出一堆半句话的主题。到看板上再对名字，见 topic_by_tag。"""
+    tag = None
+    for m in HASHTAG_RE.finditer(text or ""):
+        raw = m.group(1)
+        stop = TAG_STOP_RE.search(raw)
+        name = raw[:stop.start()] if stop else raw
+        if not name or name.isdigit() or HEX_RE.fullmatch(name):
+            continue
+        a, b = m.start(), m.end(1)
+        spaced = (a == 0 or text[a - 1].isspace()) and not stop and (b == len(text) or text[b].isspace())
+        closed = bool(m.group(2)) and not stop
+        tag = {"name": name, "exact": closed or (spaced and len(name) <= 12), "ts": ts}
+    if tag:
+        st["hashtag"] = tag
+
+
 def save_image(b64, mime):
     """按内容去重存一份原图，返回 (sha1, 文件名, 字节数)。"""
     try:
@@ -600,6 +628,7 @@ def claude_line(st, line):
         if not st["first_prompt"]:
             st["first_prompt"] = text[:500]
         st["last_prompt"] = text[:500]
+        note_hashtag(st, ts, text)
         st["last_user_ts"] = ts
         st["turn"] = "running"
         st["last_kind"] = "user"
@@ -674,6 +703,7 @@ def codex_line(st, line):
             if not st["first_prompt"]:
                 st["first_prompt"] = text[:500]
             st["last_prompt"] = text[:500]
+            note_hashtag(st, ts, text)
         elif p.get("role") == "assistant" and text.strip():
             st["progress_text"] = text[-1500:]
             note_links(st, ts, text)
@@ -1019,6 +1049,66 @@ def tag_map(conn):
 def tag_of(tags, project):
     label, color = tags.get(project, (None, None))
     return label or project, color or color_of(project)
+
+
+# ---------------------------------------------------------------- 主题：项目下面按事情分组，你手动归的永远优先，其次看消息里的 #主题
+
+def topic_name(s):
+    return re.sub(r"\s+", " ", str(s or "")).strip().lstrip("#").strip()[:24]
+
+
+def load_topics(conn):
+    rows = []
+    for r in conn.execute("SELECT * FROM topics ORDER BY id"):
+        r = dict(r)
+        try:
+            r["aliases"] = json.loads(r["aliases"] or "[]")
+        except ValueError:
+            r["aliases"] = []
+        rows.append(r)
+    return rows
+
+
+def topic_names(r):
+    return [n.lower() for n in [r["name"]] + r["aliases"]]
+
+
+def find_topic(rows, project, name):
+    name = name.lower()
+    return next((r for r in rows if r["project"] == project and name in topic_names(r)), None)
+
+
+def ensure_topic(conn, project, name, now):
+    """按名字找这个项目的主题（含改名前的旧名），删掉的恢复，没有就新建。返回 id。"""
+    hit = find_topic(load_topics(conn), project, name)
+    if hit:
+        if hit["deleted"]:
+            conn.execute("UPDATE topics SET deleted=0 WHERE id=?", (hit["id"],))
+        return hit["id"]
+    return conn.execute("INSERT INTO topics (project, name, aliases, created, deleted) VALUES (?, ?, '[]', ?, 0)",
+                        (project, name, now)).lastrowid
+
+
+def topic_by_tag(conn, rows, project, tag, now):
+    """#标签 对到主题：先在本项目里认全名（含改名前的旧名），再认前缀（中文连着写的 #评测把…），再认别的项目里唯一同名的；
+    都认不出、标签又写得完整时，在本项目下新建一个。认出来的是删掉的主题就算未归类，标签不会把它重新建出来。"""
+    name = tag["name"].lower()
+    hit = find_topic(rows, project, name)
+    if hit is None:
+        pre = [(len(n), r) for r in rows if r["project"] == project for n in topic_names(r) if name.startswith(n)]
+        hit = max(pre, key=lambda x: x[0])[1] if pre else None
+    if hit is None:
+        other = [r for r in rows if r["project"] != project and not r["deleted"] and name in topic_names(r)]
+        hit = other[0] if len(other) == 1 else None
+    if hit is not None:
+        return None if hit["deleted"] else hit
+    if not tag.get("exact"):
+        return None
+    hit = {"project": project, "name": tag["name"], "aliases": [], "created": now, "deleted": 0}
+    hit["id"] = conn.execute("INSERT INTO topics (project, name, aliases, created, deleted) VALUES (?, ?, '[]', ?, 0)",
+                             (project, tag["name"], now)).lastrowid
+    rows.append(hit)
+    return hit
 
 
 def attach_images(conn, items):
@@ -1488,7 +1578,7 @@ def build_board(conn, cfg, now=None):
         cur = scheds.get(r["session_key"])
         if cur is None or (r["status"] == "pending" and cur["status"] != "pending"):
             scheds[r["session_key"]] = r
-    items, hidden = [], []
+    items, hidden, hashtags = [], [], {}
     ctx = {"names": name_map(conn), "tags": tag_map(conn), "links": {}, "live": claude_live(),
            "goals": {r["session_key"]: dict(r) for r in conn.execute("SELECT * FROM goals")}}
     for r in conn.execute("SELECT session_key, url, label, ts FROM links WHERE ts >= ? ORDER BY ts DESC", (now - 30 * 86400,)):
@@ -1502,11 +1592,26 @@ def build_board(conn, cfg, now=None):
         it = make_item(st, now, cfg, overrides.get(key), scheds.get(key), titles, goals, ctx)
         if it is None:
             continue
+        hashtags[key] = st.get("hashtag")
         if it["group"] == "hidden":
             if now - it["last"] < cfg["window_days"] * 86400:
                 hidden.append(it)
         else:
             items.append(it)
+    topics = load_topics(conn)
+    known = len(topics)
+    by_id = {t["id"]: t for t in topics}
+    pinned = {r["session_key"]: r["topic_id"] for r in conn.execute("SELECT session_key, topic_id FROM session_topics")}
+    for it in items + hidden:
+        tag = hashtags.get(it["key"])
+        if it["key"] in pinned:
+            t = by_id.get(pinned[it["key"]])
+        else:
+            t = topic_by_tag(conn, topics, it["projectKey"], tag, now) if tag else None
+        it["topic"] = {"id": t["id"], "name": t["name"], "project": t["project"]} if t and not t["deleted"] else None
+        it["topicPinned"] = it["key"] in pinned
+    if len(topics) > known:
+        conn.commit()
     groups = []
     for gid, title, hint in GROUPS:
         g = [it for it in items if it["group"] == gid]
@@ -1526,6 +1631,8 @@ def build_board(conn, cfg, now=None):
         "staleHours": cfg["stale_hours"], "interruptedMin": cfg["interrupted_min"], "windowDays": cfg["window_days"],
         "scanMs": int(meta_get(conn, "last_scan_ms", 0) or 0), "scanIntervalMin": cfg["scan_interval_min"],
         "groups": groups, "hidden": hidden, "order": load_order(conn), "digestTime": cfg["digest_time"], "tzText": tz_text(cfg),
+        "topics": [{"id": t["id"], "name": t["name"], "project": t["project"], "projectLabel": tag_of(ctx["tags"], t["project"])[0]}
+                   for t in topics if not t["deleted"]],
     }
 
 
@@ -1795,6 +1902,47 @@ class App:
                 c.execute("INSERT OR REPLACE INTO overrides (key, action, until_ts, at) VALUES (?, 'snooze', ?, ?)", (key, until, now))
                 c.commit()
                 return True, "已推迟到 " + fmt_time(until, now)
+            if action == "topic" and isinstance(arg, dict):
+                # 归到主题：{id} 归进去（id 为空 = 移出主题），{name, project} 先找或新建再归，{auto} 删掉手动的、改回按 #主题 自动归
+                if arg.get("auto"):
+                    c.execute("DELETE FROM session_topics WHERE session_key=?", (key,))
+                    c.commit()
+                    return True, "已改回按 #主题 自动归"
+                tid, name = arg.get("id"), topic_name(arg.get("name"))
+                if name:
+                    if not arg.get("project"):
+                        return False, "没说是哪个项目的主题"
+                    tid = ensure_topic(c, str(arg["project"]), name, now)
+                row = c.execute("SELECT name FROM topics WHERE id=? AND deleted=0", (tid,)).fetchone() if tid is not None else None
+                if tid is not None and not row:
+                    return False, "这个主题已经删掉了"
+                if key:
+                    c.execute("INSERT OR REPLACE INTO session_topics (session_key, topic_id, at) VALUES (?, ?, ?)", (key, tid, now))
+                c.commit()
+                return True, ("已归到「%s」" % row["name"] if key else "已新建主题「%s」" % row["name"]) if row else "已移出主题"
+            if action == "topic_edit" and isinstance(arg, dict):
+                row = c.execute("SELECT * FROM topics WHERE id=? AND deleted=0", (arg.get("id"),)).fetchone()
+                if not row:
+                    return False, "这个主题已经删掉了"
+                if arg.get("delete"):
+                    # 删掉的主题留着名字，消息里再写这个 #主题 也不会被重新建出来
+                    c.execute("UPDATE topics SET deleted=1 WHERE id=?", (row["id"],))
+                    c.execute("DELETE FROM session_topics WHERE topic_id=?", (row["id"],))
+                    c.commit()
+                    return True, "已删除「%s」，里面的会话回到未归类" % row["name"]
+                name = topic_name(arg.get("name"))
+                if not name or name == row["name"]:
+                    return False, "名字没变"
+                same = find_topic(load_topics(c), row["project"], name)
+                if same and same["id"] != row["id"]:
+                    if not same["deleted"]:
+                        return False, "这个项目里已经有「%s」了" % same["name"]
+                    c.execute("DELETE FROM topics WHERE id=?", (same["id"],))
+                # 旧名字记下来，以前消息里写的 #旧名 还认得
+                aliases = [a for a in json.loads(row["aliases"] or "[]") + [row["name"]] if a.lower() != name.lower()]
+                c.execute("UPDATE topics SET name=?, aliases=? WHERE id=?", (name, json.dumps(aliases, ensure_ascii=False), row["id"]))
+                c.commit()
+                return True, "已改名为「%s」" % name
             if action == "tag" and isinstance(arg, dict) and arg.get("project"):
                 label = re.sub(r"\s+", " ", str(arg.get("label") or "")).strip()[:24]
                 color = str(arg.get("color") or "")

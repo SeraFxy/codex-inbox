@@ -136,7 +136,7 @@ kbd.k.lg { min-width: 22px; height: 22px; padding: 0 6px; border-radius: 6px; fo
 .sync.busy { color: var(--bk-ink-2); }
 .sync.bad { color: var(--bk-needs-ink); }
 
-/* 看板：左边队列，右边详情 */
+/* 看板：左栏项目与主题，中间队列，右边详情 */
 .board { display: flex; flex-direction: column; min-height: 100vh; }
 .bhead { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px 16px; padding: 12px clamp(16px, 2vw, 24px); }
 .split { flex: 1; min-width: 0; display: flex; flex-wrap: wrap; align-items: stretch; border-top: 1px solid var(--bk-line); }
@@ -146,10 +146,52 @@ kbd.k.lg { min-width: 22px; height: 22px; padding: 0 6px; border-radius: 6px; fo
 @media (min-width: 961px) {
   .board { height: 100vh; height: 100dvh; min-height: 0; }
   .split { flex-wrap: nowrap; min-height: 0; }
-  .queue, .detail { overflow-y: auto; overscroll-behavior: contain; }
+  .rail, .queue, .detail { overflow-y: auto; overscroll-behavior: contain; }
 }
 @media (max-width: 960px) {
   .queue { flex-basis: 100%; border-right: 0; border-bottom: 1px solid var(--bk-line); }
+}
+
+/* 左栏：点项目或主题，中间只剩它的会话；红色数字 = 里面有轮到你的事。收起后队列顶上留展开按钮和切换下拉 */
+.rail { flex: 0 0 232px; min-width: 0; display: flex; flex-direction: column; gap: 2px; padding: 16px 12px; border-right: 1px solid var(--bk-line); }
+.split.railx .rail { display: none; }
+.rhead { display: flex; align-items: center; gap: 2px; padding: 0 0 6px 10px; }
+.rhead > span { flex: 1; font-size: 12px; line-height: 16px; font-weight: 600; color: var(--bk-ink-3); }
+.rhead .btn.icon { width: 28px; height: 28px; }
+.ri {
+  flex: none; display: flex; align-items: center; gap: 8px; width: 100%; min-width: 0; height: 32px; padding: 0 10px; border: 0; border-radius: 10px;
+  background: transparent; color: var(--bk-ink-1); font-size: 13px; text-align: left; cursor: pointer; transition: background-color .12s, box-shadow .12s;
+}
+.ri:hover { background: var(--bk-sunken); }
+.ri[aria-current="true"] { background: var(--bk-surface); box-shadow: var(--bk-on); font-weight: 600; }
+.ri:focus-visible, .rfold:focus-visible { outline: 2px solid var(--bk-ink-1); outline-offset: 1px; }
+.ri .nm { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ri .n { font: 500 12px/1 var(--bk-mono); color: var(--bk-ink-3); }
+.ri.all { height: 34px; font-weight: 600; }
+.ri.proj { padding-left: 4px; font-weight: 600; }
+.ri.sub { padding-left: 28px; }
+.rp .ri, .rt .ri { flex: 1; width: auto; }
+.ri.proj .nm { font: 600 12px/16px var(--bk-mono); }
+.ri.none { color: var(--bk-ink-3); }
+.ri.drop { background: var(--bk-sunken); box-shadow: inset 0 0 0 1.5px var(--bk-ink-1); }
+.rgroup { display: flex; flex-direction: column; gap: 2px; margin-top: 8px; }
+.rp, .rt { position: relative; display: flex; align-items: center; }
+.rfold {
+  flex: none; display: inline-flex; align-items: center; justify-content: center; width: 22px; height: 32px; padding: 0; border: 0;
+  border-radius: 8px; background: transparent; color: var(--bk-ink-3); cursor: pointer;
+}
+.rt .ra { position: absolute; right: 4px; top: 3px; display: none; }
+.rt:hover .ra, .rt:focus-within .ra, .rt .ra.on { display: inline-flex; }
+.rt:hover .ri .n, .rt:hover .ri .count, .rt:focus-within .ri .n, .rt:focus-within .ri .count { visibility: hidden; }
+.rfoot { margin: auto 0 0; padding: 12px 10px 0; font-size: 12px; line-height: 18px; color: var(--bk-ink-3); }
+.qtop { display: none; align-items: center; gap: 6px; margin-bottom: -4px; }
+.split.railx .qtop { display: flex; }
+.scopebtn { max-width: 100%; padding: 0 8px 0 10px; font-weight: 600; }
+.scopebtn > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+@media (max-width: 960px) {
+  .rail { display: none; }
+  .qtop { display: flex; }
+  .qtop .railbtn { display: none; }
 }
 
 .tabs { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 2px; padding: 3px; border-radius: 12px; background: var(--bk-sunken); }
@@ -224,6 +266,22 @@ kbd.k.lg { min-width: 22px; height: 22px; padding: 0 6px; border-radius: 6px; fo
 }
 .menu button:hover, .menu button:focus-visible { background: var(--bk-ground); }
 .menu button span:last-child { font: 12px var(--bk-mono); color: var(--bk-ink-3); }
+.menu button > span:first-child { display: inline-flex; align-items: center; gap: 6px; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.menu button > span:last-child { flex: none; }
+.menu button.sub { padding-left: 24px; }
+.menu button[aria-current="true"] { font-weight: 600; }
+.menu button span.count { font: 600 11px/18px var(--bk-mono); }
+.menu button span.count.hot { color: #FFFFFF; }
+/* 归到主题：搜索框 + 可滚动的主题列表 */
+.menu.wide { width: 280px; }
+.menu input {
+  height: 36px; margin: 2px 2px 4px; padding: 0 10px; border: 1px solid var(--bk-line-strong); border-radius: 12px; background: var(--bk-surface);
+  color: var(--bk-ink-1); font-size: 13px; outline: none; transition: border-color .12s, box-shadow .12s;
+}
+.menu input:focus { border-color: var(--bk-ink-1); box-shadow: 0 0 0 4px var(--bk-ring); }
+.menu .mlist { display: flex; flex-direction: column; gap: 2px; max-height: 280px; overflow-y: auto; }
+.menu .mlist > * { flex: none; }
+.menu .mnone { padding: 6px 10px 8px; font-size: 13px; line-height: 20px; color: var(--bk-ink-3); }
 .menu hr { height: 1px; margin: 4px 6px; border: 0; background: var(--bk-line); }
 .why { display: flex; gap: 10px; align-items: flex-start; padding: 12px 14px; border-radius: 12px; background: var(--bk-ground); font-size: 13px; line-height: 20px; color: var(--bk-ink-2); }
 .why svg { flex: none; margin-top: 2px; color: var(--bk-ink-3); }
@@ -357,19 +415,20 @@ kbd.k.lg { min-width: 22px; height: 22px; padding: 0 6px; border-radius: 6px; fo
 .thumbs img { display: block; height: 76px; max-width: 220px; object-fit: cover; }
 mark { background: var(--bk-lime-mark); color: #1B2026; border-radius: 3px; box-shadow: 0 0 0 2px var(--bk-lime-mark); }
 
-/* 改项目短码 */
+/* 改项目短码、新建或改名主题 */
 .tagpop {
   position: fixed; z-index: 30; width: 280px; padding: 14px; display: flex; flex-direction: column; gap: 8px;
   border: 1px solid var(--bk-line); border-radius: 14px; background: var(--bk-surface); box-shadow: var(--bk-e3); animation: bk-drop .14s var(--bk-ease);
 }
 .tagpop label { font-size: 12px; line-height: 18px; color: var(--bk-ink-3); }
-.tagpop input {
+.tagpop input, .tagpop select {
   width: 100%; height: 36px; padding: 0 10px; border: 1px solid var(--bk-line-strong); border-radius: 12px; background: var(--bk-surface);
-  font: 600 13px var(--bk-mono); outline: none; transition: border-color .12s, box-shadow .12s;
+  color: var(--bk-ink-1); font: 600 13px var(--bk-mono); outline: none; transition: border-color .12s, box-shadow .12s;
 }
-.tagpop input:focus { border-color: var(--bk-ink-1); box-shadow: 0 0 0 4px var(--bk-ring); }
+.tagpop input:focus, .tagpop select:focus { border-color: var(--bk-ink-1); box-shadow: 0 0 0 4px var(--bk-ring); }
 .tagpop .bar { display: flex; gap: 6px; justify-content: flex-end; margin-top: 4px; }
 .tagpop .bar .btn:first-child { margin-right: auto; }
+.tagpop .bar.end .btn:first-child { margin-right: 0; }
 
 /* 提示条：底部居中，5 秒后自己消失；「撤销」是全站唯一的黄绿色文字 */
 .toast {
@@ -406,8 +465,13 @@ mark { background: var(--bk-lime-mark); color: #1B2026; border-radius: 3px; box-
       <a class="btn ghost" href="#history" onclick="event.preventDefault();setTab('history')"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 5.5h14a1.5 1.5 0 0 1 1.5 1.5v8a1.5 1.5 0 0 1-1.5 1.5h-8l-4.5 3.5V16.5H5A1.5 1.5 0 0 1 3.5 15V7A1.5 1.5 0 0 1 5 5.5Z"/></svg>我说过的话</a>
     </div>
   </header>
-  <main class="split">
+  <main class="split" id="split">
+    <nav class="rail" id="rail" aria-label="项目与主题"></nav>
     <section class="queue" id="queue" aria-label="队列">
+      <div class="qtop">
+        <button type="button" class="btn ghost icon railbtn" aria-label="展开侧栏" title="展开侧栏（[）" onclick="toggleRail()"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3.5" y="4.5" width="17" height="15" rx="2.5"/><path d="M9.5 4.5v15"/><path d="m14 10 2 2-2 2"/></svg></button>
+        <button type="button" class="btn sec sm scopebtn" id="scopebtn" title="切换项目和主题" aria-haspopup="menu" aria-expanded="false" onclick="event.stopPropagation();openScopes(this)"></button>
+      </div>
       <div class="tabs" role="tablist" aria-label="队列视图" id="tabs"></div>
       <div class="qbar">
         <p class="qhint" id="qhint"></p>
@@ -422,6 +486,7 @@ mark { background: var(--bk-lime-mark); color: #1B2026; border-radius: 3px; box-
           <span><kbd class="k">E</kbd>完成</span>
           <span><kbd class="k">S</kbd>推迟</span>
           <span><kbd class="k">⇧</kbd><kbd class="k">J</kbd><kbd class="k">K</kbd>调顺序</span>
+          <span><kbd class="k">[</kbd>侧栏</span>
           <span><kbd class="k">/</kbd>搜索</span>
         </div>
       </div>
@@ -497,6 +562,11 @@ let view = store("ledger.view") || "you";
 if (!VIEWS[view]) view = "you";
 let selKey = null, selIdx = 0, menu = null, drag = null, iconRed = null;
 let hopNow = new Set();
+// 左栏筛选：all 全部 / p 一个项目 / t 一个主题 / n 一个项目里没归主题的
+let scope = store("ledger.scope") || { t: "all" };
+let railOpen = store("ledger.rail") !== false;
+const railFold = new Set(store("ledger.fold") || []);   // 收起的项目
+let picker = null;      // 「归到主题」菜单：{ key, q }
 const prevFace = {};    // 会话 key -> 上次的表情，用来发现「AI 在做 → 待你确认完成」，跳一下
 const bubOpen = {};     // 展开全文的气泡
 const picks = {};       // 会话 key -> { sig: 这一轮的选项, sel: { 第几件: 第几个选项 }, quick: 第几句, note: 补充 }
@@ -512,7 +582,7 @@ function esc(s) {
 function clip(text) { clips[++clipN] = text; return clipN; }
 function domId(key) { return String(key).replace(/[^a-zA-Z0-9]/g, ""); }
 function selecting() { return !!String(window.getSelection()); }
-function typing() { const el = document.activeElement; return !!(el && el.matches(".reply textarea, .tagpop input")); }
+function typing() { const el = document.activeElement; return !!(el && el.matches(".reply textarea, .tagpop input, .tagpop select, .menu input")); }
 function num(n) { return Number(n || 0).toLocaleString("en-US"); }
 
 // ---------------- 时间：按看板的工作时区（服务端给偏移量），写法照文案规范
@@ -550,7 +620,9 @@ const ICONS = {
   check: '<path d="M20 6 9 17l-5-5"/>', more: '<circle cx="5.5" cy="12" r=".9"/><circle cx="12" cy="12" r=".9"/><circle cx="18.5" cy="12" r=".9"/>',
   undo: '<path d="M9 14 4 9l5-5"/><path d="M4 9h10.5a5.5 5.5 0 0 1 0 11H11"/>', info: '<circle cx="12" cy="12" r="9"/><path d="M12 11v5M12 7.5v.5"/>',
   warn: '<circle cx="12" cy="12" r="9"/><path d="M12 7.5v5.5M12 16.5v.5"/>', send: '<path d="M5 12h13"/><path d="m13 6 6 6-6 6"/>',
-  copy: '<rect x="8.5" y="8.5" width="12" height="12" rx="2.5"/><path d="M15.5 8.5V6a2.5 2.5 0 0 0-2.5-2.5H6A2.5 2.5 0 0 0 3.5 6v7A2.5 2.5 0 0 0 6 15.5h2.5"/>'
+  copy: '<rect x="8.5" y="8.5" width="12" height="12" rx="2.5"/><path d="M15.5 8.5V6a2.5 2.5 0 0 0-2.5-2.5H6A2.5 2.5 0 0 0 3.5 6v7A2.5 2.5 0 0 0 6 15.5h2.5"/>',
+  right: '<path d="m9 18 6-6-6-6"/>', plus: '<path d="M12 5v14M5 12h14"/>',
+  railL: '<rect x="3.5" y="4.5" width="17" height="15" rx="2.5"/><path d="M9.5 4.5v15"/><path d="m16 10-2 2 2 2"/>'
 };
 function ico(name, size, sw) {
   return '<svg width="' + (size || 14) + '" height="' + (size || 14) + '" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="' + (sw || 2) +
@@ -635,16 +707,63 @@ function shortOf(it) {
 // ---------------- 数据
 function allItems(s) { return s ? s.groups.reduce((a, g) => a.concat(g.items), []).concat(s.hidden) : []; }
 function findItem(key) { return key ? allItems(state).find(it => it.key === key) || null : null; }
-function viewItems(v) {
+function viewItems(v, all) {
+  // all = 不管左栏选了什么，整个标签页的会话
   if (!state) return [];
-  if (v === "hidden") return state.hidden.slice();
+  if (v === "hidden") return state.hidden.filter(it => all || inScope(it));
   const out = state.groups.filter(g => VIEWS[v].groups.includes(g.id)).reduce((a, g) => a.concat(g.items), []);
   // 先按理由排，同类保持服务端的顺序（等得久的、先到点的在前）
-  const auto = out.map((it, i) => [it, i]).sort((a, b) => ORDER[faceOf(a[0])] - ORDER[faceOf(b[0])] || a[1] - b[1]).map(x => x[0]);
-  if (!manual(v)) return auto;
-  // 拖过顺序的标签页：按你排的来，新冒出来的会话放在最上面
-  const rank = new Map(state.order[v].map((k, i) => [k, i]));
-  return auto.filter(it => !rank.has(it.key)).concat(auto.filter(it => rank.has(it.key)).sort((a, b) => rank.get(a.key) - rank.get(b.key)));
+  let list = out.map((it, i) => [it, i]).sort((a, b) => ORDER[faceOf(a[0])] - ORDER[faceOf(b[0])] || a[1] - b[1]).map(x => x[0]);
+  if (manual(v)) {
+    // 拖过顺序的标签页：按你排的来，新冒出来的会话放在最上面
+    const rank = new Map(state.order[v].map((k, i) => [k, i]));
+    list = list.filter(it => !rank.has(it.key)).concat(list.filter(it => rank.has(it.key)).sort((a, b) => rank.get(a.key) - rank.get(b.key)));
+  }
+  return all ? list : list.filter(it => inScope(it));
+}
+// ---------------- 项目与主题
+function railProject(it) { return it.topic ? it.topic.project : it.projectKey; }   // 归到别的项目的主题时，跟着主题走
+function inScope(it, sc) {
+  sc = sc || scope;
+  if (sc.t === "p") return railProject(it) === sc.p;
+  if (sc.t === "t") return !!it.topic && it.topic.id === sc.id;
+  if (sc.t === "n") return railProject(it) === sc.p && !it.topic;
+  return true;
+}
+let plState = null, plMap = {};
+function plabel(p) {
+  if (plState !== state) {
+    plState = state; plMap = {};
+    allItems(state).forEach(it => { plMap[it.projectKey] = it.project; });
+    (state.topics || []).forEach(t => { plMap[t.project] = t.projectLabel; });
+  }
+  return plMap[p] || p;
+}
+function topicById(id) { return state && (state.topics || []).find(t => t.id === id) || null; }
+function chipText(it) { return it.topic ? plabel(it.topic.project) + " · " + it.topic.name : it.project; }
+function scopeName(sc) {
+  if (sc.t === "t") { const t = topicById(sc.id); return t ? plabel(t.project) + " · " + t.name : "全部项目"; }
+  if (sc.t === "p" || sc.t === "n") return plabel(sc.p) + (sc.t === "n" ? " · 未归类" : "");
+  return "全部项目";
+}
+const GENERIC = new Set(["桌面", "主目录", "其他"]);
+function railData() {
+  // 左栏要列的项目：有会话在跟的，或建过主题的。每格算一共几条（灰）和其中轮到你的几条（红）
+  const active = state.groups.reduce((a, g) => a.concat(g.items), []), you = new Set(viewItems("you", true).map(it => it.key));
+  const cnt = sc => { const xs = active.filter(it => inScope(it, sc)); return { n: xs.length, hot: xs.filter(it => you.has(it.key)).length }; };
+  const keys = [...new Set(active.map(railProject).concat((state.topics || []).map(t => t.project)))];
+  return {
+    all: cnt({ t: "all" }),
+    projects: keys.map(p => ({
+      key: p, label: plabel(p), c: cnt({ t: "p", p }), none: cnt({ t: "n", p }),
+      topics: state.topics.filter(t => t.project === p).map(t => ({ t, c: cnt({ t: "t", id: t.id }) }))
+    })).sort((a, b) => GENERIC.has(a.key) - GENERIC.has(b.key) || a.label.localeCompare(b.label, "zh"))
+  };
+}
+function fixScope() {
+  // 选中的主题被删了、项目里没会话了，就回到「全部」
+  const ok = scope.t === "t" ? !!topicById(scope.id) : scope.t === "p" || scope.t === "n" ? railData().projects.some(p => p.key === scope.p) : scope.t === "all";
+  if (!ok) { scope = { t: "all" }; store("ledger.scope", scope); }
 }
 function manual(v) { return !!(state && state.order && (state.order[v] || []).length); }
 function needCount() { const g = state && state.groups.find(x => x.id === "need"); return g ? g.items.length : 0; }
@@ -740,6 +859,41 @@ function linkList(links) {
     '<li><span class="lk">' + esc(l.label ? l.name : "") + '</span><a href="' + esc(l.url) + '" target="_blank" rel="noopener" title="' + esc(l.url) + '">' +
     esc(l.label || l.name) + '</a><span class="lt">' + esc(l.timeText) + "</span></li>").join("") + "</ul>";
 }
+function topicChip(it) {
+  const t = it.topic, name = !t ? "+ 主题" : t.project === it.projectKey ? t.name : plabel(t.project) + " · " + t.name;
+  return '<button type="button" class="chip" title="' + (t ? "换个主题，或移出" : "归到主题") + '" aria-haspopup="menu" aria-expanded="false"' +
+    " onclick=\"event.stopPropagation();openTopics(this,'" + esc(it.key) + "')\">" + esc(name) + "</button>";
+}
+function mi(label, onclick, right, attrs) {
+  return '<button type="button" role="menuitem"' + (attrs || "") + ' onclick="event.stopPropagation();' + onclick + '"><span>' + label + "</span><span>" + (right || "") + "</span></button>";
+}
+function showMenu(el, key, html, opts) {
+  // 共用的弹出菜单：推迟、归到主题、切换项目和主题、主题改名删除。再点一次同一个按钮就关上
+  opts = opts || {};
+  const same = !!(menu && menu.el === el), r = opts.keep && same ? menu.rect : el.getBoundingClientRect();
+  closeMenu();
+  if (same && !opts.keep) return;
+  const pop = document.getElementById("menu");
+  pop.className = "menu" + (opts.wide ? " wide" : "");
+  pop.innerHTML = html; pop.hidden = false;
+  pop.style.left = Math.min(Math.max(8, opts.left ? r.left : r.right - pop.offsetWidth), window.innerWidth - pop.offsetWidth - 8) + "px";
+  pop.style.top = (r.bottom + 6 + pop.offsetHeight > window.innerHeight ? Math.max(8, r.top - pop.offsetHeight - 6) : r.bottom + 6) + "px";
+  el.classList.add("on"); el.setAttribute("aria-expanded", "true");
+  menu = { el, key, rect: r };
+  const first = pop.querySelector("input, button");
+  if (first) first.focus({ preventScroll: true });
+}
+function openPop(anchor, html, onEnter) {
+  // 小浮层：改项目短码、新建主题、给主题改名共用；调用前先设好 tagEdit
+  const pop = document.getElementById("tagpop"), r = anchor.getBoundingClientRect();
+  pop.innerHTML = html; pop.hidden = false;
+  pop.style.left = Math.min(Math.max(8, r.left), window.innerWidth - pop.offsetWidth - 8) + "px";
+  pop.style.top = (r.bottom + 8 + pop.offsetHeight > window.innerHeight ? Math.max(8, r.top - pop.offsetHeight - 8) : r.bottom + 8) + "px";
+  const input = pop.querySelector("input");
+  input.addEventListener("keydown", e => { if (e.key === "Enter") onEnter(); if (e.key === "Escape") closeTag(); });
+  input.focus(); input.select();
+  return input;
+}
 
 // ---------------- 页头：日期、同步状态、标签页图标
 function syncHtml() {
@@ -771,6 +925,7 @@ function renderTop() {
 function render() {
   if (!state) return;
   renderTop();
+  renderRail();
   renderQueue();
   renderDetail();
   if (tab === "history" && hReady) renderHistory();
@@ -780,6 +935,166 @@ function setView(v) {
   selKey = null; selIdx = 0; closeMenu();
   render();
   document.getElementById("queue").scrollTop = 0;
+}
+
+// ---------------- 左栏：项目与主题
+function cntHtml(c) { return c.hot ? '<span class="count hot">' + c.hot + "</span>" : c.n ? '<span class="n">' + c.n + "</span>" : ""; }
+function sameScope(a, b) { return a.t === b.t && a.p === b.p && a.id === b.id; }
+function scopeData(sc) { return ' data-scope="' + esc(JSON.stringify(sc)) + '" aria-current="' + sameScope(sc, scope) + '"'; }
+function railItem(label, sc, c, cls, drop) {
+  return '<button type="button" class="ri ' + cls + '"' + scopeData(sc) + (drop != null ? ' data-drop="' + drop + '"' : "") + ' onclick="setScope(this)">' +
+    '<span class="nm" title="' + esc(label) + '">' + esc(label) + "</span>" + cntHtml(c) + "</button>";
+}
+function renderRail() {
+  fixScope();
+  const d = railData();
+  document.getElementById("split").classList.toggle("railx", !railOpen);
+  document.getElementById("scopebtn").innerHTML = "<span>" + esc(scopeName(scope)) + "</span>" + ico("down", 14);
+  let html = '<div class="rhead"><span>项目与主题</span>' +
+    '<button type="button" class="btn ghost icon" aria-label="新建主题" title="新建主题" onclick="event.stopPropagation();newTopic(this)">' + ico("plus", 15) + "</button>" +
+    '<button type="button" class="btn ghost icon" aria-label="收起侧栏" title="收起侧栏（[）" onclick="toggleRail()">' + ico("railL", 16) + "</button></div>" +
+    railItem("全部", { t: "all" }, d.all, "all");
+  d.projects.forEach(p => {
+    const open = !railFold.has(p.key);
+    html += '<div class="rgroup"><div class="rp">' + (p.topics.length ? '<button type="button" class="rfold" aria-label="' + (open ? "收起 " : "展开 ") + esc(p.label) +
+      '" aria-expanded="' + open + '" data-p="' + esc(p.key) + '" onclick="foldProject(this)">' + ico(open ? "down" : "right", 14) + "</button>" : '<span class="rfold"></span>') +
+      railItem(p.label, { t: "p", p: p.key }, p.c, "proj") + "</div>";
+    if (open) {
+      html += p.topics.map(x => '<div class="rt">' + railItem(x.t.name, { t: "t", id: x.t.id }, x.c, "sub", x.t.id) +
+        '<button type="button" class="ra" title="改名或删除" aria-label="「' + esc(x.t.name) + '」改名或删除" aria-haspopup="menu" aria-expanded="false" data-tid="' + x.t.id +
+        '" onclick="event.stopPropagation();topicMore(this)">' + ico("more", 15) + "</button></div>").join("");
+      if (p.topics.length && p.none.n) html += railItem("未归类", { t: "n", p: p.key }, p.none, "sub none", "none");
+    }
+    html += "</div>";
+  });
+  document.getElementById("rail").innerHTML = html + '<p class="rfoot">把会话拖到主题上就归进去了，也可以在发给 AI 的消息里写 #主题。红色数字 = 里面有轮到你的事。</p>';
+}
+function setScope(el) {
+  scope = JSON.parse(el.dataset.scope); store("ledger.scope", scope);
+  const p = scope.t === "t" ? (topicById(scope.id) || {}).project : scope.p;
+  if (p && railFold.delete(p)) store("ledger.fold", [...railFold]);
+  selKey = null; selIdx = 0; closeMenu();
+  render();
+  document.getElementById("queue").scrollTop = 0;
+}
+function foldProject(el) {
+  const p = el.dataset.p;
+  if (!railFold.delete(p)) railFold.add(p);
+  store("ledger.fold", [...railFold]);
+  renderRail();
+}
+function toggleRail() {
+  railOpen = !railOpen; store("ledger.rail", railOpen);
+  closeMenu();
+  renderRail();
+}
+function openScopes(el) {
+  // 侧栏收起或窄屏时，用这个下拉切换项目和主题
+  if (!state) return;
+  const d = railData(), b = (label, sc, c, cls) => mi(esc(label), "setScope(this)", cntHtml(c), (cls ? ' class="' + cls + '"' : "") + scopeData(sc));
+  let html = b("全部项目", { t: "all" }, d.all);
+  d.projects.forEach(p => {
+    html += b(p.label, { t: "p", p: p.key }, p.c) + p.topics.map(x => b(x.t.name, { t: "t", id: x.t.id }, x.c, "sub")).join("") +
+      (p.topics.length && p.none.n ? b("未归类", { t: "n", p: p.key }, p.none, "sub") : "");
+  });
+  showMenu(el, "", '<div class="mlist">' + html + "</div>", { left: true, wide: true });
+}
+// 归到主题：行上「⋯」、详情里的主题标签、拖到左栏，三处都走 setTopic
+function openTopics(el, key) {
+  const it = findItem(key);
+  if (!it) return closeMenu();
+  const keep = !!(menu && menu.el === el && !menu.picker);   // 从行上「⋯」菜单点进来的：原地换成主题列表
+  showMenu(el, key, '<span class="ml">归到主题</span><input id="tp-q" autocomplete="off" placeholder="搜主题，或打字新建" aria-label="搜主题，或打字新建">' +
+    '<div class="mlist" id="tp-list"></div>', { keep, wide: true });
+  if (!menu) return;
+  menu.picker = true;
+  picker = { key, q: "" };
+  const q = document.getElementById("tp-q");
+  q.addEventListener("input", () => { picker.q = q.value; pickerList(); });
+  q.addEventListener("keydown", e => {
+    const first = document.querySelector("#tp-list button");
+    if (e.key === "Enter" && first) { e.preventDefault(); first.click(); }
+    else if (e.key === "ArrowDown" && first) { e.preventDefault(); first.focus(); }
+  });
+  pickerList();
+}
+function pickerList() {
+  const it = findItem(picker.key);
+  if (!it) return;
+  const k = esc(picker.key), name = picker.q.trim().replace(/^#/, "").trim(), q = name.toLowerCase(), home = railProject(it);
+  const list = (state.topics || []).filter(t => !q || t.name.toLowerCase().includes(q)).sort((a, b) => (b.project === home) - (a.project === home));
+  let html = list.map(t => mi((it.topic && it.topic.id === t.id ? ico("check", 14, 2.2) : "") + esc(t.name), "setTopic('" + k + "'," + t.id + ")", esc(t.projectLabel))).join("");
+  if (name && !list.some(t => t.project === home && t.name.toLowerCase() === q))
+    html += mi(ico("plus", 14) + "新建「" + esc(name) + "」", "setTopic('" + k + "',null," + clip(name) + ")", esc(plabel(home)));
+  if (!html) html = '<span class="mnone">' + ((state.topics || []).length ? "没有叫这个的主题" : "还没有主题，打字新建一个") + "</span>";
+  if (it.topic) html += "<hr>" + mi("移出主题", "setTopic('" + k + "',null)");
+  if (it.topicPinned) html += mi("改回按 #主题 自动归", "setTopic('" + k + "','auto')", "", ' title="以后看你在消息里写的 #主题"');
+  document.getElementById("tp-list").innerHTML = html;
+}
+async function setTopic(key, id, nameId) {
+  const it = findItem(key);
+  closeMenu();
+  if (!it) return;
+  const arg = id === "auto" ? { auto: true } : nameId ? { name: clips[nameId], project: railProject(it) } : { id };
+  const back = it.topicPinned ? { id: it.topic ? it.topic.id : null } : { auto: true };   // 撤销：回到原来手动归的，或回到自动
+  try {
+    const res = await post("topic", key, arg);
+    toast(res.message || (res.ok ? "好了" : "没成功"), res.ok ? () => post("topic", key, back).then(() => load(), () => toast("操作失败：本机服务没响应")) : null);
+  } catch (e) { toast("操作失败：本机服务没响应"); }
+  load();
+}
+function topicMore(el) {
+  const t = topicById(Number(el.dataset.tid));
+  if (t) showMenu(el, "", mi("改名…", "renameTopic(" + t.id + ")") + mi("删除主题", "deleteTopic(" + t.id + ")"));
+}
+function newTopic(el) {
+  const projects = state ? railData().projects : [];
+  if (!projects.length) return toast("还没有在跟的会话，先开个会话再建主题");
+  const sel = findItem(selKey), cur = scope.t === "t" ? (topicById(scope.id) || {}).project : scope.p || (sel ? railProject(sel) : "");
+  tagEdit = { kind: "topic" };
+  openPop(el, '<label for="nt-name">新主题</label><input id="nt-name" maxlength="24" placeholder="比如：评测、客户A">' +
+    '<label for="nt-proj">放在哪个项目下</label><select id="nt-proj">' +
+    projects.map(p => '<option value="' + esc(p.key) + '"' + (p.key === cur ? " selected" : "") + ">" + esc(p.label) + "</option>").join("") + "</select>" +
+    '<div class="bar end">' + btn("取消", "closeTag()", "sec xs") + btn("新建", "saveNewTopic()", "pri xs") + "</div>", saveNewTopic);
+}
+async function saveNewTopic() {
+  const input = document.getElementById("nt-name"), name = input.value.trim().replace(/^#/, "").trim(), project = document.getElementById("nt-proj").value;
+  if (!name) return input.focus();
+  closeTag();
+  try {
+    const res = await post("topic", "", { name, project });
+    toast(res.message || (res.ok ? "好了" : "没成功"));
+    if (!res.ok) return;
+    await load();
+    const t = (state.topics || []).find(x => x.project === project && x.name.toLowerCase() === name.toLowerCase());
+    if (t) { scope = { t: "t", id: t.id }; store("ledger.scope", scope); railFold.delete(project); render(); }
+  } catch (e) { toast("操作失败：本机服务没响应"); }
+}
+function renameTopic(id) {
+  const t = topicById(id), el = document.querySelector('.rt [data-tid="' + id + '"]');
+  closeMenu();
+  if (!t) return;
+  tagEdit = { kind: "topic" };
+  openPop(el ? el.closest(".rt") : document.getElementById("rail"), '<label for="tp-name">改名后，以前消息里写的 #' + esc(t.name) + " 还认得</label>" +
+    '<input id="tp-name" maxlength="24" value="' + esc(t.name) + '">' +
+    '<div class="bar end">' + btn("取消", "closeTag()", "sec xs") + btn("保存", "saveTopicName(" + id + ")", "pri xs") + "</div>", () => saveTopicName(id));
+}
+async function saveTopicName(id) {
+  const name = document.getElementById("tp-name").value.trim();
+  closeTag();
+  try { const res = await post("topic_edit", "", { id, name }); toast(res.message || (res.ok ? "好了" : "没成功")); }
+  catch (e) { toast("操作失败：本机服务没响应"); }
+  load();
+}
+async function deleteTopic(id) {
+  const t = topicById(id);
+  closeMenu();
+  if (!t) return;
+  const n = allItems(state).filter(it => it.topic && it.topic.id === id).length;
+  if (!confirm("删除主题「" + t.name + "」？" + (n ? "里面的 " + n + " 个会话回到未归类，" : "") + "以后消息里再写 #" + t.name + " 也不会再建出来。")) return;
+  try { const res = await post("topic_edit", "", { id, delete: true }); toast(res.message || (res.ok ? "好了" : "没成功")); }
+  catch (e) { toast("操作失败：本机服务没响应"); }
+  load();
 }
 function renderQueue() {
   const items = viewItems(view), v = VIEWS[view];
@@ -807,10 +1122,12 @@ function renderQueue() {
       g.items.map(it => row(it, i++)).join("") + "</div>").join("");
   }
   if (!items.length)
-    html += '<div class="dash">' + face("logo", 32) + '<span class="tx"><b>' + v.emptyTitle + "</b><span>" + v.emptyText + "</span></span></div>";
+    html += '<div class="dash">' + face("logo", 32) + '<span class="tx"><b>' + v.emptyTitle + "</b><span>" +
+      (scope.t === "all" ? v.emptyText : "左栏选的是「" + esc(scopeName(scope)) + "」，别处的会话没列出来。") + "</span></span></div>";
   document.getElementById("qlist").innerHTML = html;
+  const nHidden = viewItems("hidden").length;
   document.getElementById("qfoot").innerHTML = view === "hidden" ? btn("返回「轮到你」", "setView('you')", "ghost xs")
-    : state.hidden.length ? btn("已完成 / 不再跟踪 · " + state.hidden.length, "setView('hidden')", "ghost xs") : "";
+    : nHidden ? btn("已完成 / 不再跟踪 · " + nHidden, "setView('hidden')", "ghost xs") : "";
 }
 function row(it, i) {
   const f = faceOf(it), on = it.key === selKey, k = esc(it.key), hidden = it.group === "hidden";
@@ -825,7 +1142,7 @@ function row(it, i) {
     '<span class="fc' + (hopNow.has(it.key) ? " bk-hop" : "") + '">' + face(f, 24, i) + "</span>" +
     '<span class="t" title="' + esc(it.title) + '">' + esc(it.title) + "</span>" +
     '<span class="w' + (f === "stuck" || f === "alarm" || f === "wait" ? " hot" : "") + '">' + esc(rowTime(it)) + "</span>" +
-    '<span class="s"><span class="chip sm">' + esc(it.project) + "</span><span>" + esc(shortOf(it)) + "</span></span>" +
+    '<span class="s"><span class="chip sm">' + esc(chipText(it)) + "</span><span>" + esc(shortOf(it)) + "</span></span>" +
     '<span class="racts">' + acts + "</span></div>";
 }
 function pick(key) {
@@ -848,7 +1165,11 @@ function move(step) {
   document.getElementById("detail").scrollTop = 0;
 }
 // 拖动或 ⇧J / ⇧K 调顺序：按标签页存在服务端，换浏览器也在
-function saveOrder(keys) {
+function saveOrder(sub) {
+  // 左栏筛选着的时候只重排看得见的这几条，其余会话的位置不动
+  const full = viewItems(view, true).map(it => it.key), mine = new Set(sub);
+  let n = 0;
+  const keys = full.map(k => mine.has(k) ? sub[n++] : k);
   state.order = Object.assign({}, state.order, { [view]: keys });
   render();
   post("order", "", { view, keys }).then(res => { if (!res.ok) toast(res.message || "顺序没存上"); }, () => toast("顺序没存上：本机服务没响应"));
@@ -895,8 +1216,26 @@ qlist.addEventListener("drop", e => {
 });
 qlist.addEventListener("dragend", () => {
   dropMark(null);
-  document.querySelectorAll(".row.dragging").forEach(el => el.classList.remove("dragging"));
+  document.querySelectorAll(".row.dragging, .ri.drop").forEach(el => el.classList.remove("dragging", "drop"));
   drag = null;
+});
+// 行拖到左栏的主题上 = 归到这个主题，拖到「未归类」= 移出主题
+const railEl = document.getElementById("rail");
+function railDrop(e) {
+  const t = drag && e.target.closest && e.target.closest("[data-drop]");
+  railEl.querySelectorAll(".ri.drop").forEach(el => { if (el !== t) el.classList.remove("drop"); });
+  if (t) t.classList.add("drop");
+  return t;
+}
+railEl.addEventListener("dragover", e => { if (railDrop(e)) { e.preventDefault(); e.dataTransfer.dropEffect = "move"; } });
+railEl.addEventListener("dragleave", e => { if (!railEl.contains(e.relatedTarget)) railDrop({}); });
+railEl.addEventListener("drop", e => {
+  const t = railDrop(e), key = drag;
+  if (!t) return;
+  e.preventDefault();
+  t.classList.remove("drop");
+  drag = null;
+  setTopic(key, t.dataset.drop === "none" ? null : Number(t.dataset.drop));
 });
 function bulkUntrack() {
   const items = viewItems("inbox");
@@ -920,7 +1259,7 @@ function renderDetail() {
     acts += btn(ico("check", 14, 2.2) + (f === "review" ? "确认完成" : "完成"), "act('" + k + "','done')", "ghost", "挪到「已完成」；你再和这个会话说话，它会自动回到看板");
   }
   let html = '<div class="dhead"><span class="fc' + (hopNow.has(it.key) ? " bk-hop" : "") + '">' + face(f, 44, 0, REASON[f]) + "</span>" +
-    '<div class="dtitle"><h2>' + esc(it.title) + '</h2><div class="dmeta">' + tagChip(it) + "<span>" + esc(it.toolLabel) +
+    '<div class="dtitle"><h2>' + esc(it.title) + '</h2><div class="dmeta">' + tagChip(it) + topicChip(it) + "<span>" + esc(it.toolLabel) +
     '</span><span aria-hidden="true">·</span><span>最后动静 ' + esc(it.last ? when(it.last) : "—") + "</span></div></div>" +
     '<div class="dacts">' + acts + "</div></div>";
   html += '<div class="why">' + ico("info", 16) + "<span><b>" + esc(badgeOf(it)) + "</b>　" + esc(whyOf(it)) + "</span></div>";
@@ -946,28 +1285,21 @@ function snoozeAt(opt) {
   return when(t);
 }
 function openMenu(el, key, more) {
-  // 推迟菜单：详情里的「推迟」和列表行的「⋯」共用；more = 再加「不再跟踪」
-  const it = findItem(key), same = menu && menu.el === el;
-  closeMenu();
-  if (!it || same) return;
-  const k = esc(key), item = (label, onclick, right) =>
-    '<button type="button" role="menuitem" onclick="event.stopPropagation();' + onclick + '"><span>' + label + "</span><span>" + (right || "") + "</span></button>";
+  // 推迟菜单：详情里的「推迟」和列表行的「⋯」共用；more = 再加「归到主题」和「不再跟踪」
+  const it = findItem(key);
+  if (!it) return closeMenu();
+  const k = esc(key);
   let html = faceOf(it) === "run" ? "" : '<span class="ml">推迟到…</span>' +
-    SNOOZE.map(o => item(o[1], "act('" + k + "','snooze','" + o[0] + "')", esc(snoozeAt(o[0])))).join("");
-  if (more) html += (html ? "<hr>" : "") + item("不再跟踪这个会话", "act('" + k + "','untrack')");
-  const pop = document.getElementById("menu"), r = el.getBoundingClientRect();
-  pop.innerHTML = html; pop.hidden = false;
-  pop.style.left = Math.min(Math.max(8, r.right - pop.offsetWidth), window.innerWidth - pop.offsetWidth - 8) + "px";
-  pop.style.top = (r.bottom + 6 + pop.offsetHeight > window.innerHeight ? Math.max(8, r.top - pop.offsetHeight - 6) : r.bottom + 6) + "px";
-  el.classList.add("on"); el.setAttribute("aria-expanded", "true");
-  menu = { el, key };
-  pop.querySelector("button").focus({ preventScroll: true });
+    SNOOZE.map(o => mi(o[1], "act('" + k + "','snooze','" + o[0] + "')", esc(snoozeAt(o[0])))).join("");
+  if (more) html += (html ? "<hr>" : "") + mi("归到主题…", "openTopics(menu.el,'" + k + "')", it.topic ? esc(it.topic.name) : "") +
+    mi("不再跟踪这个会话", "act('" + k + "','untrack')");
+  showMenu(el, key, html);
 }
 function closeMenu() {
   if (!menu) return;
   document.getElementById("menu").hidden = true;
   menu.el.classList.remove("on"); menu.el.setAttribute("aria-expanded", "false");
-  menu = null;
+  menu = null; picker = null;
 }
 function convo(it) {
   const d = it.details, msgs = [];
@@ -1081,20 +1413,11 @@ function copyReply(key, open) {
 // ---------------- 改项目短码（只改名字；项目一律灰色，不再按项目上色）
 let tagEdit = null;
 function editTag(el) {
-  const r = el.getBoundingClientRect();
   tagEdit = { project: el.dataset.p, label: el.dataset.l, color: el.dataset.c };
-  const pop = document.getElementById("tagpop");
-  pop.innerHTML = '<label for="tag-label">短码（「' + esc(tagEdit.project) + "」这个目录下的会话都用它）</label>" +
+  const input = openPop(el, '<label for="tag-label">短码（「' + esc(tagEdit.project) + "」这个目录下的会话都用它）</label>" +
     '<input id="tag-label" maxlength="24" value="' + esc(tagEdit.label) + '">' +
-    '<div class="bar">' + btn("恢复默认", "saveTag(true)", "ghost xs") + btn("取消", "closeTag()", "sec xs") + btn("保存", "saveTag()", "pri xs") + "</div>";
-  pop.hidden = false;
-  const left = Math.min(Math.max(8, r.left), window.innerWidth - pop.offsetWidth - 8);
-  const top = r.bottom + 8 + pop.offsetHeight > window.innerHeight ? Math.max(8, r.top - pop.offsetHeight - 8) : r.bottom + 8;
-  pop.style.left = left + "px"; pop.style.top = top + "px";
-  const input = document.getElementById("tag-label");
+    '<div class="bar">' + btn("恢复默认", "saveTag(true)", "ghost xs") + btn("取消", "closeTag()", "sec xs") + btn("保存", "saveTag()", "pri xs") + "</div>", () => saveTag());
   input.addEventListener("input", () => { tagEdit.label = input.value; });
-  input.addEventListener("keydown", e => { if (e.key === "Enter") saveTag(); if (e.key === "Escape") closeTag(); });
-  input.focus(); input.select();
 }
 function closeTag() { document.getElementById("tagpop").hidden = true; tagEdit = null; }
 async function saveTag(reset) {
@@ -1260,6 +1583,8 @@ document.addEventListener("keydown", e => {
   if (e.key === "/") { e.preventDefault(); goSearch(); return; }
   if (tab !== "board" || !state) return;
   const k = e.key.toLowerCase(), it = findItem(selKey);
+  // [ 收起或展开左栏：按键位认，按着 ⇧ 或开着中文输入法（出来的是 { 或 【）也算
+  if (e.code === "BracketLeft" || (e.key.length === 1 && "[{【「".includes(e.key))) { e.preventDefault(); toggleRail(); return; }
   if ((e.key === "Enter" || e.key === " ") && e.target.classList.contains("row")) { e.preventDefault(); pick(e.target.dataset.key); return; }
   if (e.target.closest("#menu, button, a")) return;
   if (e.shiftKey && (k === "j" || k === "k")) { if (view !== "hidden") shift(k === "j" ? 1 : -1); return; }
@@ -1269,10 +1594,11 @@ document.addEventListener("keydown", e => {
   else if (k === "e" && it && it.group !== "hidden") act(it.key, "done");
   else if (k === "s" && it && it.group !== "hidden" && faceOf(it) !== "run") openMenu(document.getElementById("snooze-btn"), it.key);
 });
-["queue", "detail"].forEach(id => document.getElementById(id).addEventListener("scroll", closeMenu, { passive: true }));
+["rail", "queue", "detail"].forEach(id => document.getElementById(id).addEventListener("scroll", closeMenu, { passive: true }));
 window.addEventListener("resize", closeMenu);
 document.addEventListener("visibilitychange", () => { if (!document.hidden) load("1"); });
 setInterval(() => { if (!document.hidden && !tagEdit) load("1"); }, 60000);  // 顺带读新记录，服务端一分钟最多读一次
+document.getElementById("split").classList.toggle("railx", !railOpen);
 load("1");
 setTab(tab);
 </script>
