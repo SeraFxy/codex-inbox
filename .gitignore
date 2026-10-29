@@ -12,3 +12,5 @@ notifier/icon/run.log
 notifier/icon/last.txt
 # 通知小程序由 install.sh 在安装目录现编，不进仓库
 notifier/*.app/
+.deployed
+.deploy.lock/

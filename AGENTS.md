@@ -37,10 +37,6 @@
 
 - 看板服务不能从「桌面」「文稿」「下载」里跑，macOS 不让后台服务读这几个目录。所以仓库放在这些目录时，服务实际跑在另一个安装目录。
 - 安装目录在哪：看 `~/Library/LaunchAgents/local.codex-inbox.plist` 里 `ledger.py` 的路径。
-- 改完把代码同步过去，再用那边的 `install.sh` 重启：
-
-  ```sh
-  rsync -a --exclude-from=.gitignore --exclude=.git ./ <安装目录>/ && <安装目录>/install.sh
-  ```
-
-  同步不会碰安装目录里的 `data/`、`logs/` 和 `config.json`。
+- 改完先提交，再在仓库目录（或你的工作目录、分支）里运行 `./deploy.sh`：它把已提交的代码同步到安装目录，再用那边的 `install.sh` 重启服务。不会碰安装目录里的 `data/`、`logs/` 和 `config.json`。
+- 只用 `deploy.sh` 部署，不要自己 rsync、cp 到安装目录。几个会话、几个分支都可能往同一个安装目录部署，`deploy.sh` 会在安装目录的 `.deployed` 里记下正在跑的是哪个提交；你要部署的版本不包含它（比如别的分支刚部署过、你还没合并），它会拦下并告诉你先合并哪个提交。被拦下就按提示合并，不要删 `.deployed` 绕过。
+- 没提交的改动不能部署。想先在看板上看效果，就在自己的分支上提交一个 WIP 再部署。

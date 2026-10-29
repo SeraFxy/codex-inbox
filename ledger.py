@@ -2399,10 +2399,10 @@ def doctor_items():
         add("提示", "warn", "时区", "config.json 的 utc_offset_hours 不是数字，被忽略了，看板按本机时区（%s）算" % utc_text(local),
             "改成数字（如北京时间填 8）或 null，再运行 install.sh")
     elif float(h) == local:
-        add("提示", "ok", "时区", "看板按 %s 算时间，和本机一致" % utc_text(h))
+        add("提示", "ok", "时区", "看板按你设置的 %s 算时间，和本机一致" % utc_text(h))
     else:
-        add("提示", "warn", "时区", "看板按 %s 算时间，本机是 %s" % (utc_text(h), utc_text(local)),
-            note="状态行和 ledger schedule 里的时间都按 %s 理解。你确实按它安排工作就不用改；否则把 config.json 的 utc_offset_hours 改成 null，再运行 install.sh" % utc_text(h))
+        # 是用户自己在 config.json 里设的，不算问题，只说清楚按哪个时区
+        add("提示", "ok", "时区", "看板按你设置的 %s 算时间（本机是 %s）" % (utc_text(h), utc_text(local)))
 
     # 项目目录（提示）
     parents = [p for p in (cfg.get("project_parents") or []) if isinstance(p, str)]
