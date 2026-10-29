@@ -131,7 +131,6 @@ kbd.k.lg { min-width: 22px; height: 22px; padding: 0 6px; border-radius: 6px; fo
 .tools { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 .btn.sec.searchbtn { justify-content: flex-start; gap: 8px; width: 280px; max-width: 100%; padding: 0 8px 0 10px; color: var(--bk-ink-3); font-weight: 400; }
 .searchbtn span { flex: 1; text-align: left; }
-.vsep { width: 1px; height: 18px; background: var(--bk-line); }
 .sync { display: inline-flex; align-items: center; gap: 6px; padding: 0 2px 0 4px; font: 12px/16px var(--bk-mono); color: var(--bk-ink-3); }
 .sync .dot { width: 6px; height: 6px; border-radius: 999px; background: var(--bk-review); }
 .sync.busy { color: var(--bk-ink-2); }
@@ -162,14 +161,18 @@ kbd.k.lg { min-width: 22px; height: 22px; padding: 0 6px; border-radius: 6px; fo
 .tab:hover { color: var(--bk-ink-1); }
 .tab[aria-selected="true"] { background: var(--bk-surface); color: var(--bk-ink-1); font-weight: 600; box-shadow: var(--bk-on); }
 .tab .n { font: 500 12px/1 var(--bk-mono); color: var(--bk-ink-3); }
-.qhint { margin: 0; padding: 0 8px; font-size: 13px; line-height: 20px; color: var(--bk-ink-3); }
+.qbar { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 2px 12px; min-height: 28px; margin-top: -4px; padding-left: 8px; }
+.qhint { margin: 0; display: flex; flex-wrap: wrap; align-items: center; gap: 0 6px; font-size: 13px; line-height: 20px; color: var(--bk-ink-3); }
+.qsync { display: inline-flex; align-items: center; gap: 2px; }
+.qsync .btn.icon { width: 28px; height: 28px; }
 .qgroup { display: flex; flex-direction: column; gap: 2px; }
 .qlabel { padding: 2px 10px 4px; font-size: 12px; line-height: 16px; color: var(--bk-ink-3); }
 .row {
-  display: grid; grid-template-columns: 24px minmax(0, 1fr) auto; gap: 3px 10px; align-items: center; width: 100%; padding: 10px;
+  position: relative; display: grid; grid-template-columns: 24px minmax(0, 1fr) auto; gap: 3px 10px; align-items: center; width: 100%; padding: 10px;
   border: 0; border-radius: 12px; background: transparent; color: var(--bk-ink-1); text-align: left; cursor: pointer;
-  transition: background-color .12s;
+  transition: background-color .12s, opacity .12s;
 }
+.row:focus-visible { outline: 2px solid var(--bk-ink-1); outline-offset: 2px; }
 .row:hover, .row[aria-current="true"] { background: var(--bk-surface); }
 .row[aria-current="true"] { box-shadow: var(--bk-on); }
 .row .fc { grid-row: span 2; align-self: start; display: flex; padding-top: 1px; }
@@ -178,6 +181,22 @@ kbd.k.lg { min-width: 22px; height: 22px; padding: 0 6px; border-radius: 6px; fo
 .row .w.hot { color: var(--bk-needs-ink); }
 .row .s { grid-column: 2 / 4; display: flex; align-items: center; gap: 6px; min-width: 0; font-size: 13px; line-height: 18px; color: var(--bk-ink-3); }
 .row .s > span:last-child { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* 行内快捷操作：悬停或选中时出现在第二行右侧，盖住摘要的尾巴，不挡时间 */
+.racts { position: absolute; right: 6px; bottom: 5px; display: none; gap: 2px; padding-left: 18px; background: linear-gradient(to right, transparent, var(--bk-surface) 16px); }
+.row:hover .racts, .row[aria-current="true"] .racts, .row:focus-within .racts { display: flex; }
+.ra {
+  display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 26px; padding: 0; border: 0; border-radius: 8px;
+  background: transparent; color: var(--bk-ink-2); cursor: pointer; transition: background-color .12s, color .12s;
+}
+.ra:hover, .ra.on { background: var(--bk-sunken); color: var(--bk-ink-1); }
+.ra:focus-visible { outline: 2px solid var(--bk-ink-1); outline-offset: 1px; }
+/* 拖动排序 */
+.row.dragging { opacity: .4; }
+.row.drop-before::before, .row.drop-after::after {
+  content: ""; position: absolute; left: 10px; right: 10px; height: 2px; border-radius: 2px; background: var(--bk-ink-1); pointer-events: none;
+}
+.row.drop-before::before { top: -2px; }
+.row.drop-after::after { bottom: -2px; }
 .dash { display: flex; align-items: center; gap: 12px; margin: 0 4px; padding: 16px; border: 1px dashed var(--bk-line-strong); border-radius: 14px; }
 .dash .tx { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
 .dash b { font-size: 14px; line-height: 20px; font-weight: 600; }
@@ -194,9 +213,8 @@ kbd.k.lg { min-width: 22px; height: 22px; padding: 0 6px; border-radius: 6px; fo
 .dtitle h2 { margin: 0; font-size: 22px; line-height: 30px; font-weight: 600; letter-spacing: -.01em; word-break: break-word; }
 .dmeta { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; font: 12px/18px var(--bk-mono); color: var(--bk-ink-3); }
 .dacts { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
-.mwrap { position: relative; }
 .menu {
-  position: absolute; top: calc(100% + 6px); right: 0; z-index: 10; width: 240px; padding: 6px; display: flex; flex-direction: column; gap: 2px;
+  position: fixed; z-index: 35; width: 240px; padding: 6px; display: flex; flex-direction: column; gap: 2px;
   border: 1px solid var(--bk-line); border-radius: 14px; background: var(--bk-surface); box-shadow: var(--bk-e3); animation: bk-drop .14s var(--bk-ease);
 }
 .menu .ml { padding: 6px 10px 4px; font-size: 12px; line-height: 16px; color: var(--bk-ink-3); }
@@ -206,6 +224,7 @@ kbd.k.lg { min-width: 22px; height: 22px; padding: 0 6px; border-radius: 6px; fo
 }
 .menu button:hover, .menu button:focus-visible { background: var(--bk-ground); }
 .menu button span:last-child { font: 12px var(--bk-mono); color: var(--bk-ink-3); }
+.menu hr { height: 1px; margin: 4px 6px; border: 0; background: var(--bk-line); }
 .why { display: flex; gap: 10px; align-items: flex-start; padding: 12px 14px; border-radius: 12px; background: var(--bk-ground); font-size: 13px; line-height: 20px; color: var(--bk-ink-2); }
 .why svg { flex: none; margin-top: 2px; color: var(--bk-ink-3); }
 .why b { color: var(--bk-ink-1); font-weight: 600; }
@@ -366,7 +385,7 @@ mark { background: var(--bk-lime-mark); color: #1B2026; border-radius: 3px; box-
 
 @media (max-width: 640px) {
   .btn, .tab, .opt { min-height: 40px; }
-  .kbd-hints, kbd.k, .vsep { display: none !important; }
+  .kbd-hints, kbd.k { display: none !important; }
   .btn.sec.searchbtn { width: auto; flex: 1; }
   .hline { flex-wrap: wrap; }
   .hfoot { margin-left: -8px; }
@@ -385,15 +404,15 @@ mark { background: var(--bk-lime-mark); color: #1B2026; border-radius: 3px; box-
     <div class="tools">
       <button type="button" class="btn sec searchbtn" onclick="goSearch()"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg><span>搜会话和说过的话</span><kbd class="k md">⌘K</kbd></button>
       <a class="btn ghost" href="#history" onclick="event.preventDefault();setTab('history')"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 5.5h14a1.5 1.5 0 0 1 1.5 1.5v8a1.5 1.5 0 0 1-1.5 1.5h-8l-4.5 3.5V16.5H5A1.5 1.5 0 0 1 3.5 15V7A1.5 1.5 0 0 1 5 5.5Z"/></svg>我说过的话</a>
-      <span class="vsep"></span>
-      <span class="js-sync"></span>
-      <button type="button" class="btn ghost icon" aria-label="刷新" title="刷新" onclick="refresh()"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/></svg></button>
     </div>
   </header>
   <main class="split">
     <section class="queue" id="queue" aria-label="队列">
       <div class="tabs" role="tablist" aria-label="队列视图" id="tabs"></div>
-      <p class="qhint" id="qhint"></p>
+      <div class="qbar">
+        <p class="qhint" id="qhint"></p>
+        <span class="qsync"><span class="js-sync"></span><button type="button" class="btn ghost icon" aria-label="刷新" title="刷新" onclick="refresh()"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/></svg></button></span>
+      </div>
       <div id="qlist" style="display: contents"></div>
       <div class="qfoot">
         <span id="qfoot"></span>
@@ -402,6 +421,7 @@ mark { background: var(--bk-lime-mark); color: #1B2026; border-radius: 3px; box-
           <span><kbd class="k">O</kbd>打开会话</span>
           <span><kbd class="k">E</kbd>完成</span>
           <span><kbd class="k">S</kbd>推迟</span>
+          <span><kbd class="k">⇧</kbd><kbd class="k">J</kbd><kbd class="k">K</kbd>调顺序</span>
           <span><kbd class="k">/</kbd>搜索</span>
         </div>
       </div>
@@ -440,19 +460,20 @@ mark { background: var(--bk-lime-mark); color: #1B2026; border-radius: 3px; box-
   <div class="days" id="hlist"></div>
 </div>
 
+<div class="menu" id="menu" role="menu" hidden></div>
 <div class="tagpop" id="tagpop" hidden></div>
 <div class="toast" id="toast" role="status" hidden></div>
 <script>
 const TOKEN = "__LEDGER_TOKEN__";
 // 队列的四个视图（外加「已完成」），groups 是服务端 GROUPS 的 id
 const VIEWS = {
-  you: { label: "轮到你", groups: ["need", "confirm"], hint: "球在你这边。卡住 > 到点 > 等你回话，同类里等得久的在前。",
+  you: { label: "轮到你", groups: ["need", "confirm"], hint: "球在你这边，卡住和到点的排前面。",
          emptyTitle: "没有要你拍板的事", emptyText: "AI 们在安静干活，有新情况会自己跳到这里。" },
-  ai: { label: "AI 在做", groups: ["ai"], hint: "正在跑，不用盯 · 需要你的时候会自己挪到「轮到你」",
+  ai: { label: "AI 在做", groups: ["ai"], hint: "正在跑，需要你时会自己挪过去。",
         emptyTitle: "没有在跑的任务", emptyText: "手上闲着，随时可以交代新活。" },
-  wait: { label: "在等", groups: ["time", "peer"], hint: "推迟的、等到点的、等同事的都在这里，到点自己回来。",
+  wait: { label: "在等", groups: ["time", "peer"], hint: "推迟的、等到点和等同事的，到点自己回来。",
           emptyTitle: "没有在等的事", emptyText: "推迟或者等同事的会话会出现在这里。" },
-  inbox: { label: "待整理", groups: ["backlog"], hint: "没写状态行，或很久没动静的会话。看一眼，没用了就点「完成」。",
+  inbox: { label: "待整理", groups: ["backlog"], hint: "没写状态或很久没动静的会话。",
            emptyTitle: "都整理完了", emptyText: "新会话没写状态行时会先放在这里。" },
   hidden: { label: "已完成", groups: [], hint: "",
             emptyTitle: "最近没有完成的", emptyText: "点了「完成」的会话会在这里留一阵，方便恢复。" }
@@ -474,7 +495,7 @@ const FAV_RED = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32"><re
 let state = null, failed = false, busy = false;
 let view = store("ledger.view") || "you";
 if (!VIEWS[view]) view = "you";
-let selKey = null, selIdx = 0, menuOpen = false, iconRed = null;
+let selKey = null, selIdx = 0, menu = null, drag = null, iconRed = null;
 let hopNow = new Set();
 const prevFace = {};    // 会话 key -> 上次的表情，用来发现「AI 在做 → 待你确认完成」，跳一下
 const bubOpen = {};     // 展开全文的气泡
@@ -526,7 +547,8 @@ function waited(sec) { return sec < 60 ? "刚刚" : "等了 " + dur(sec); }
 // ---------------- 图标与小表情（24 画布，脸占 22，圆角 7；眼睛位置不变，只换形状）
 const ICONS = {
   open: '<path d="M7 17 17 7"/><path d="M7 7h10v10"/>', down: '<path d="m6 9 6 6 6-6"/>', up: '<path d="m18 15-6-6-6 6"/>',
-  check: '<path d="M20 6 9 17l-5-5"/>', info: '<circle cx="12" cy="12" r="9"/><path d="M12 11v5M12 7.5v.5"/>',
+  check: '<path d="M20 6 9 17l-5-5"/>', more: '<circle cx="5.5" cy="12" r=".9"/><circle cx="12" cy="12" r=".9"/><circle cx="18.5" cy="12" r=".9"/>',
+  undo: '<path d="M9 14 4 9l5-5"/><path d="M4 9h10.5a5.5 5.5 0 0 1 0 11H11"/>', info: '<circle cx="12" cy="12" r="9"/><path d="M12 11v5M12 7.5v.5"/>',
   warn: '<circle cx="12" cy="12" r="9"/><path d="M12 7.5v5.5M12 16.5v.5"/>', send: '<path d="M5 12h13"/><path d="m13 6 6 6-6 6"/>',
   copy: '<rect x="8.5" y="8.5" width="12" height="12" rx="2.5"/><path d="M15.5 8.5V6a2.5 2.5 0 0 0-2.5-2.5H6A2.5 2.5 0 0 0 3.5 6v7A2.5 2.5 0 0 0 6 15.5h2.5"/>'
 };
@@ -586,8 +608,9 @@ function whyOf(it) {
   if (k === "sched_failed") return "定时唤醒没能把话发回会话。打开会话手动接着做，原因看下面的现状。";
   if (f === "stuck") return "它这一轮停在半路，超过 " + ((state && state.interruptedMin) || 30) + " 分钟没动静。可能在等一个没弹出来的确认，也可能已经中断。";
   if (f === "alarm") return k === "peer" ? "和同事约好的跟进时间到了。" : "你设的提醒到点了。到点的事排在等回话的前面。";
-  if (f === "wait") return k === "approval" ? "它停在一个要你点头的地方：一个问题、一份计划，或一个操作。" : "它最后的状态行写的是「等你」，球在你这边。";
-  if (f === "review") return "它说已经达到完成标准。你看过没问题，点「完成」才算数。";
+  if (f === "wait") return k === "approval" ? "它停在一个要你点头的地方：一个问题、一份计划，或一个操作。" : "它停下来等你回话：回答它的问题、拍板，或者给下一步指示，它才能接着做。";
+  if (f === "review") return (decisionsOf(it).length ? "它说已经达到完成标准，另外问了你 " + decisionsOf(it).length + " 件事，选好回复它。" : "它说已经达到完成标准，等你验收。") +
+    "看过没问题点「完成」结项；还要改就打开会话接着说。";
   if (f === "run") return "它在处理你交代的事，还没停下来问你。需要你的时候会自己挪到「轮到你」。";
   if (f === "timer") return snoozed(it) ? "你推迟了它，到点之前不会再打扰你。" : k === "sched" ? "它安排了到点自己接着做，到时候会自动唤醒会话。" : "要你本人到点去做的事。到点会挪到「轮到你」，并弹 Mac 通知。";
   if (f === "peer") return "在等同事。到了约定再跟的时间，会挪到「轮到你」。";
@@ -604,7 +627,10 @@ function badgeOf(it) {
   return bits.concat(it.badges.filter((b, i) => !(f === "inbox" && i === 0) && !/待你决定$/.test(b))).join(" · ");
 }
 function decisionsOf(it) { return it.group !== "hidden" && it.details && it.details.decisions || []; }
-function shortOf(it) { const n = decisionsOf(it).length; return n ? n + " 件事等你决定" : it.headline; }
+function shortOf(it) {
+  const n = decisionsOf(it).length;
+  return !n ? it.headline : faceOf(it) === "review" ? "做完了，另有 " + n + " 件事等你决定" : n + " 件事等你决定";
+}
 
 // ---------------- 数据
 function allItems(s) { return s ? s.groups.reduce((a, g) => a.concat(g.items), []).concat(s.hidden) : []; }
@@ -614,8 +640,13 @@ function viewItems(v) {
   if (v === "hidden") return state.hidden.slice();
   const out = state.groups.filter(g => VIEWS[v].groups.includes(g.id)).reduce((a, g) => a.concat(g.items), []);
   // 先按理由排，同类保持服务端的顺序（等得久的、先到点的在前）
-  return out.map((it, i) => [it, i]).sort((a, b) => ORDER[faceOf(a[0])] - ORDER[faceOf(b[0])] || a[1] - b[1]).map(x => x[0]);
+  const auto = out.map((it, i) => [it, i]).sort((a, b) => ORDER[faceOf(a[0])] - ORDER[faceOf(b[0])] || a[1] - b[1]).map(x => x[0]);
+  if (!manual(v)) return auto;
+  // 拖过顺序的标签页：按你排的来，新冒出来的会话放在最上面
+  const rank = new Map(state.order[v].map((k, i) => [k, i]));
+  return auto.filter(it => !rank.has(it.key)).concat(auto.filter(it => rank.has(it.key)).sort((a, b) => rank.get(a.key) - rank.get(b.key)));
 }
+function manual(v) { return !!(state && state.order && (state.order[v] || []).length); }
 function needCount() { const g = state && state.groups.find(x => x.id === "need"); return g ? g.items.length : 0; }
 
 async function load(refresh) {
@@ -630,7 +661,7 @@ async function load(refresh) {
       prevFace[it.key] = f;
     });
     state = next;
-    if (selecting() || typing()) return renderTop();  // 正在选中文字或打字时先不重画列表，下次刷新再画
+    if (selecting() || typing() || menu || drag) return renderTop();  // 正在选字、打字、开着菜单或拖动时先不重画列表，下次刷新再画
     render();
     hopNow.clear();
   } catch (e) {
@@ -652,7 +683,7 @@ async function post(action, key, arg) {
   return r.json();
 }
 async function act(key, action, arg) {
-  menuOpen = false;
+  closeMenu();
   try {
     const res = await post(action, key, arg);
     const undo = res.ok && (action === "done" || action === "untrack" || action === "snooze") && !Array.isArray(arg);
@@ -665,7 +696,7 @@ async function act(key, action, arg) {
 }
 async function openSession(key, el) {
   const html = el ? el.innerHTML : "";
-  if (el) { el.classList.add("loading"); el.innerHTML = face("load", 16) + "打开中…"; }
+  if (el) { el.classList.add("loading"); el.innerHTML = face("load", 16) + (el.classList.contains("ra") ? "" : "打开中…"); }
   try {
     const res = await post("open", key);
     toast(res.message || (res.ok ? "已打开" : "没打开"));
@@ -712,11 +743,11 @@ function linkList(links) {
 
 // ---------------- 页头：日期、同步状态、标签页图标
 function syncHtml() {
-  if (failed) return '<span class="sync bad">' + ico("warn", 14) + "连不上本机服务 · launchd 会自动拉起，稍等再刷新</span>";
-  if (busy) return '<span class="sync busy">' + face("load", 16) + "正在挨个问各个会话…</span>";
+  if (failed) return '<span class="sync bad" title="launchd 会自动把服务拉起来">' + ico("warn", 14) + "连不上本机服务，稍等再刷新</span>";
+  if (busy) return '<span class="sync busy">' + face("load", 16) + "正在同步…</span>";
   if (!state) return "";
   if (state.now - state.lastScan > state.scanIntervalMin * 60 + 300)
-    return '<span class="sync bad">' + ico("warn", 14) + "超过 " + (state.scanIntervalMin + 5) + " 分钟没同步 · 看下服务是否在跑</span>";
+    return '<span class="sync bad" title="看下服务是否在跑">' + ico("warn", 14) + "超过 " + (state.scanIntervalMin + 5) + " 分钟没同步</span>";
   return '<span class="sync"><span class="dot"></span>已同步 ' + esc(state.lastScan ? when(state.lastScan) : "从未") + "</span>";
 }
 function renderTop() {
@@ -746,7 +777,7 @@ function render() {
 }
 function setView(v) {
   view = v; store("ledger.view", v);
-  selKey = null; selIdx = 0; menuOpen = false;
+  selKey = null; selIdx = 0; closeMenu();
   render();
   document.getElementById("queue").scrollTop = 0;
 }
@@ -757,8 +788,8 @@ function renderQueue() {
     return '<button type="button" role="tab" class="tab" aria-selected="' + on + '" onclick="setView(\'' + id + '\')"><span>' + VIEWS[id].label + "</span>" +
       (id === "you" && c ? '<span class="count hot">' + c + "</span>" : '<span class="n">' + c + "</span>") + "</button>";
   }).join("");
-  document.getElementById("qhint").textContent = view === "hidden"
-    ? "最近 " + (state.windowDays || 14) + " 天完成或不再跟踪的。再和会话说话会自动回来，也可以手动恢复。" : v.hint;
+  document.getElementById("qhint").innerHTML = view === "hidden" ? "最近 " + (state.windowDays || 14) + " 天完成或不再跟踪的。"
+    : manual(view) ? '<span title="新来的会话放在最上面">按你排的顺序</span>' + btn("恢复默认", "resetOrder()", "ghost xs") : esc(v.hint);
 
   if (!items.some(it => it.key === selKey)) { const it = items[Math.min(selIdx, items.length - 1)]; selKey = it ? it.key : null; }
   selIdx = Math.max(0, items.findIndex(it => it.key === selKey));
@@ -767,11 +798,14 @@ function renderQueue() {
   if (view === "inbox" && items.length)
     html += '<div class="dash card"><b>先清一遍</b><span>这些会话停在半路、没写状态。按 J / K 往下看，没用的按 E 完成；确定都不要了，也可以一次清掉。</span>' +
       btn("这一组全部不再跟踪", "bulkUntrack()", "sec sm") + "</div>";
-  const groups = [];
-  items.forEach(it => { const f = faceOf(it), g = groups[groups.length - 1]; if (g && g.f === f) g.items.push(it); else groups.push({ f, items: [it] }); });
   let i = 0;
-  html += groups.map(g => '<div class="qgroup"><span class="qlabel">' + REASON[g.f] + " · " + g.items.length + "</span>" +
-    g.items.map(it => row(it, i++)).join("") + "</div>").join("");
+  if (manual(view)) html += '<div class="qgroup">' + items.map(it => row(it, i++)).join("") + "</div>";
+  else {
+    const groups = [];
+    items.forEach(it => { const f = faceOf(it), g = groups[groups.length - 1]; if (g && g.f === f) g.items.push(it); else groups.push({ f, items: [it] }); });
+    html += groups.map(g => '<div class="qgroup"><span class="qlabel">' + REASON[g.f] + " · " + g.items.length + "</span>" +
+      g.items.map(it => row(it, i++)).join("") + "</div>").join("");
+  }
   if (!items.length)
     html += '<div class="dash">' + face("logo", 32) + '<span class="tx"><b>' + v.emptyTitle + "</b><span>" + v.emptyText + "</span></span></div>";
   document.getElementById("qlist").innerHTML = html;
@@ -779,16 +813,24 @@ function renderQueue() {
     : state.hidden.length ? btn("已完成 / 不再跟踪 · " + state.hidden.length, "setView('hidden')", "ghost xs") : "";
 }
 function row(it, i) {
-  const f = faceOf(it), on = it.key === selKey;
-  return '<button type="button" class="row" id="row-' + domId(it.key) + '" aria-current="' + on + '" onclick="pick(\'' + esc(it.key) + '\')">' +
+  const f = faceOf(it), on = it.key === selKey, k = esc(it.key), hidden = it.group === "hidden";
+  const ra = (icon, onclick, title, attrs) => '<button type="button" class="ra" title="' + title + '" aria-label="' + title + '"' + (attrs || "") +
+    ' onclick="event.stopPropagation();' + onclick + '">' + icon + "</button>";
+  const acts = ra(ico("open", 15), "openSession('" + k + "',this)", "打开会话（O）") + (hidden
+    ? ra(ico("undo", 15), "act('" + k + "','restore')", "恢复跟踪")
+    : ra(ico("check", 15, 2.2), "act('" + k + "','done')", (f === "review" ? "确认完成" : "完成") + "（E）") +
+      ra(ico("more", 15), "openMenu(this,'" + k + "',true)", f === "run" ? "更多" : "推迟和更多（S）", ' aria-haspopup="menu" aria-expanded="false"'));
+  return '<div class="row" role="button" tabindex="0" id="row-' + domId(it.key) + '" data-key="' + k + '" aria-current="' + on + '"' +
+    (hidden ? "" : ' draggable="true"') + ' onclick="pick(\'' + k + '\')">' +
     '<span class="fc' + (hopNow.has(it.key) ? " bk-hop" : "") + '">' + face(f, 24, i) + "</span>" +
     '<span class="t" title="' + esc(it.title) + '">' + esc(it.title) + "</span>" +
     '<span class="w' + (f === "stuck" || f === "alarm" || f === "wait" ? " hot" : "") + '">' + esc(rowTime(it)) + "</span>" +
-    '<span class="s"><span class="chip sm">' + esc(it.project) + "</span><span>" + esc(shortOf(it)) + "</span></span></button>";
+    '<span class="s"><span class="chip sm">' + esc(it.project) + "</span><span>" + esc(shortOf(it)) + "</span></span>" +
+    '<span class="racts">' + acts + "</span></div>";
 }
 function pick(key) {
   if (selecting()) return;
-  selKey = key; menuOpen = false;
+  selKey = key; closeMenu();
   render();
   const r = document.getElementById("row-" + domId(key));
   if (r) r.focus({ preventScroll: true });
@@ -799,12 +841,63 @@ function move(step) {
   const items = viewItems(view);
   if (!items.length) return;
   const i = Math.min(items.length - 1, Math.max(0, items.findIndex(it => it.key === selKey) + step));
-  selKey = items[i].key; menuOpen = false;
+  selKey = items[i].key; closeMenu();
   render();
   const r = document.getElementById("row-" + domId(selKey));
   if (r) r.scrollIntoView({ block: "nearest" });
   document.getElementById("detail").scrollTop = 0;
 }
+// 拖动或 ⇧J / ⇧K 调顺序：按标签页存在服务端，换浏览器也在
+function saveOrder(keys) {
+  state.order = Object.assign({}, state.order, { [view]: keys });
+  render();
+  post("order", "", { view, keys }).then(res => { if (!res.ok) toast(res.message || "顺序没存上"); }, () => toast("顺序没存上：本机服务没响应"));
+}
+function resetOrder() {
+  const order = Object.assign({}, state.order); delete order[view]; state.order = order;
+  render();
+  post("order", "", { view, keys: [] }).then(() => toast("已恢复默认排序"), () => toast("操作失败：本机服务没响应"));
+}
+function shift(step) {
+  const keys = viewItems(view).map(it => it.key), i = keys.indexOf(selKey), j = i + step;
+  if (i < 0 || j < 0 || j >= keys.length) return;
+  keys.splice(j, 0, keys.splice(i, 1)[0]);
+  saveOrder(keys);
+  const r = document.getElementById("row-" + domId(selKey));
+  if (r) { r.focus({ preventScroll: true }); r.scrollIntoView({ block: "nearest" }); }
+}
+function dropMark(e) {
+  document.querySelectorAll(".drop-before, .drop-after").forEach(el => el.classList.remove("drop-before", "drop-after"));
+  const r = e && e.target.closest && e.target.closest(".row");
+  if (!r || !drag || r.dataset.key === drag) return null;
+  const rect = r.getBoundingClientRect(), after = e.clientY > rect.top + rect.height / 2;
+  r.classList.add(after ? "drop-after" : "drop-before");
+  return { key: r.dataset.key, after };
+}
+const qlist = document.getElementById("qlist");
+qlist.addEventListener("dragstart", e => {
+  const r = e.target.closest(".row");
+  if (!r) return;
+  drag = r.dataset.key; closeMenu();
+  e.dataTransfer.effectAllowed = "move";
+  e.dataTransfer.setData("text/plain", drag);
+  requestAnimationFrame(() => r.classList.add("dragging"));
+});
+qlist.addEventListener("dragover", e => { if (drag && dropMark(e)) { e.preventDefault(); e.dataTransfer.dropEffect = "move"; } });
+qlist.addEventListener("drop", e => {
+  const at = dropMark(e);
+  if (!drag || !at) return;
+  e.preventDefault();
+  const keys = viewItems(view).map(it => it.key).filter(k => k !== drag);
+  keys.splice(keys.indexOf(at.key) + (at.after ? 1 : 0), 0, drag);
+  drag = null;
+  saveOrder(keys);
+});
+qlist.addEventListener("dragend", () => {
+  dropMark(null);
+  document.querySelectorAll(".row.dragging").forEach(el => el.classList.remove("dragging"));
+  drag = null;
+});
 function bulkUntrack() {
   const items = viewItems("inbox");
   if (!items.length || !confirm("把「待整理」里的 " + items.length + " 个会话都设为不再跟踪？以后在「已完成 / 不再跟踪」里还能恢复。")) return;
@@ -822,8 +915,8 @@ function renderDetail() {
   let acts = btn("打开会话" + ico("open"), "openSession('" + k + "',this)", "pri", "", 'id="open-btn"');
   if (hidden) acts += btn("恢复跟踪", "act('" + k + "','restore')", "sec");
   else {
-    if (f !== "run") acts += '<div class="mwrap">' + btn("推迟" + ico("down"), "toggleMenu()", "ghost" + (menuOpen ? " on" : ""), "",
-      'aria-haspopup="menu" aria-expanded="' + menuOpen + '" style="padding: 0 8px 0 12px"') + (menuOpen ? snoozeMenu(k) : "") + "</div>";
+    if (f !== "run") acts += btn("推迟" + ico("down"), "openMenu(this,'" + k + "')", "ghost", "",
+      'id="snooze-btn" aria-haspopup="menu" aria-expanded="false" style="padding: 0 8px 0 12px"');
     acts += btn(ico("check", 14, 2.2) + (f === "review" ? "确认完成" : "完成"), "act('" + k + "','done')", "ghost", "挪到「已完成」；你再和这个会话说话，它会自动回到看板");
   }
   let html = '<div class="dhead"><span class="fc' + (hopNow.has(it.key) ? " bk-hop" : "") + '">' + face(f, 44, 0, REASON[f]) + "</span>" +
@@ -841,7 +934,6 @@ function renderDetail() {
   html += infoSec(it);
   el.innerHTML = '<div class="detail-in">' + html + "</div>";
 }
-function toggleMenu() { menuOpen = !menuOpen; renderDetail(); }
 function snoozeAt(opt) {
   // 和服务端 snooze_until 同一套算法，按工作时区算出几点，不让人心算
   const n = nowTs(), d = wd(n), base = n - (d.getUTCHours() * 3600 + d.getUTCMinutes() * 60 + d.getUTCSeconds());
@@ -853,10 +945,29 @@ function snoozeAt(opt) {
   else if (opt === "monday") t = base + ((7 - (d.getUTCDay() + 6) % 7) % 7 || 7) * 86400 + 9 * 3600;
   return when(t);
 }
-function snoozeMenu(k) {
-  return '<div class="menu" role="menu"><span class="ml">推迟到…</span>' + SNOOZE.map(o =>
-    '<button type="button" role="menuitem" onclick="event.stopPropagation();act(\'' + k + "','snooze','" + o[0] + '\')"><span>' + o[1] +
-    "</span><span>" + esc(snoozeAt(o[0])) + "</span></button>").join("") + "</div>";
+function openMenu(el, key, more) {
+  // 推迟菜单：详情里的「推迟」和列表行的「⋯」共用；more = 再加「不再跟踪」
+  const it = findItem(key), same = menu && menu.el === el;
+  closeMenu();
+  if (!it || same) return;
+  const k = esc(key), item = (label, onclick, right) =>
+    '<button type="button" role="menuitem" onclick="event.stopPropagation();' + onclick + '"><span>' + label + "</span><span>" + (right || "") + "</span></button>";
+  let html = faceOf(it) === "run" ? "" : '<span class="ml">推迟到…</span>' +
+    SNOOZE.map(o => item(o[1], "act('" + k + "','snooze','" + o[0] + "')", esc(snoozeAt(o[0])))).join("");
+  if (more) html += (html ? "<hr>" : "") + item("不再跟踪这个会话", "act('" + k + "','untrack')");
+  const pop = document.getElementById("menu"), r = el.getBoundingClientRect();
+  pop.innerHTML = html; pop.hidden = false;
+  pop.style.left = Math.min(Math.max(8, r.right - pop.offsetWidth), window.innerWidth - pop.offsetWidth - 8) + "px";
+  pop.style.top = (r.bottom + 6 + pop.offsetHeight > window.innerHeight ? Math.max(8, r.top - pop.offsetHeight - 6) : r.bottom + 6) + "px";
+  el.classList.add("on"); el.setAttribute("aria-expanded", "true");
+  menu = { el, key };
+  pop.querySelector("button").focus({ preventScroll: true });
+}
+function closeMenu() {
+  if (!menu) return;
+  document.getElementById("menu").hidden = true;
+  menu.el.classList.remove("on"); menu.el.setAttribute("aria-expanded", "false");
+  menu = null;
 }
 function convo(it) {
   const d = it.details, msgs = [];
@@ -1134,13 +1245,13 @@ document.getElementById("q").addEventListener("input", e => {
   hTimer = setTimeout(() => search(e.target.value.trim()), 250);
 });
 document.addEventListener("click", e => {
-  if (menuOpen && !e.target.closest(".mwrap")) { menuOpen = false; renderDetail(); }
+  if (menu && !e.target.closest("#menu")) closeMenu();
   if (tagEdit && !e.target.closest("#tagpop") && !e.target.closest(".chip")) closeTag();
 });
 document.addEventListener("keydown", e => {
   if (e.key === "Escape") {
     if (tagEdit) closeTag();
-    if (menuOpen) { menuOpen = false; renderDetail(); }
+    if (menu) { const el = menu.el; closeMenu(); if (el.isConnected) el.focus(); }
     if (document.activeElement && document.activeElement.id === "q") document.activeElement.blur();
     return;
   }
@@ -1149,12 +1260,17 @@ document.addEventListener("keydown", e => {
   if (e.key === "/") { e.preventDefault(); goSearch(); return; }
   if (tab !== "board" || !state) return;
   const k = e.key.toLowerCase(), it = findItem(selKey);
+  if ((e.key === "Enter" || e.key === " ") && e.target.classList.contains("row")) { e.preventDefault(); pick(e.target.dataset.key); return; }
+  if (e.target.closest("#menu, button, a")) return;
+  if (e.shiftKey && (k === "j" || k === "k")) { if (view !== "hidden") shift(k === "j" ? 1 : -1); return; }
   if (k === "j") move(1);
   else if (k === "k") move(-1);
   else if (k === "o" && it) openSession(it.key, document.getElementById("open-btn"));
   else if (k === "e" && it && it.group !== "hidden") act(it.key, "done");
-  else if (k === "s" && it && it.group !== "hidden" && faceOf(it) !== "run") toggleMenu();
+  else if (k === "s" && it && it.group !== "hidden" && faceOf(it) !== "run") openMenu(document.getElementById("snooze-btn"), it.key);
 });
+["queue", "detail"].forEach(id => document.getElementById(id).addEventListener("scroll", closeMenu, { passive: true }));
+window.addEventListener("resize", closeMenu);
 document.addEventListener("visibilitychange", () => { if (!document.hidden) load("1"); });
 setInterval(() => { if (!document.hidden && !tagEdit) load("1"); }, 60000);  // 顺带读新记录，服务端一分钟最多读一次
 load("1");

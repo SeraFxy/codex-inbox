@@ -1406,6 +1406,17 @@ def shell_quote(s):
     return "'" + s.replace("'", "'\\''") + "'"
 
 
+ORDER_VIEWS = ("you", "ai", "wait", "inbox")   # 看板的四个标签页
+
+
+def load_order(conn):
+    try:
+        order = json.loads(meta_get(conn, "order", "{}"))
+    except ValueError:
+        return {}
+    return order if isinstance(order, dict) else {}
+
+
 def build_board(conn, cfg, now=None):
     now = now or time.time()
     titles, goals = codex_extras()
@@ -1453,7 +1464,7 @@ def build_board(conn, cfg, now=None):
         "tzOffsetMin": int(clock(now).astimezone(WORK_TZ).utcoffset().total_seconds() // 60),
         "staleHours": cfg["stale_hours"], "interruptedMin": cfg["interrupted_min"], "windowDays": cfg["window_days"],
         "scanMs": int(meta_get(conn, "last_scan_ms", 0) or 0), "scanIntervalMin": cfg["scan_interval_min"],
-        "groups": groups, "hidden": hidden, "digestTime": cfg["digest_time"], "tzText": tz_text(cfg),
+        "groups": groups, "hidden": hidden, "order": load_order(conn), "digestTime": cfg["digest_time"], "tzText": tz_text(cfg),
     }
 
 
@@ -1734,6 +1745,17 @@ class App:
                     c.execute("INSERT OR REPLACE INTO tags (project, label, color) VALUES (?, ?, ?)", (arg["project"], label, color))
                 c.commit()
                 return True, "标签已更新"
+            if action == "order" and isinstance(arg, dict) and arg.get("view") in ORDER_VIEWS:
+                # 看板里拖动排序：按标签页存一串会话 key，空列表 = 恢复默认排序
+                keys = [k for k in (arg.get("keys") or []) if isinstance(k, str)][:500]
+                order = load_order(c)
+                if keys:
+                    order[arg["view"]] = keys
+                else:
+                    order.pop(arg["view"], None)
+                meta_set(c, "order", json.dumps(order, ensure_ascii=False))
+                c.commit()
+                return True, "顺序已保存" if keys else "已恢复默认排序"
             if action == "restore":
                 c.execute("DELETE FROM overrides WHERE key=?", (key,))
                 c.commit()
