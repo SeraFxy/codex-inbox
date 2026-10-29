@@ -502,6 +502,15 @@ def take_text(content):
     return ""
 
 
+AMBIENT_RE = re.compile(r'(?:\s*<([\w-]+) source="ambient-ui-state">.*?</\1>)+\s*(?:## My request:\s*)?', re.S)
+
+
+def strip_ambient(text):
+    """Codex 开着内置浏览器时，会在你的话前面套一段 <in-app-browser-context>，「## My request:」后面才是你说的。"""
+    m = AMBIENT_RE.match(text)
+    return text[m.end():] if m else text
+
+
 def is_injected(text):
     t = (text or "").lstrip()
     return (not t) or t.startswith(("<", "[Request interrupted", "Caveat:", "# AGENTS.md",
@@ -656,7 +665,7 @@ def codex_line(st, line):
             st["last_kind"] = "final"
         return
     if typ == "response_item" and p.get("type") == "message":
-        text = take_text(p.get("content"))
+        text = strip_ambient(take_text(p.get("content")))
         if p.get("role") == "user" and isinstance(p.get("content"), list):
             note_images(st, ts, data_url_pairs(p["content"]))
         if p.get("role") == "user" and not is_injected(text):
@@ -710,6 +719,7 @@ def session_id_from_path(tool, path):
 
 def scan(conn, cfg):
     migrate_tz(conn)
+    migrate_codex_prompts(conn)
     t0 = time.time()
     horizon = t0 - max(cfg["window_days"], 30) * 86400
     files = [("claude", p) for p in glob.glob(os.path.join(CLAUDE_PROJECTS, "*", "*.jsonl"))]
@@ -866,7 +876,7 @@ def sync_prompts(conn):
         meta_set(conn, "hist_claude_off", off + len(data))
     # Codex：thread_history 里的 userMessage，只收你自己开的线程
     last_ms = int(float(meta_get(conn, "hist_codex_ms", 0) or 0))
-    threads, autos = codex_threads(), automation_threads()
+    threads = codex_threads()
     try:
         c = sqlite3.connect("file:%s?mode=ro" % os.path.join(CODEX_HOME, "thread_history_1.sqlite"), uri=True, timeout=5)
         rows = c.execute("SELECT thread_id, item_id, created_at_ms, item_json FROM thread_items "
@@ -879,13 +889,13 @@ def sync_prompts(conn):
     for tid, item_id, cms, item_json in rows:
         last_ms = max(last_ms, cms or 0)
         source, cwd, title = threads.get(tid, ("", "", ""))
-        if source not in ("vscode", "cli") or tid in autos:
+        if source not in ("vscode", "cli"):
             continue
         try:
             item = json.loads(item_json)
         except ValueError:
             continue
-        text = take_text(item.get("content"))
+        text = strip_ambient(take_text(item.get("content")))
         if is_injected(text):
             continue
         cur = conn.execute("INSERT OR IGNORE INTO prompts VALUES (?, ?, 'codex', ?, ?, ?, ?, ?)",
@@ -901,7 +911,7 @@ def sync_prompts(conn):
 def sync_codex_links(conn):
     """Codex 回复里的链接：第一次运行时从 thread_history 的 agentMessage 回填全部历史（约 15 秒）。"""
     last_ms = int(float(meta_get(conn, "links_codex_ms", 0) or 0))
-    threads, autos = codex_threads(), automation_threads()
+    threads = codex_threads()
     try:
         c = sqlite3.connect("file:%s?mode=ro" % os.path.join(CODEX_HOME, "thread_history_1.sqlite"), uri=True, timeout=5)
         newest = c.execute("SELECT MAX(created_at_ms) FROM thread_items WHERE item_type='agentMessage'").fetchone()[0] or 0
@@ -913,7 +923,7 @@ def sync_codex_links(conn):
         log("读 Codex 回复失败：%s" % e)
         return
     for tid, cms, item_json in rows:
-        if threads.get(tid, ("",))[0] not in ("vscode", "cli") or tid in autos:
+        if threads.get(tid, ("",))[0] not in ("vscode", "cli"):
             continue
         try:
             text = json.loads(item_json).get("text") or ""
@@ -1204,25 +1214,6 @@ def tail_text(text, limit=600):
     return t if len(t) <= limit else "…" + t[-limit:]
 
 
-_auto_cache = {"at": 0, "ids": set()}
-
-
-def automation_threads():
-    """Codex 自动任务（📅 每日提醒之类）绑定的线程，不算你的任务。"""
-    if time.time() - _auto_cache["at"] > 300:
-        ids = set()
-        for path in glob.glob(os.path.join(CODEX_HOME, "automations", "*", "automation.toml")):
-            try:
-                with open(path, encoding="utf-8") as f:
-                    m = re.search(r'^target_thread_id\s*=\s*"([^"]+)"', f.read(), re.M)
-                    if m:
-                        ids.add(m.group(1))
-            except OSError:
-                pass
-        _auto_cache.update(at=time.time(), ids=ids)
-    return _auto_cache["ids"]
-
-
 def claude_live():
     """开着的 Claude 会话自己报的状态（~/.claude/sessions/<pid>.json）：busy / idle / shell / waiting。
     弹出批准框时是 waiting，waitingFor 写着在等什么。对话记录里不记批准框，只看它要等 10 分钟才猜得到。"""
@@ -1260,8 +1251,7 @@ def waiting_headline(what, tool):
 
 
 def include_session(st):
-    if st["tool"] == "codex" and st["id"] in automation_threads():
-        return False
+    # Codex 的自动任务（心跳）挂在你自己开的线程上，那条线程照样是你的任务；心跳发的 <heartbeat> 消息不算你说的话
     if st["tool"] == "claude":
         if (st.get("entrypoint") or "").startswith("sdk"):
             return False
@@ -2012,6 +2002,28 @@ def migrate_tz(conn):
     log("已把状态行时间改按配置的时区计算")
 
 
+def migrate_codex_prompts(conn):
+    """早期版本把开着 Codex 内置浏览器时你发的话、和挂了心跳的线程里你发的话都丢了，有的线程因此进不了看板：重收一遍，补回提问数和最近一句。"""
+    if meta_get(conn, "codex_prompts_v2"):
+        return
+    meta_set(conn, "hist_codex_ms", 0)
+    sync_prompts(conn)
+    n = 0
+    for r in conn.execute("SELECT key, data FROM sessions WHERE key LIKE 'codex:%'").fetchall():
+        st = json.loads(r["data"])
+        got = conn.execute("SELECT text FROM prompts WHERE session_key=? ORDER BY ts", (r["key"],)).fetchall()
+        if len(got) <= st.get("n_prompts", 0):
+            continue
+        st["n_prompts"] = len(got)
+        st["first_prompt"] = got[0]["text"][:500]
+        st["last_prompt"] = got[-1]["text"][:500]
+        conn.execute("UPDATE sessions SET data=? WHERE key=?", (json.dumps(st, ensure_ascii=False), r["key"]))
+        n += 1
+    meta_set(conn, "codex_prompts_v2", time.time())
+    conn.commit()
+    log("已补回 %d 个 Codex 会话里你说过的话" % n)
+
+
 def backfill_media():
     """第一次运行时回填：Claude 对话记录里你发过的图和 AI 给过的链接、Codex 记录里你发过的图。"""
     conn = open_db()
@@ -2054,11 +2066,11 @@ def backfill_media():
         conn.commit()
         n_files += 1
     # Codex 的对话记录很大（含截图），只读含图片的文件，且只看你自己发的消息
-    threads, autos = codex_threads(), automation_threads()
+    threads = codex_threads()
     r = run(["grep", "-l", "-r", "--include=*.jsonl", '"input_image"', os.path.join(CODEX_HOME, "sessions")], timeout=900)
     for path in (r.stdout or "").splitlines():
         tid = session_id_from_path("codex", path)
-        if threads.get(tid, ("",))[0] not in ("vscode", "cli") or tid in autos:
+        if threads.get(tid, ("",))[0] not in ("vscode", "cli"):
             continue
         st = {}
         try:
