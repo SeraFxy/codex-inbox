@@ -44,6 +44,7 @@ BOARD_HTML = os.path.join(BASE, "board.html")
 IMG_DIR = os.path.join(DATA_DIR, "images")
 CMUX_STATE = os.path.join(HOME, "Library", "Application Support", "cmux", "session-com.cmuxterm.app.json")
 CLAUDE_PROJECTS = os.path.join(HOME, ".claude", "projects")
+CLAUDE_LIVE = os.path.join(HOME, ".claude", "sessions")
 CODEX_HOME = os.path.join(HOME, ".codex")
 CMUX = "/Applications/cmux.app/Contents/Resources/bin/cmux"
 SUB_ENV = {
@@ -1222,6 +1223,42 @@ def automation_threads():
     return _auto_cache["ids"]
 
 
+def claude_live():
+    """开着的 Claude 会话自己报的状态（~/.claude/sessions/<pid>.json）：busy / idle / shell / waiting。
+    弹出批准框时是 waiting，waitingFor 写着在等什么。对话记录里不记批准框，只看它要等 10 分钟才猜得到。"""
+    found = {}
+    for path in glob.glob(os.path.join(CLAUDE_LIVE, "*.json")):
+        try:
+            with open(path, encoding="utf-8") as f:
+                d = json.load(f)
+            os.kill(int(d["pid"]), 0)   # 进程已经退出的残留文件不算
+        except (OSError, ValueError, KeyError, TypeError):
+            continue
+        sid = d.get("sessionId")
+        if sid and (d.get("updatedAt") or 0) >= (found.get(sid, {}).get("updatedAt") or 0):
+            found[sid] = d
+    return found
+
+
+WAITING_FOR = {
+    "input needed": "它在等你填一项信息",
+    "goal proposal": "它提了一个目标，在等你确认",
+    "sandbox request": "在等你批准一个沙箱外的访问",
+    "worker request": "后台任务在等你批准一个操作",
+    "dialog open": "开着一个对话框，在等你处理",
+}
+
+
+def waiting_headline(what, tool):
+    if what == "permission prompt" or not what:
+        if tool == "AskUserQuestion":
+            return "它问了你一个问题，在等你回答"
+        if tool == "ExitPlanMode":
+            return "计划写好了，在等你确认"
+        return ("在等你批准一个操作（%s）" % tool) if tool else "在等你批准一个操作"
+    return WAITING_FOR.get(what) or "在等你处理：「%s」" % what
+
+
 def include_session(st):
     if st["tool"] == "codex" and st["id"] in automation_threads():
         return False
@@ -1265,12 +1302,19 @@ def make_item(st, now, cfg, ov, sched, titles, goals, ctx):
     badges = []
     group, kind, headline, sort = "need", "me", "", 0
     stale_sec = cfg["stale_hours"] * 3600
+    live = ctx["live"].get(st["id"]) if st["tool"] == "claude" else None
+    busy = bool(live) and live.get("status") == "busy"   # 命令跑得久，不是卡住了
+    waiting = bool(live) and live.get("status") == "waiting" and (
+        live.get("waitingFor") != "dialog open" or turn == "running")   # 你自己在空闲时打开的对话框不算
 
     if ov and ov["action"] == "untrack":
         group, headline = "hidden", "不再跟踪"
     elif ov and ov["action"] == "done" and last <= (ov["at"] or 0) + 120:
         group, headline = "hidden", "已完成"
-    elif turn == "running" and st.get("last_kind") == "tool_use" and (
+    elif waiting:
+        group, kind, sort = "need", "approval", 0
+        headline = waiting_headline(live.get("waitingFor"), st.get("pending_tool") if turn == "running" else "")
+    elif turn == "running" and st.get("last_kind") == "tool_use" and not busy and (
             st.get("pending_tool") in ("AskUserQuestion", "ExitPlanMode") or idle > 600):
         group, kind, sort = "need", "approval", 0
         tool = st.get("pending_tool") or "操作"
@@ -1281,7 +1325,7 @@ def make_item(st, now, cfg, ov, sched, titles, goals, ctx):
         else:
             headline = "可能在等你批准一个操作（%s），也可能命令还在跑（已 %s）" % (tool, fmt_ago(idle))
     elif turn == "running":
-        if idle > cfg["interrupted_min"] * 60:
+        if idle > cfg["interrupted_min"] * 60 and not busy:
             group, kind, sort = "need", "interrupted", 0
             if st.get("last_kind") == "user":
                 ask = unquote(clean_line((st.get("last_prompt") or "").splitlines()[0] if st.get("last_prompt") else ""))[:40].rstrip(" ：:，,")
@@ -1429,7 +1473,7 @@ def build_board(conn, cfg, now=None):
         if cur is None or (r["status"] == "pending" and cur["status"] != "pending"):
             scheds[r["session_key"]] = r
     items, hidden = [], []
-    ctx = {"names": name_map(conn), "tags": tag_map(conn), "links": {},
+    ctx = {"names": name_map(conn), "tags": tag_map(conn), "links": {}, "live": claude_live(),
            "goals": {r["session_key"]: dict(r) for r in conn.execute("SELECT * FROM goals")}}
     for r in conn.execute("SELECT session_key, url, label, ts FROM links WHERE ts >= ? ORDER BY ts DESC", (now - 30 * 86400,)):
         ctx["links"].setdefault(r["session_key"], []).append({"url": r["url"], "label": r["label"], "name": link_name(r["url"]),

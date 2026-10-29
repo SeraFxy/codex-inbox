@@ -124,6 +124,7 @@ The first install copies `config.example.json` to `config.json`. Run `install.sh
 | Source | Used for |
 |---|---|
 | `~/.claude/projects/*/*.jsonl`, `~/.claude/history.jsonl` | Claude Code sessions, your messages and images |
+| `~/.claude/sessions/*.json` | Whether an open Claude session is running, idle, or showing an approval prompt |
 | `~/.codex/sessions/`, `~/.codex/*.sqlite`, `~/.codex/session_index.jsonl` | Codex sessions, titles, goals, your messages and images |
 | `~/Library/Application Support/cmux/session-*.json` | Session names you set in the cmux sidebar (read only) |
 

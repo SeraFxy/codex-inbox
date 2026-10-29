@@ -99,6 +99,7 @@ git clone https://github.com/SeraFxy/codex-inbox.git ~/codex-inbox
 | 来源 | 用途 |
 |---|---|
 | `~/.claude/projects/*/*.jsonl`、`~/.claude/history.jsonl` | Claude Code 会话、你发过的话和图片 |
+| `~/.claude/sessions/*.json` | 开着的 Claude 会话此刻在跑、空闲，还是弹着批准框在等你 |
 | `~/.codex/sessions/`、`~/.codex/*.sqlite`、`~/.codex/session_index.jsonl` | Codex 会话、标题、goal、你发过的话和图片 |
 | `~/Library/Application Support/cmux/session-*.json` | cmux 侧边栏里改过的会话名（只读） |
 
