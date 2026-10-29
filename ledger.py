@@ -147,7 +147,9 @@ PROJECT_PARENTS = [os.path.expanduser(x).rstrip("/") for x in (_START_CFG.get("p
 
 def open_db():
     os.makedirs(DATA_DIR, exist_ok=True)
+    os.chmod(DATA_DIR, 0o700)   # 对话记录和图片只给自己的账号读
     conn = sqlite3.connect(DB_PATH, timeout=15, check_same_thread=False)
+    os.chmod(DB_PATH, 0o600)
     conn.row_factory = sqlite3.Row
     conn.executescript(SCHEMA)
     return conn
@@ -1975,6 +1977,9 @@ def backfill_media():
 
 def cmd_serve(args):
     global APP
+    os.umask(0o077)   # 服务新建的数据、图片、日志都只给自己的账号读
+    os.makedirs(LOG_DIR, exist_ok=True)
+    os.chmod(LOG_DIR, 0o700)
     cfg = load_config()
     APP = App(cfg)
     migrate_tz(APP.conn)

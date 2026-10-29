@@ -2,6 +2,8 @@
 
 同时开很多个 Codex / Claude Code 会话时，很容易忘了哪个在等你回话、哪个在等同事、哪个今晚要发版。codex-inbox 是一个跑在你 Mac 上的本地看板：它读这两个工具留在本机的对话记录，按「现在等谁」把会话分好组，到点弹通知，还把你说过的话、AI 给过的链接和你发过的图片另存一份。
 
+English: [README.en.md](README.en.md)
+
 *A local macOS dashboard for people who run many Codex and Claude Code sessions at once. It reads the transcripts both tools already keep on disk, groups sessions by who they are waiting on, notifies you when something is due, and keeps a searchable copy of what you asked. No AI calls, no tokens, nothing leaves your machine. The UI is in Chinese.*
 
 名字里只写了 Codex 是为了好懂，**Codex（桌面版和 CLI）和 Claude Code 都支持**。
@@ -15,7 +17,9 @@
 - **另存目标、链接和图片**：Codex 的 goal、状态行里的 🎯 目标、AI 回复里给过的链接（飞书文档、MR、GitHub 等，代码块和命令行里的不算）、你发给 AI 的图片（按内容去重）。原会话被删了也还在。
 - **点「完成」不会弄丢**：完成的会话挪到最下面，你再和它说话，它会自动回到看板。
 - **会话名和标签**：会话名优先用你在 cmux 终端的侧边栏里手动改的名字；项目标签可以改名字、加 emoji、换颜色。
-- **可选**：在 cmux 里的 Claude 会话，可以用 `ledger schedule` 让它到点自己继续（比如晚上发版）；装了飞书命令行工具 lark-cli 的话，每天早上把汇总私信给你。
+- **可选功能**（需要另装工具，没装就用不了，其他功能不受影响）：
+  - 定时唤醒：在 cmux 终端里跑的 Claude 会话，可以用 `ledger schedule` 让它到点自己继续（比如晚上发版）。需要 cmux，且要在 cmux 设置里允许后台程序控制它（见「已知限制」）。
+  - 飞书每日汇总：装了飞书命令行工具 lark-cli 并在配置里填了 `feishu_open_id`，每天早上把汇总私信给你。
 
 全部是读本机文件，**不调用任何 AI，不花 token**。服务只监听 `127.0.0.1`，网络请求只有可选的飞书汇总。
 
@@ -97,13 +101,24 @@ Claude Code 会话要用「已定时」，还需要告诉它用这个命令安�
 | `~/.codex/sessions/`、`~/.codex/*.sqlite`、`~/.codex/session_index.jsonl` | Codex 会话、标题、goal、你发过的话和图片 |
 | `~/Library/Application Support/cmux/session-*.json` | cmux 侧边栏里改过的会话名（只读） |
 
-存在安装目录里（都不进 git）：`data/ledger.db`（会话状态、你的操作、你说过的话、目标、链接）、`data/images/`（图片，几百张约一两百 MB）、`logs/`、`config.json`。
+存在安装目录里（都不进 git，`data/` 和 `logs/` 只有你自己的账号能读）：`data/ledger.db`（会话状态、你的操作、你说过的话、目标、链接）、`data/images/`（图片，几百张约一两百 MB）、`logs/`、`config.json`。
+
+## 测试过的版本
+
+在下面这套环境里实际用过；别的版本大概率也能用，但没测过：
+
+- macOS 26.5，系统自带 Python 3.9
+- Codex 桌面版（ChatGPT.app 26.1023.51421，内置 codex-cli 0.165.0-alpha.1.2）
+- Claude Code 2.1.312
+
+Codex 部分读的是它的内部文件，文件名里带版本号：`~/.codex/state_5.sqlite`（会话来源和标题）、`goals_1.sqlite`（goal）、`thread_history_1.sqlite`（你发过的话、AI 回复里的链接），以及 `session_index.jsonl` 和 `sessions/` 下的对话记录。Codex 升级后如果这些文件改了名字或结构，相应的功能（标题、goal、「我说过的话」里的 Codex 部分）可能读不到，日志里会有提示；看板分组靠的是 `sessions/` 下的对话记录，一般不受影响。
 
 ## 已知限制
 
 - 只看最近 14 天有动静的会话；子代理、审查代理、Codex 自动任务线程和 `claude -p` 不进看板。
 - 「打开会话」：Codex 会话用 `codex://threads/<id>` 打开；Claude 会话要跳到 cmux 里的对应窗口，但 cmux 默认只允许在 cmux 里启动的程序控制它，开机自启的服务会被拒绝，这时看板只会提示，不会替你另开一个会话。要放开，需要在 cmux 设置里把 socket 访问方式改成密码模式。定时唤醒也受同样的限制。
 - Mac 睡眠时服务也在睡，通知和定时唤醒在醒来后补上；晚了超过 `wake_expire_hours` 的唤醒不再执行。
+- 看板的读取接口没有设密码：网页打不开它（服务会核对来源），但这台 Mac 上的程序都能读到会话列表、你说过的话和图片。改动操作（标完成、推迟、改标签等）需要令牌。用你自己账号跑的程序本来就能直接读 `data/` 里的数据库，加密码也挡不住；如果这台 Mac 还有别人的登录账号，请留意这一点。
 
 ## 许可证
 

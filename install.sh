@@ -16,6 +16,7 @@ case "$DIR" in
 esac
 
 mkdir -p "$DIR/data" "$DIR/logs" "$AGENTS"
+chmod 700 "$DIR/data" "$DIR/logs"   # 里面是你的对话记录，只给自己的账号读
 [ -f "$DIR/config.json" ] || cp "$DIR/config.example.json" "$DIR/config.json"
 
 # 停掉指向本目录的旧服务（包括换过名字的旧版本），避免两个实例抢同一个端口
