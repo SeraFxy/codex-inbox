@@ -8,6 +8,16 @@ The name only says Codex to keep it short. **Both Codex (desktop app and CLI) an
 
 **The UI and notifications are in Chinese**, and so are the six status keywords the AI writes (see "Status line" below).
 
+## Let your AI install it
+
+Send this to your Claude Code or Codex. It follows [INSTALL.md](INSTALL.md) to install and set everything up, and only stops when something needs you in person (signing in through the browser, clicking Allow on a system prompt, agreeing to a security setting change):
+
+```text
+Install codex-inbox for me: https://github.com/SeraFxy/codex-inbox — follow INSTALL.md in the repo step by step until it is done.
+```
+
+INSTALL.md is written in Chinese; coding agents follow it fine. To install by hand, see "Install" below.
+
 ## What it does
 
 - **Groups sessions by who they are waiting on**: four tabs on the left: your turn (needs you, waiting for your sign-off) / AI working / waiting (for a time, on a colleague) / to tidy up. Click a row to see details on the right. Keys: J / K to move, O to open the session, E to mark done, S to snooze, ⌘K to search. The grouping comes from a status line the AI writes at the end of each reply. Sessions without one are still listed, marked as "status unknown".
@@ -19,8 +29,8 @@ The name only says Codex to keep it short. **Both Codex (desktop app and CLI) an
 - **"Done" is not lost**: a session you mark done moves to the bottom and comes back by itself when you talk to it again.
 - **Session names and tags**: a session's name comes from the name you gave it in the cmux terminal sidebar, if any. Project tags can be renamed and given an emoji (they stay gray: color is reserved for status).
 - **Optional features** (they need extra tools; without them only these features are unavailable, everything else works):
-  - Scheduled wake-ups: a Claude session running in the cmux terminal can use `ledger schedule` to resume itself at a set time (for example, a release tonight). Needs cmux, with cmux set to allow background programs to control it (see "Known limitations").
-  - Daily Feishu digest: with the Feishu CLI `lark-cli` installed and `feishu_open_id` set in the config, a summary is sent to you as a Feishu direct message every morning.
+  - Scheduled wake-ups: a Claude session running in the cmux terminal can use `ledger schedule` to resume itself at a set time (for example, a release tonight). Needs cmux, with cmux set to allow background programs to control it (`ledger cmux-setup`, see "Known limitations").
+  - Daily Feishu digest: with the Feishu CLI `lark-cli` installed and `feishu_open_id` set in the config, a summary is sent to you as a Feishu direct message every morning. `ledger feishu-setup` fills it in and sends a test.
 
 Everything is read from local files. **It makes no AI calls and spends no tokens.** The server only listens on `127.0.0.1`; the only network request is the optional Feishu digest.
 
@@ -33,15 +43,23 @@ git clone https://github.com/SeraFxy/codex-inbox.git ~/codex-inbox
 ~/codex-inbox/install.sh
 ```
 
-Then open <http://127.0.0.1:47800>. Pinning it as a browser tab is recommended.
+Then open <http://127.0.0.1:47800>. Pinning it as a browser tab is recommended. Afterwards run `~/codex-inbox/ledger doctor`: it checks the installation item by item (read-only) and tells you the next step for anything missing.
 
 - **Do not install it under Desktop, Documents or Downloads**: macOS does not let background services read those folders. `install.sh` refuses and tells you so.
-- Installing registers a launchd service that starts at login (default label `local.codex-inbox`, change it with the `CODEX_INBOX_LABEL` environment variable) and compiles a small notifier app named 「AI 任务台账」. macOS asks whether to allow its notifications the first time one is shown.
+- Installing registers a launchd service that starts at login (default label `local.codex-inbox`, change it with the `CODEX_INBOX_LABEL` environment variable) and compiles a small notifier app named 「AI 任务台账」. It shows a welcome notification when installation finishes; click Allow when macOS asks whether to allow its notifications.
 - After updating the code, run `install.sh` again to restart the service. `uninstall.sh` stops and removes the service; your data stays in `data/`.
 
 ## Status line
 
-The dashboard groups sessions by the last line of each AI reply. Add the following to `~/.codex/AGENTS.md` (Codex) and `~/.claude/CLAUDE.md` (Claude Code). Keep the six status words, `目标：` and `完成标准：` in Chinese exactly as written: the dashboard matches on them. The one-line summary after the status can be in any language.
+The dashboard groups sessions by the last line of each AI reply. The rules live in [status-line.md](status-line.md) (in Chinese). After installing, run once:
+
+```sh
+~/codex-inbox/ledger rules install
+```
+
+It appends the rules to `~/.codex/AGENTS.md` (Codex) and `~/.claude/CLAUDE.md` (Claude Code), wrapped in `<!-- codex-inbox:status-line:start -->` / `<!-- codex-inbox:status-line:end -->` markers, with the full local path of `ledger schedule` filled in for 已定时. It only touches the tools you have installed, and skips a file that already has a hand-written status-line rule (one containing `📌 <状态>`). Run it again after updating to refresh the block in place; `ledger rules show` previews it and `ledger rules remove` deletes only what is between the markers. Only new sessions pick up the rules.
+
+If you prefer English wording, add the version below by hand instead. Keep the six status words, `目标：` and `完成标准：` in Chinese exactly as written: the dashboard matches on them. The one-line summary after the status can be in any language.
 
 ```markdown
 ## Task inbox status line
@@ -95,6 +113,10 @@ The first install copies `config.example.json` to `config.json`. Run `install.sh
 ./ledger schedules           # recent scheduled wake-ups
 ./ledger cancel <id>         # cancel a scheduled wake-up
 ./ledger digest              # preview the Feishu digest (--send to send it)
+./ledger doctor              # check the installation item by item and print next steps (read-only)
+./ledger rules install       # add the status-line rules (remove to delete them, show to preview)
+./ledger feishu-setup        # set up the Feishu digest and send a test (--dry-run to only look)
+./ledger cmux-setup          # let the dashboard service control cmux, needed for wake-ups (--dry-run to only look)
 ```
 
 ## What it reads and stores
@@ -120,7 +142,7 @@ The Codex side reads Codex's internal files, whose names carry a version number:
 ## Known limitations
 
 - Only sessions active within the last 14 days are shown. Subagents, review agents, Codex automation threads and `claude -p` runs are left out.
-- "Open session": Codex sessions open through `codex://threads/<id>`. Claude sessions jump to their cmux window, but by default cmux only accepts control from programs started in cmux terminals, so the login service is refused; the dashboard then shows a hint and does not start a new session for you. Scheduled wake-ups have the same limitation. To allow it, switch cmux to password mode: add `"automation": {"socketControlMode": "password", "socketPassword": "<a long random password>"}` to `~/.config/cmux/cmux.json` and run `cmux reload-config` (or change "Socket Control Mode" and set a password under cmux Settings → Automation). The cmux CLI reads this password on its own, so the dashboard needs no extra configuration; programs running in cmux terminals are not affected.
+- "Open session": Codex sessions open through `codex://threads/<id>`. Claude sessions jump to their cmux window, but by default cmux only accepts control from programs started in cmux terminals, so the login service is refused; the dashboard then shows a hint and does not start a new session for you. Scheduled wake-ups have the same limitation. To allow it, switch cmux to password mode: add `"automation": {"socketControlMode": "password", "socketPassword": "<a long random password>"}` to `~/.config/cmux/cmux.json` and run `cmux reload-config` (or change "Socket Control Mode" and set a password under cmux Settings → Automation). The cmux CLI reads this password on its own, so the dashboard needs no extra configuration; programs running in cmux terminals are not affected. `ledger cmux-setup` can make this change for you (if the file has comments, it only prints instructions instead of editing it).
 - While the Mac sleeps the service sleeps too; notifications and wake-ups catch up after it wakes. Wake-ups late by more than `wake_expire_hours` are skipped.
 - The dashboard's read endpoints have no password. Web pages cannot read them (the server checks the Host and Origin headers), but any program on this Mac can read the session list, your messages and images. Changes (marking done, snoozing, editing tags and so on) require a token. Programs running under your own account could read the database in `data/` directly anyway, so a password would not stop them; if other people have accounts on this Mac, keep this in mind.
 
@@ -136,3 +158,5 @@ MIT, see [LICENSE](LICENSE).
 | `board.html` | The dashboard page |
 | `notifier/` | Source of the notifier app (`notify.applescript`), its build script and the icon (drawn to the Blink design spec; source in `icon/icon.svg`) |
 | `install.sh` / `uninstall.sh` | Install / remove the login service |
+| `status-line.md` | The single source of the status-line rules; `ledger rules install` reads it |
+| `INSTALL.md` | Install steps written for AI coding agents (in Chinese) |

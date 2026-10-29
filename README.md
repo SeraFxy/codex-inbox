@@ -8,6 +8,16 @@ English: [README.en.md](README.en.md)
 
 名字里只写了 Codex 是为了好懂，**Codex（桌面版和 CLI）和 Claude Code 都支持**。
 
+## 让 AI 帮你装
+
+把下面这句话发给你的 Claude Code 或 Codex，它会按 [INSTALL.md](INSTALL.md) 把安装和设置做完，只在需要你本人动手时（浏览器里授权、系统弹窗点允许、同意改安全设置）停下来问你：
+
+```text
+帮我安装 codex-inbox：https://github.com/SeraFxy/codex-inbox ，按仓库里的 INSTALL.md 一步步做完
+```
+
+想自己动手，看下面的「安装」。
+
 ## 它能做什么
 
 - **按「现在等谁」分组**：左边四个标签页：轮到你（现在需要你、待你确认完成）/ AI 在做 / 在等（等时间点、等同事）/ 待整理，点一条右边出详情。键盘 J / K 上下，O 打开会话，E 完成，S 推迟，⌘K 搜索。分组依据是 AI 每条回复最后写的一行状态（见下面的「状态行」），没写状态的会话也会列出来，标成「状态不明」。
@@ -19,8 +29,8 @@ English: [README.en.md](README.en.md)
 - **点「完成」不会弄丢**：完成的会话挪到最下面，你再和它说话，它会自动回到看板。
 - **会话名和标签**：会话名优先用你在 cmux 终端的侧边栏里手动改的名字；项目短码可以改名字、加 emoji（项目一律灰色，颜色只用来表示状态）。
 - **可选功能**（需要另装工具，没装就用不了，其他功能不受影响）：
-  - 定时唤醒：在 cmux 终端里跑的 Claude 会话，可以用 `ledger schedule` 让它到点自己继续（比如晚上发版）。需要 cmux，且要在 cmux 设置里允许后台程序控制它（见「已知限制」）。
-  - 飞书每日汇总：装了飞书命令行工具 lark-cli 并在配置里填了 `feishu_open_id`，每天早上把汇总私信给你。
+  - 定时唤醒：在 cmux 终端里跑的 Claude 会话，可以用 `ledger schedule` 让它到点自己继续（比如晚上发版）。需要 cmux，且要在 cmux 设置里允许后台程序控制它（`ledger cmux-setup`，见「已知限制」）。
+  - 飞书每日汇总：装了飞书命令行工具 lark-cli 并在配置里填了 `feishu_open_id`，每天早上把汇总私信给你。`ledger feishu-setup` 会替你填好并发一条测试。
 
 全部是读本机文件，**不调用任何 AI，不花 token**。服务只监听 `127.0.0.1`，网络请求只有可选的飞书汇总。
 
@@ -33,40 +43,23 @@ git clone https://github.com/SeraFxy/codex-inbox.git ~/codex-inbox
 ~/codex-inbox/install.sh
 ```
 
-然后打开 <http://127.0.0.1:47800>，建议固定在浏览器标签栏。
+然后打开 <http://127.0.0.1:47800>，建议固定在浏览器标签栏。装完运行 `~/codex-inbox/ledger doctor`，它逐项检查安装（只读），没装好的会告诉你下一步。
 
 - **不要装在「桌面」「文稿」「下载」里**：macOS 不让后台服务读这几个目录，`install.sh` 会拦住并提示。
-- 安装会注册一个开机自启的 launchd 服务（默认名 `local.codex-inbox`，可以用环境变量 `CODEX_INBOX_LABEL` 改），并编译一个叫「AI 任务台账」的通知小程序。第一次弹通知时，macOS 会问要不要允许它发通知。
+- 安装会注册一个开机自启的 launchd 服务（默认名 `local.codex-inbox`，可以用环境变量 `CODEX_INBOX_LABEL` 改），并编译一个叫「AI 任务台账」的通知小程序。装完会弹一条欢迎通知，macOS 问要不要允许它发通知时点允许。
 - 更新代码后再运行一次 `install.sh` 就会重启服务；`uninstall.sh` 停止并移除服务，数据留在 `data/`。
 
 ## 让 AI 写状态行
 
-看板靠 AI 每条回复最后一行的状态来分组。把下面这段加进 `~/.codex/AGENTS.md`（Codex）和 `~/.claude/CLAUDE.md`（Claude Code）：
-
-```markdown
-## 任务台账状态行
-每条直接回复我的消息，最后一行写状态（作为子代理或非交互运行时不写）：
-`📌 <状态>｜<一句话>｜<时间，可省>`
-状态只用六个词：等你 / 等同事 / 等时间点 / 已定时 / AI在做 / 待你确认完成。
-- 等你：写我下一步要做的具体动作，不写「请查看」这类空话。
-- 等同事：写成「等同事（姓名）」，时间写约定再跟进的时间。
-- 等时间点：需要我本人到点去做的事，时间必填。
-- 已定时：你已经安排自己到点继续，时间必填（目前只有 cmux 里的 Claude 会话支持）。
-- AI在做：你还在后台跑，暂时不需要我。
-- 待你确认完成：已达到完成标准，一句话写证据；不要自己写「已完成」。
-- 时间写成 `YYYY-MM-DD HH:MM`（和看板同一个时区）。回复正文里不要再出现 📌 和 🎯。
-任务的第一条回复，以及目标或完成标准变了的时候，在 📌 上面加一行：
-`🎯 目标：<一句话>｜完成标准：<做到什么算完>`
-有事要我拍板时，在 📌 上面每件写一行（不要放进代码块）：
-`❓ <要我决定的事>｜<选项1>｜<选项2>`
-选项写成能直接当答复的短词（如「提交｜先别」），最多 6 个；没有固定选项就只写事情。这几行就是给我的清单，正文里不用再列一遍。我会按「1. <事情>：<我选的>」逐条回复，没选的写「待定」。
-```
-
-Claude Code 会话要用「已定时」，还需要告诉它用这个命令安排唤醒（把路径换成你的安装目录）：
+看板靠 AI 每条回复最后一行的状态来分组。规则写在 [status-line.md](status-line.md)，装好后运行一次：
 
 ```sh
-~/codex-inbox/ledger schedule --at "YYYY-MM-DD HH:MM" --note "<看板上的一句话>" --prompt "<到点要做什么>"
+~/codex-inbox/ledger rules install
 ```
+
+它把规则加到 `~/.codex/AGENTS.md`（Codex）和 `~/.claude/CLAUDE.md`（Claude Code）的末尾，前后用 `<!-- codex-inbox:status-line:start -->` / `<!-- codex-inbox:status-line:end -->` 标记包好，「已定时」要用的 `ledger schedule` 会换成你本机的完整路径。只给装了的工具加；文件里已经有你手写的状态行规则（含 `📌 <状态>`）就跳过。更新代码后再运行一次会原地更新；`ledger rules show` 预览，`ledger rules remove` 只删标记之间的内容。新开的会话才会按规则写。
+
+手动加也行：把 status-line.md 开头说明注释以下的内容复制进上面两个文件，把 `{{LEDGER}}` 换成 `<安装目录>/ledger`。
 
 ## 配置
 
@@ -95,6 +88,10 @@ Claude Code 会话要用「已定时」，还需要告诉它用这个命令安�
 ./ledger schedules           # 最近的定时唤醒
 ./ledger cancel <编号>        # 取消定时唤醒
 ./ledger digest              # 预览飞书汇总（--send 发送）
+./ledger doctor              # 体检：逐项检查安装，给出下一步（只读）
+./ledger rules install       # 加状态行规则（remove 删掉，show 预览）
+./ledger feishu-setup        # 设置飞书每日汇总并发一条测试（--dry-run 只看不做）
+./ledger cmux-setup          # 让看板服务能控制 cmux，定时唤醒要用（--dry-run 只看不做）
 ```
 
 ## 读了哪些文件、存了什么
@@ -120,7 +117,7 @@ Codex 部分读的是它的内部文件，文件名里带版本号：`~/.codex/s
 ## 已知限制
 
 - 只看最近 14 天有动静的会话；子代理、审查代理、Codex 自动任务线程和 `claude -p` 不进看板。
-- 「打开会话」：Codex 会话用 `codex://threads/<id>` 打开；Claude 会话要跳到 cmux 里的对应窗口，但 cmux 默认只允许在 cmux 终端里启动的程序控制它，开机自启的看板服务会被拒绝，这时看板只会提示，不会替你另开一个会话；定时唤醒也受同样的限制。要放开，把 cmux 改成密码模式：在 `~/.config/cmux/cmux.json` 里加上 `"automation": {"socketControlMode": "password", "socketPassword": "<随便一串长密码>"}`，再运行 `cmux reload-config`（也可以在 cmux 设置 → 自动化里改「套接字控制模式」并设密码）。cmux 命令行会自己读这个密码，看板不用另外配置；在 cmux 终端里跑的程序不受影响。
+- 「打开会话」：Codex 会话用 `codex://threads/<id>` 打开；Claude 会话要跳到 cmux 里的对应窗口，但 cmux 默认只允许在 cmux 终端里启动的程序控制它，开机自启的看板服务会被拒绝，这时看板只会提示，不会替你另开一个会话；定时唤醒也受同样的限制。要放开，把 cmux 改成密码模式：在 `~/.config/cmux/cmux.json` 里加上 `"automation": {"socketControlMode": "password", "socketPassword": "<随便一串长密码>"}`，再运行 `cmux reload-config`（也可以在 cmux 设置 → 自动化里改「套接字控制模式」并设密码）。cmux 命令行会自己读这个密码，看板不用另外配置；在 cmux 终端里跑的程序不受影响。`ledger cmux-setup` 可以替你改（文件带注释时它只打印说明，不硬改）。
 - Mac 睡眠时服务也在睡，通知和定时唤醒在醒来后补上；晚了超过 `wake_expire_hours` 的唤醒不再执行。
 - 看板的读取接口没有设密码：网页打不开它（服务会核对来源），但这台 Mac 上的程序都能读到会话列表、你说过的话和图片。改动操作（标完成、推迟、改标签等）需要令牌。用你自己账号跑的程序本来就能直接读 `data/` 里的数据库，加密码也挡不住；如果这台 Mac 还有别人的登录账号，请留意这一点。
 
@@ -136,3 +133,5 @@ MIT，见 [LICENSE](LICENSE)。
 | `board.html` | 看板页面 |
 | `notifier/` | 通知小程序的源码（`notify.applescript`）、编译脚本和图标（按 Blink 视觉规范画的，源文件 `icon/icon.svg`） |
 | `install.sh` / `uninstall.sh` | 安装 / 移除开机自启 |
+| `status-line.md` | 状态行规则的唯一来源，`ledger rules install` 从这里读 |
+| `INSTALL.md` | 给 AI 代理看的安装步骤 |

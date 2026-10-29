@@ -14,3 +14,4 @@ for f in "$AGENTS"/*.plist; do
   fi
 done
 [ "$found" = 1 ] && echo "已停止并移除后台服务" || echo "没找到指向 $DIR 的后台服务"
+echo "要同时删掉加进 Codex / Claude Code 规则文件里的状态行规则，运行：$DIR/ledger rules remove"
