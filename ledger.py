@@ -236,6 +236,7 @@ def fmt_ago(sec):
 
 STATUS_RE = re.compile(r"📌\s*(.+)")
 GOAL_RE = re.compile(r"🎯\s*(.+)")
+ASK_RE = re.compile(r"^\s*(?:[-*]\s+)?❓️?\s*(.+)")
 SEP_RE = re.compile(r"\s*[｜|]\s*")
 CLEAN_RE = re.compile(r"[`*]+")
 TIME_FULL_RE = re.compile(r"(?:(\d{4})[-/年])?(\d{1,2})[-/月](\d{1,2})日?\s*(\d{1,2})[:：](\d{2})")
@@ -333,6 +334,20 @@ def parse_goal(text):
         elif not goal:
             goal = p
     return {"goal": goal, "criteria": criteria}
+
+
+def parse_decisions(text):
+    """「❓ 事情｜选项｜选项」：每行一件等你拍板的事；代码块里的是举例，不算。"""
+    items, fence = [], False
+    for line in (text or "").splitlines():
+        if line.lstrip().startswith("```"):
+            fence = not fence
+            continue
+        m = None if fence else ASK_RE.match(line)
+        parts = split_parts(m.group(1)) if m else None
+        if parts:
+            items.append({"q": parts[0][:200], "opts": [o[:40] for o in parts[1:7]]})
+    return items[:12]
 
 
 # ---------------------------------------------------------------- 产出链接与图片
@@ -1228,10 +1243,15 @@ def make_item(st, now, cfg, ov, sched, titles, goals, ctx):
     turn = st.get("turn")
     status = st.get("status")
     has_status = st.get("final_has_status")
+    decisions = []
     if turn == "running" and st.get("last_kind") == "assistant_text" and idle > 120:
         turn = "ended"
         status = parse_status(st.get("turn_text", ""), last) or None
         has_status = bool(status)
+        decisions = parse_decisions(st.get("turn_text"))
+    elif turn == "ended" and (st.get("final_ts") or 0) >= (st.get("last_user_ts") or 0):
+        # 中断的那一轮不更新 final_ts，last_text 还是上一轮的，里面的选项已经过时
+        decisions = parse_decisions(st.get("last_text"))
     goal_obj = st.get("goal") or {}
     codex_goal = goals.get(st["id"], {}) if st["tool"] == "codex" else {}
     title = (ctx["names"].get(key) or st.get("custom_title") or titles.get(st["id"]) or st.get("ai_title") or goal_obj.get("goal")
@@ -1348,6 +1368,10 @@ def make_item(st, now, cfg, ov, sched, titles, goals, ctx):
     if snoozed and group in ("need", "peer", "confirm", "backlog"):
         group, sort = "time", ov["until_ts"]
         headline = "推迟到 %s · %s" % (fmt_time(ov["until_ts"], now), headline)
+    if decisions and group != "hidden":
+        badges.insert(0, "%d 件待你决定" % len(decisions))
+    else:
+        decisions = []
 
     if st["tool"] == "claude":
         resume = "cd %s && claude --resume %s" % (shell_quote(st.get("cwd") or HOME), st["id"])
@@ -1372,6 +1396,7 @@ def make_item(st, now, cfg, ov, sched, titles, goals, ctx):
             "lastPrompt": (st.get("last_prompt") or "")[:300] if st.get("last_prompt") != st.get("first_prompt") else "",
             "lastReply": tail_text(st.get("last_text") or st.get("progress_text")),
             "status": ("📌 " + status["label"] + ("｜" + status["desc"] if status.get("desc") else "")) if status else "",
+            "decisions": decisions,
             "cwd": st.get("cwd") or "", "branch": st.get("branch") or "", "id": st["id"], "resume": resume,
         },
     }
