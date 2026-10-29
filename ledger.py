@@ -93,6 +93,7 @@ CREATE TABLE IF NOT EXISTS prompts (id TEXT PRIMARY KEY, session_key TEXT, tool 
 CREATE INDEX IF NOT EXISTS prompts_ts ON prompts(ts);
 CREATE INDEX IF NOT EXISTS prompts_session ON prompts(session_key, ts);
 CREATE TABLE IF NOT EXISTS names (session_key TEXT PRIMARY KEY, title TEXT, at REAL);
+CREATE TABLE IF NOT EXISTS cmux_open (session_key TEXT PRIMARY KEY);
 CREATE TABLE IF NOT EXISTS tags (project TEXT PRIMARY KEY, label TEXT, color TEXT);
 CREATE TABLE IF NOT EXISTS goals (session_key TEXT PRIMARY KEY, goal TEXT, criteria TEXT, status TEXT, at REAL);
 CREATE TABLE IF NOT EXISTS links (session_key TEXT, url TEXT, label TEXT, ts REAL, PRIMARY KEY (session_key, url));
@@ -758,7 +759,7 @@ def scan(conn, cfg):
                      (key, st["last_ts"] or stt.st_mtime, json.dumps(st, ensure_ascii=False)))
         conn.execute("INSERT OR REPLACE INTO files (path, session_key, size, mtime, offset) VALUES (?, ?, ?, ?, ?)",
                      (path, key, stt.st_size, stt.st_mtime, offset))
-    for step in (sync_prompts, sync_codex_goals, sync_cmux_names):
+    for step in (sync_prompts, sync_codex_goals, sync_cmux):
         try:
             step(conn)
         except Exception:
@@ -947,30 +948,31 @@ def sync_codex_goals(conn):
         save_goal(conn, "codex:" + tid, g.get("objective"), "", g.get("status"))
 
 
-_cmux_names = {"mtime": None}
+_cmux_state = {"mtime": None}
 
 
-def sync_cmux_names(conn):
-    """cmux 侧边栏里你手动改的名字（只认单个 AI 会话的工作区，分组标题不算）。"""
+def sync_cmux(conn):
+    """读 cmux 记下的工作区：侧边栏里你手动改的名字（只认单个 AI 会话的工作区，分组标题不算），
+    和哪些会话的标签页关掉了。"""
     try:
         mt = os.stat(CMUX_STATE).st_mtime
     except OSError:
         return
-    if mt == _cmux_names["mtime"]:
+    if mt == _cmux_state["mtime"]:
         return
     with open(CMUX_STATE, encoding="utf-8") as f:
         data = json.load(f)
-    _cmux_names["mtime"] = mt
+    _cmux_state["mtime"] = mt
     now = time.time()
+    open_keys = set()
     for win in data.get("windows") or []:
         tm = win.get("tabManager") or {}
         anchors = {g.get("anchorWorkspaceId") for g in tm.get("workspaceGroups") or []}
         for w in tm.get("workspaces") or []:
-            if w.get("workspaceId") in anchors:
-                continue
             agents = [((p.get("terminal") or {}).get("agent") or {}) for p in w.get("panels") or []]
             agents = [a for a in agents if a.get("sessionId") and a.get("kind") in ("claude", "codex")]
-            if len(agents) != 1:
+            open_keys.update("%s:%s" % (a["kind"], a["sessionId"]) for a in agents)
+            if w.get("workspaceId") in anchors or len(agents) != 1:
                 continue
             key = "%s:%s" % (agents[0]["kind"], agents[0]["sessionId"])
             title = (w.get("customTitle") or "").strip()
@@ -980,6 +982,30 @@ def sync_cmux_names(conn):
                              (key, title, now))
             else:
                 conn.execute("DELETE FROM names WHERE session_key=?", (key,))
+    sync_closed_tabs(conn, open_keys, now)
+
+
+def sync_closed_tabs(conn, open_keys, now):
+    """在 cmux 里关掉标签页的会话，自动标为完成；之后又在 cmux 里打开（比如看板上点「打开会话」），自动回到看板。
+    还挂着的事不动：已定时、等同事、等时间点还没到的，多半是先关掉省内存，到点还要提醒你。"""
+    if not open_keys:
+        return   # 一个 AI 会话都没有，更像 cmux 重置了状态文件，不当成你全关了
+    seen = {r["session_key"] for r in conn.execute("SELECT session_key FROM cmux_open")}
+    for key in seen - open_keys:
+        ov = conn.execute("SELECT action, at FROM overrides WHERE key=?", (key,)).fetchone()
+        row = conn.execute("SELECT last_activity, data FROM sessions WHERE key=?", (key,)).fetchone()
+        last = row["last_activity"] if row else 0
+        if ov and (ov["action"] == "untrack" or ov["action"] in ("done", "closed") and last <= (ov["at"] or 0) + 120):
+            continue
+        status = (json.loads(row["data"]).get("status") or {}) if row else {}
+        if (status.get("kind") == "peer" or status.get("kind") in ("time", "sched", "me") and (status.get("at") or 0) > now
+                or conn.execute("SELECT 1 FROM schedules WHERE session_key=? AND status='pending'", (key,)).fetchone()):
+            continue
+        conn.execute("INSERT OR REPLACE INTO overrides (key, action, until_ts, at) VALUES (?, 'closed', NULL, ?)", (key, now))
+        log("cmux 标签页关了，自动标为完成：%s" % key)
+    conn.executemany("DELETE FROM overrides WHERE key=? AND action='closed'", [(k,) for k in open_keys])
+    conn.execute("DELETE FROM cmux_open")
+    conn.executemany("INSERT INTO cmux_open (session_key) VALUES (?)", [(k,) for k in open_keys])
 
 
 def name_map(conn):
@@ -1299,8 +1325,8 @@ def make_item(st, now, cfg, ov, sched, titles, goals, ctx):
 
     if ov and ov["action"] == "untrack":
         group, headline = "hidden", "不再跟踪"
-    elif ov and ov["action"] == "done" and last <= (ov["at"] or 0) + 120:
-        group, headline = "hidden", "已完成"
+    elif ov and ov["action"] in ("done", "closed") and last <= (ov["at"] or 0) + 120:
+        group, headline = "hidden", "已完成" if ov["action"] == "done" else "关了 cmux 标签页，自动标为完成"
     elif waiting:
         group, kind, sort = "need", "approval", 0
         headline = waiting_headline(live.get("waitingFor"), st.get("pending_tool") if turn == "running" else "")
