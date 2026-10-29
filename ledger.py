@@ -19,6 +19,7 @@ import glob
 import hashlib
 import json
 import os
+import plistlib
 import re
 import secrets
 import shutil
@@ -2026,6 +2027,358 @@ def _guard(fn):
         log("%s 出错：%s" % (fn.__name__, traceback.format_exc()))
 
 
+# ---------------------------------------------------------------- 安装辅助：状态行规则、体检、飞书和 cmux 设置
+# 给 INSTALL.md 里的安装步骤用。doctor 只读：不建 data/、不写日志、不改任何配置。
+
+RULES_FILE = os.path.join(BASE, "status-line.md")
+RULES_START = "<!-- codex-inbox:status-line:start -->"
+RULES_END = "<!-- codex-inbox:status-line:end -->"
+HANDWRITTEN_RULE = "📌 <状态>"   # 没有标记但有这句，说明用户自己手写过规则，不再重复加
+CMUX_CONFIG = os.path.join(HOME, ".config", "cmux", "cmux.json")
+BLOCKED_DIRS = {"Desktop": "桌面", "Documents": "文稿", "Downloads": "下载"}
+
+
+def home_rel(path):
+    """给人看、也能直接粘贴进终端的路径：家目录写成 ~，有空格等特殊字符时加引号。"""
+    p = "~" + path[len(HOME):] if path == HOME or path.startswith(HOME + "/") else path
+    return p if re.match(r"^[\w./~+@%-]+$", p) else shell_quote(path)
+
+
+def ledger_cmd(*args):
+    return " ".join([home_rel(os.path.join(BASE, "ledger"))] + list(args))
+
+
+def rule_targets():
+    """[(工具名, 规则文件)]：工具的目录在（装过）才往里加。"""
+    return [("Codex", os.path.join(CODEX_HOME, "AGENTS.md")), ("Claude Code", os.path.join(HOME, ".claude", "CLAUDE.md"))]
+
+
+def rules_block():
+    """status-line.md 去掉开头的说明，把 {{LEDGER}} 换成本机 ledger 的完整路径，再用标记包起来。"""
+    with open(RULES_FILE, encoding="utf-8") as f:
+        text = re.sub(r"\A\s*<!--.*?-->\s*", "", f.read(), flags=re.S).strip()
+    ledger = os.path.join(BASE, "ledger")
+    text = text.replace("{{LEDGER}}", ledger if re.match(r"^[\w./+@%-]+$", ledger) else shell_quote(ledger))
+    return "%s\n%s\n%s" % (RULES_START, text, RULES_END)
+
+
+def read_rules_file(path):
+    """返回 (状态, 内容)。状态：missing 没有文件 / marked 有成对标记 / broken 标记不成对 / handwritten 手写过 / none 没有规则。"""
+    try:
+        with open(path, encoding="utf-8") as f:
+            text = f.read()
+    except FileNotFoundError:
+        return "missing", ""
+    s = text.find(RULES_START)
+    if s >= 0 and text.find(RULES_END, s) > s:
+        return "marked", text
+    if s >= 0 or RULES_END in text:
+        return "broken", text
+    return ("handwritten" if HANDWRITTEN_RULE in text else "none"), text
+
+
+def splice_rules(text, block):
+    """把标记之间（含标记）换成 block；block 为空就删掉，并收拾多出来的空行。"""
+    s = text.find(RULES_START)
+    e = text.find(RULES_END, s) + len(RULES_END)
+    if block:
+        return text[:s] + block + text[e:]
+    before, after = text[:s].rstrip("\n"), text[e:].strip("\n")
+    return "\n\n".join(x for x in (before, after) if x) + ("\n" if before or after else "")
+
+
+def rules_status(path, block):
+    """(代号, 给人看的一句话)，doctor 和 rules show 共用。"""
+    state, text = read_rules_file(path)
+    if state == "marked":
+        s = text.find(RULES_START)
+        if text[s:text.find(RULES_END, s) + len(RULES_END)] != block:
+            return "old", "已加，但和 status-line.md 不一致（代码更新过）"
+        if HANDWRITTEN_RULE in splice_rules(text, ""):
+            return "dup", "已加，但文件里另有一段手写的规则，两段重复了"
+        return "ok", "已加（codex-inbox 标记）"
+    return {"handwritten": ("hand", "有你手写的状态行规则"), "broken": ("broken", "codex-inbox 标记不成对"),
+            "missing": ("none", "还没加（文件还不存在）"), "none": ("none", "还没加")}[state]
+
+
+def write_text(path, text):
+    # 原地写：规则文件可能是指向别处的软链接，不能换成新文件
+    with open(path, "w", encoding="utf-8") as f:
+        f.write(text)
+
+
+def apply_rules(path, action, block):
+    """对一个文件执行 install / remove，返回做了什么。"""
+    state, text = read_rules_file(path)
+    if state == "broken":
+        return "跳过：codex-inbox 标记不成对（只找到开始或结束那一行），请手动删掉残缺的标记再运行"
+    if action == "remove":
+        if state != "marked":
+            return "没有 codex-inbox 加的规则，不用删" + ("（你手写的规则没动）" if state == "handwritten" else "")
+        write_text(path, splice_rules(text, ""))
+        return "已删掉标记之间的规则，文件其他内容没动"
+    if state == "handwritten":
+        return "跳过：文件里已经有你手写的状态行规则（含「%s」）。想换成自动维护的版本，先删掉手写的那段再运行" % HANDWRITTEN_RULE
+    if state == "marked":
+        new = splice_rules(text, block)
+        if new == text:
+            return "已是最新，没改"
+        write_text(path, new)
+        return "已原地更新标记之间的规则"
+    write_text(path, (text.rstrip("\n") + "\n\n" if text.strip() else "") + block + "\n")
+    return "已新建文件并加上规则" if state == "missing" else "已在文件末尾加上规则"
+
+
+def board_up(port):
+    try:
+        urlopen("http://127.0.0.1:%s/" % port, timeout=3).read(64)
+        return True
+    except OSError:
+        return False
+
+
+def ledger_services():
+    """~/Library/LaunchAgents 里跑 ledger.py serve 的服务：[(label, ledger.py 所在目录)]。"""
+    out = []
+    for f in sorted(glob.glob(os.path.join(HOME, "Library", "LaunchAgents", "*.plist"))):
+        try:
+            with open(f, "rb") as fp:
+                pl = plistlib.load(fp)
+            args, label = pl.get("ProgramArguments") or [], pl.get("Label") or os.path.basename(f)[:-6]
+        except Exception:
+            continue
+        for a in args:
+            if isinstance(a, str) and a.endswith("/ledger.py") and "serve" in args:
+                out.append((label, os.path.realpath(os.path.dirname(a))))
+    return out
+
+
+def read_token():
+    """只读已有的令牌，不像 load_token 那样没有就新建。"""
+    try:
+        with open(TOKEN_PATH, encoding="utf-8") as f:
+            return f.read().strip()
+    except OSError:
+        return ""
+
+
+def board_selftest(cfg):
+    """请本目录的看板服务从开机自启的环境里试调 cmux（和 lark-cli）。服务没在跑、或端口上是别的安装时返回 None。"""
+    tok = read_token()
+    if not tok:
+        return None
+    try:
+        req = Request("http://127.0.0.1:%s/api/selftest" % cfg["port"], data=b"{}", method="POST",
+                      headers={"X-Ledger-Token": tok, "Content-Type": "application/json"})
+        return json.loads(urlopen(req, timeout=60).read())
+    except (OSError, ValueError):
+        return None
+
+
+def cmux_mode():
+    """cmux 实际在用的套接字控制模式（cmux.json 里的，没有就是设置里的或默认值）；读不到返回空串。"""
+    r = cmux("config", "get", "automation.socketControlMode")
+    m = re.search(r'=\s*"?([\w-]+)', r.stdout or "")
+    return m.group(1) if r.returncode == 0 and m else ""
+
+
+def lark_status():
+    """飞书这边走到哪一步：(代号, 当前登录的人 {userName, openId}, 下一步)。
+    代号：missing 没装 / unconfigured 没建应用 / login 没登录 / error 出错 / ready 可以发。"""
+    if not (os.path.isabs(LARK) and os.access(LARK, os.X_OK)):
+        npm = shutil.which("npm", path=SUB_ENV["PATH"])
+        return "missing", {}, "npm install -g @larksuite/cli" + ("" if npm else "（要先装 Node.js：brew install node，或到 nodejs.org 下载安装包）")
+    r = run([LARK, "whoami"], timeout=30)
+    who = None
+    for out in (r.stdout or "", r.stderr or ""):   # 出错时 JSON 写在 stderr 里
+        try:
+            who = json.loads(out[out.index("{"):])
+            break
+        except ValueError:
+            continue
+    if not isinstance(who, dict):
+        return "error", {}, "lark-cli whoami 没输出 JSON（%s）：运行 lark-cli doctor 看看" % (r.stderr or r.stdout or "").strip()[:100]
+    err = who.get("error") or {}
+    if who.get("ok") is False or err:
+        if err.get("subtype") == "not_configured":
+            return "unconfigured", {}, "lark-cli config init --new（会一直等你在浏览器里建好应用；AI 代理请放到后台跑，从输出里取链接给用户）"
+        return "error", {}, "lark-cli 报错：%s。%s" % (err.get("message") or "未知错误", err.get("hint") or "运行 lark-cli doctor 看看")
+    me = who.get("onBehalfOf") or {}
+    if not me.get("openId"):
+        return "login", {}, "lark-cli auth login（在浏览器里授权；AI 代理可以加 --no-wait --json 先拿到授权链接）"
+    return "ready", me, ""
+
+
+def read_config_file():
+    """config.json 原样读出（不合并默认值），改完写回时保留用户的其他配置；没有文件返回 {}，不是合法 JSON 抛 ValueError。"""
+    try:
+        with open(CONFIG_PATH, encoding="utf-8") as f:
+            data = json.load(f)
+    except FileNotFoundError:
+        return {}
+    if not isinstance(data, dict):
+        raise ValueError("config.json 最外层不是 {}")
+    return data
+
+
+def utc_text(h):
+    return "UTC%+g" % h
+
+
+def doctor_items():
+    """逐项体检。level：必做 / 可选 / 提示；state：ok / fail / off（可选，没启用）/ warn（提示，看情况）。"""
+    items = []
+
+    def add(level, state, name, text, nxt="", note=""):
+        items.append({"level": level, "state": state, "name": name, "text": text, "next": nxt, "note": note})
+
+    cfg = load_config()
+    try:
+        read_config_file()
+    except ValueError:
+        add("必做", "fail", "config.json", "不是合法 JSON，里面的设置都没生效",
+            "对照 config.example.json 修好 %s，再运行 %s" % (home_rel(CONFIG_PATH), home_rel(os.path.join(BASE, "install.sh"))))
+
+    # 安装目录：后台服务读不了桌面、文稿、下载
+    bad = next((zh for d, zh in BLOCKED_DIRS.items()
+                if BASE == os.path.join(HOME, d) or BASE.startswith(os.path.join(HOME, d) + "/")), None)
+    if bad:
+        target = os.path.join(HOME, "codex-inbox")
+        if os.path.exists(os.path.join(target, "ledger.py")):
+            nxt = "~/codex-inbox 里已经有一份：以后都用那一份，运行 ~/codex-inbox/install.sh，再运行 ~/codex-inbox/ledger doctor"
+        elif os.path.exists(target):
+            nxt = "~/codex-inbox 被别的东西占了，换个目录名：cp -R %s ~/codex-inbox-app && ~/codex-inbox-app/install.sh" % home_rel(BASE)
+        else:
+            nxt = "cp -R %s ~/codex-inbox && ~/codex-inbox/install.sh（之后都用 ~/codex-inbox 里的那一份）" % home_rel(BASE)
+        add("必做", "fail", "安装目录", "在「%s」里，macOS 不让后台服务读这里" % bad, nxt)
+    else:
+        add("必做", "ok", "安装目录", home_rel(BASE))
+
+    # 看板服务：端口通不通，launchd 里是不是这个目录装的
+    port = cfg["port"]
+    up = board_up(port)
+    svcs = ledger_services()
+    mine = [label for label, d in svcs if d == BASE]
+    others = [d for label, d in svcs if d != BASE]
+    install = "运行 " + home_rel(os.path.join(BASE, "install.sh"))
+    if bad:
+        install = "先按上一项换到别的目录，再运行那边的 install.sh"
+    if up and mine:
+        add("必做", "ok", "看板服务", "在跑：http://127.0.0.1:%s（launchd 服务 %s）" % (port, mine[0]))
+    elif up and others:
+        add("必做", "fail", "看板服务", "端口 %s 上跑的是另一份安装：%s" % (port, home_rel(others[0])),
+            "要用那一份：运行 %s/ledger doctor。要换成这一份：%s（会替换掉那个服务，那边 data/ 里的记录不会搬过来）"
+            % (home_rel(others[0]), install))
+    elif up:
+        add("必做", "fail", "看板服务", "端口 %s 有程序在用，但 launchd 里没有指向这个目录的服务（可能是手动运行的 ledger serve 或别的程序）" % port,
+            "%s，装成开机自启；端口被别的程序占了就在 config.json 里换个 port 再装" % install)
+    elif mine:
+        add("必做", "fail", "看板服务", "launchd 里有服务 %s，但端口 %s 不通" % (mine[0], port),
+            "看 %s 最后几行，再%s重启" % (home_rel(os.path.join(LOG_DIR, "launchd.err")), install))
+    else:
+        add("必做", "fail", "看板服务", "没装（launchd 里没有指向这个目录的服务）", install)
+
+    # 状态行规则
+    try:
+        block = rules_block()
+    except OSError:
+        block = None
+        add("必做", "fail", "状态行规则", "找不到 %s" % home_rel(RULES_FILE), "重新下载完整的 codex-inbox")
+    seen = 0
+    for tool, path in (rule_targets() if block else []):
+        name = "%s 的状态行规则" % tool
+        if not os.path.isdir(os.path.dirname(path)):
+            add("可选", "off", name, "没装 %s（没有 %s），不用加" % (tool, home_rel(os.path.dirname(path))))
+            continue
+        seen += 1
+        code, text = rules_status(path, block)
+        where = "%s：%s" % (home_rel(path), text)
+        if code in ("ok", "hand"):
+            add("必做", "ok", name, where)
+        elif code == "dup":
+            add("必做", "fail", name, where, "打开 %s 删掉 codex-inbox 标记之外手写的那段；想只留手写的，就运行 %s" % (home_rel(path), ledger_cmd("rules", "remove")))
+        elif code == "broken":
+            add("必做", "fail", name, where, "打开 %s 删掉残缺的 codex-inbox 标记，再运行 %s" % (home_rel(path), ledger_cmd("rules", "install")))
+        else:
+            add("必做", "fail", name, where, "运行 " + ledger_cmd("rules", "install"))
+    if block and not seen:
+        add("必做", "fail", "Codex / Claude Code", "没找到 ~/.codex 和 ~/.claude，看板没有会话可读", "先装 Codex 或 Claude Code 并至少用一次")
+
+    # 通知小程序
+    app = notifier_app()
+    perm = "通知权限没法自动检测：没收到通知时，去「系统设置 → 通知 → AI 任务台账」打开「允许通知」"
+    if app:
+        add("必做", "ok", "通知小程序", "已建好（%s）" % home_rel(app), note=perm)
+    else:
+        add("必做", "fail", "通知小程序", "没建好：通知会改用系统脚本弹出，点了会打开「脚本编辑器」",
+            "%s（会重建它）；还不行就看 %s" % (install, home_rel(os.path.join(LOG_DIR, "notifier-build.log"))))
+
+    # 飞书每日汇总（可选）
+    want = cfg.get("feishu_open_id") or ""
+    code, me, nxt = lark_status()
+    name = "飞书每日汇总"
+    if code == "missing":
+        add("可选", "fail" if want else "off", name, "没装 lark-cli（飞书命令行工具）", "要用的话：" + nxt + "，再运行 " + ledger_cmd("feishu-setup"))
+    elif code != "ready":
+        text = {"unconfigured": "lark-cli 还没建飞书应用", "login": "lark-cli 还没登录你的飞书账号"}.get(code, "lark-cli 出错了")
+        add("可选", "fail" if want else "off", name, text, nxt)
+    elif not want:
+        add("可选", "off", name, "lark-cli 已登录（%s），但 config.json 里没有 feishu_open_id" % (me.get("userName") or "?"),
+            "要用的话：运行 " + ledger_cmd("feishu-setup"))
+    elif want != me["openId"]:
+        add("可选", "fail", name, "config.json 的 feishu_open_id 和 lark-cli 当前登录的人（%s）不一样" % (me.get("userName") or "?"),
+            "运行 %s 改成当前登录的人" % ledger_cmd("feishu-setup"))
+    else:
+        add("可选", "ok", name, "每天 %s 用%s身份私信给 %s" % (cfg["digest_time"], "机器人" if cfg.get("feishu_as", "bot") == "bot" else "你自己的",
+                                                     me.get("userName") or "你"),
+            note="改过 config.json 后要运行 install.sh 重启服务才生效")
+
+    # cmux 定时唤醒（可选）
+    name = "cmux 定时唤醒"
+    setup = "要用的话：先看安全说明，再运行 " + ledger_cmd("cmux-setup")
+    if not os.path.exists(CMUX):
+        add("可选", "off", name, "没装 cmux：定时唤醒和「打开会话」跳到 cmux 用不了，其他功能不受影响")
+    else:
+        mode = cmux_mode()
+        test = board_selftest(cfg) if up and mine else None
+        if test is not None and test.get("cmux"):
+            add("可选", "ok", name, "看板服务能控制 cmux（%s 模式）" % (mode or "?"))
+        elif test is not None and mode == "password":
+            add("可选", "fail", name, "已是密码模式，但看板服务控制不了 cmux",
+                "确认 cmux 开着，运行 %s reload-config，再运行 %s" % (home_rel(CMUX), ledger_cmd("doctor")))
+        elif mode == "password":
+            add("可选", "ok", name, "cmux 已是密码模式（看板服务没在跑或不是这份安装，没法实测）")
+        else:
+            add("可选", "off", name, "cmux 是 %s 模式，开机自启的看板服务控制不了它" % (mode or "默认的 cmuxOnly"), setup)
+
+    # 时区（提示）
+    local = dt.datetime.now().astimezone().utcoffset().total_seconds() / 3600
+    h = cfg.get("utc_offset_hours")
+    if h is None:
+        add("提示", "ok", "时区", "看板按本机时区（%s）算时间" % utc_text(local))
+    elif not isinstance(h, (int, float)) or isinstance(h, bool):
+        add("提示", "warn", "时区", "config.json 的 utc_offset_hours 不是数字，被忽略了，看板按本机时区（%s）算" % utc_text(local),
+            "改成数字（如北京时间填 8）或 null，再运行 install.sh")
+    elif float(h) == local:
+        add("提示", "ok", "时区", "看板按 %s 算时间，和本机一致" % utc_text(h))
+    else:
+        add("提示", "warn", "时区", "看板按 %s 算时间，本机是 %s" % (utc_text(h), utc_text(local)),
+            note="状态行和 ledger schedule 里的时间都按 %s 理解。你确实按它安排工作就不用改；否则把 config.json 的 utc_offset_hours 改成 null，再运行 install.sh" % utc_text(h))
+
+    # 项目目录（提示）
+    parents = [p for p in (cfg.get("project_parents") or []) if isinstance(p, str)]
+    if not parents:
+        add("提示", "off", "项目目录", "project_parents 没填：项目按 ~/Desktop/<项目>、~/<项目> 推断",
+            note="代码放在别处（如 ~/code/<项目>）时，把父目录填进 config.json 的 project_parents，如 [\"~/code\"]，再运行 install.sh")
+    else:
+        missing = [p for p in parents if not os.path.isdir(os.path.expanduser(p))]
+        if missing:
+            add("提示", "warn", "项目目录", "project_parents 里这些目录不存在：" + "、".join(missing), "改 config.json 的 project_parents，再运行 install.sh")
+        else:
+            add("提示", "ok", "项目目录", "project_parents：" + "、".join(parents))
+    return items
+
+
 # ---------------------------------------------------------------- 命令行
 
 def poke(cfg):
@@ -2107,6 +2460,182 @@ def cmd_digest(args):
     sys.exit(0 if ok else 1)
 
 
+def cmd_rules(args):
+    if not os.path.exists(RULES_FILE):
+        sys.exit("找不到 %s" % home_rel(RULES_FILE))
+    block = rules_block()
+    if args.action == "show":
+        print(block + "\n")
+    for tool, path in rule_targets():
+        if not os.path.isdir(os.path.dirname(path)):
+            print("➖ %s：没有 %s，没装就不加" % (tool, home_rel(os.path.dirname(path))))
+        elif args.action == "show":
+            print("%s %s：%s" % (tool, home_rel(path), rules_status(path, block)[1]))
+        else:
+            print("%s %s：%s" % (tool, home_rel(path), apply_rules(path, args.action, block)))
+    if args.action == "install":
+        print("新开的会话才会按规则写状态行；正在跑的会话要重开才生效。")
+
+
+def cmd_doctor(args):
+    items = doctor_items()
+    ok = all(it["state"] == "ok" for it in items if it["level"] == "必做")
+    if args.json:
+        print(json.dumps({"base": BASE, "board": "http://127.0.0.1:%s" % load_config()["port"], "ok": ok, "items": items},
+                         ensure_ascii=False, indent=1))
+        sys.exit(0 if ok else 1)
+    icons = {"ok": "✅", "fail": "❌", "off": "➖", "warn": "⚠️"}
+    print("codex-inbox 体检：%s（只读，不改任何东西）" % home_rel(BASE))
+    print("✅ 正常　❌ 要处理　➖ 可选，没启用　⚠️ 提示，看情况")
+    for level in ("必做", "可选", "提示"):
+        print("\n" + level)
+        for it in items:
+            if it["level"] != level:
+                continue
+            print("%s %s：%s" % (icons[it["state"]], it["name"], it["text"]))
+            if it["note"]:
+                print("   提醒：" + it["note"])
+            if it["next"] and it["state"] != "ok":
+                print("   下一步：" + it["next"])
+    left = sum(1 for it in items if it["level"] == "必做" and it["state"] != "ok")
+    print("\n" + ("必做项全部通过。看板：http://127.0.0.1:%s" % load_config()["port"] if ok else "必做项还有 %d 项没通过，按「下一步」做完再运行 %s" % (left, ledger_cmd("doctor"))))
+    sys.exit(0 if ok else 1)
+
+
+def cmd_feishu_setup(args):
+    code, me, nxt = lark_status()
+    if code != "ready":
+        print("❌ " + {"missing": "没装 lark-cli（飞书命令行工具）", "unconfigured": "lark-cli 还没建飞书应用",
+                       "login": "lark-cli 还没登录你的飞书账号"}.get(code, "lark-cli 出错了"))
+        print("下一步：" + nxt)
+        print("做完再运行 " + ledger_cmd("feishu-setup"))
+        sys.exit(1)
+    name = me.get("userName") or "你"
+    print("✅ lark-cli 已登录：%s" % name)
+    try:
+        raw = read_config_file()
+    except ValueError:
+        sys.exit("❌ config.json 不是合法 JSON，先对照 config.example.json 修好 %s" % home_rel(CONFIG_PATH))
+    cfg = dict(load_config(), feishu_open_id=me["openId"])
+    same = raw.get("feishu_open_id") == me["openId"]
+    if args.dry_run:
+        print("（--dry-run：不写文件，也不发消息）")
+        print("会%s config.json 的 feishu_open_id：%s" % ("保持" if same else "写入", me["openId"]))
+        print("会用 lark-cli 以 %s 身份发一条【示意】汇总给%s：" % (cfg.get("feishu_as", "bot"), name))
+        print("  %s im +messages-send --as %s --user-id %s --msg-type interactive --content <汇总卡片>"
+              % (home_rel(LARK), cfg.get("feishu_as", "bot"), me["openId"]))
+        return
+    if same:
+        print("✅ config.json 里已经是这个 open_id")
+    else:
+        raw["feishu_open_id"] = me["openId"]
+        write_text(CONFIG_PATH, json.dumps(raw, ensure_ascii=False, indent=2) + "\n")
+        print("✅ 已把 feishu_open_id 写进 %s（其他配置没动）" % home_rel(CONFIG_PATH))
+    conn = open_db()
+    scan(conn, cfg)
+    ok, msg = send_digest(conn, cfg, sample=True)
+    if not ok:
+        print("❌ 测试汇总没发出去：" + msg)
+        print("下一步：运行 lark-cli doctor 体检。用机器人发（feishu_as 是 bot）时，飞书应用要开「机器人」能力、"
+              "有给用户发消息的权限，且你在应用的可用范围内；改完再运行 " + ledger_cmd("feishu-setup"))
+        sys.exit(1)
+    meta_set(conn, "digest_last_date", clock().strftime("%Y-%m-%d"))   # 和 digest --send --sample 一样：今天不再补发正式汇总
+    conn.commit()
+    print("✅ 已发一条【示意】汇总，去飞书看看有没有收到")
+    if not same:
+        print("下一步：运行 %s 重启看板服务，之后每天 %s 自动发" % (home_rel(os.path.join(BASE, "install.sh")), cfg["digest_time"]))
+
+
+def cmd_cmux_setup(args):
+    print("安全说明：密码模式下，这台 Mac 上知道密码的程序都能控制 cmux（看终端里的内容、往会话里打字）。"
+          "密码存在 %s，只有你的账号能读；在 cmux 终端里跑的程序本来就能控制 cmux，不受影响。" % home_rel(CMUX_CONFIG))
+    print("改了以后，开机自启的看板服务才能跳到 cmux 里的会话、到点唤醒会话（ledger schedule）。"
+          "想改回去：在 cmux 设置 → 自动化，把「套接字控制模式」改回默认。\n")
+    if not os.path.exists(CMUX):
+        sys.exit("➖ 没装 cmux（找不到 %s），不用设置。用 cmux 跑 Claude Code 才需要这一步。" % CMUX)
+    try:
+        with open(CMUX_CONFIG, encoding="utf-8") as f:
+            raw = f.read()
+    except FileNotFoundError:
+        raw = None
+    except OSError as e:
+        sys.exit("❌ 读不了 %s：%s" % (home_rel(CMUX_CONFIG), e))
+    data = {}
+    if raw and raw.strip():
+        try:
+            data = json.loads(raw)
+        except ValueError:
+            data = None
+    changed = False
+    if not isinstance(data, dict):
+        # 带注释的 JSONC：硬改可能弄坏它，只在已经是密码模式时继续往下验证
+        if cmux_mode() != "password":
+            print("❌ %s 不是严格的 JSON（可能带注释），为了不弄坏它，这里不自动改。任选一种：" % home_rel(CMUX_CONFIG))
+            print("  1. 打开 cmux 设置 → 自动化，把「套接字控制模式」改成「密码模式」，并设一个长密码。")
+            print('  2. 编辑这个文件，在最外层的 { 后面加一行（已经有 "automation" 就改它，不要加第二个）：')
+            print('     "automation": {"socketControlMode": "password", "socketPassword": "<一串长密码，可用 openssl rand -base64 32 生成>"},')
+            print("     保存后运行：%s config validate && %s reload-config" % (home_rel(CMUX), home_rel(CMUX)))
+            print("改完运行 %s 确认。" % ledger_cmd("doctor"))
+            sys.exit(1)
+        print("✅ cmux 已经是密码模式（%s 带注释，没去改它）" % home_rel(CMUX_CONFIG))
+    else:
+        auto = data.get("automation") or {}
+        if not isinstance(auto, dict):
+            sys.exit("❌ %s 里的 automation 不是对象，请手动检查" % home_rel(CMUX_CONFIG))
+        has_pw = bool(auto.get("socketPassword"))
+        if auto.get("socketControlMode") == "password" and has_pw:
+            print("✅ cmux 已经是密码模式，不用改")
+        else:
+            print("会把 %s 的 automation.socketControlMode 设为 \"password\"，%s" % (
+                home_rel(CMUX_CONFIG), "保留现有的 socketPassword" if has_pw else "并生成一个随机长密码写进 socketPassword（不显示）"))
+            if args.dry_run:
+                print("（--dry-run：没写文件，也没运行 cmux reload-config）")
+                return
+            auto = dict(auto, socketControlMode="password")
+            if not has_pw:
+                auto["socketPassword"] = secrets.token_urlsafe(32)
+            data["automation"] = auto
+            os.makedirs(os.path.dirname(CMUX_CONFIG), exist_ok=True)
+            backup = None
+            if raw is not None:
+                backup = "%s.bak-%s" % (CMUX_CONFIG, time.strftime("%Y%m%d-%H%M%S"))
+                shutil.copy2(CMUX_CONFIG, backup)
+                os.chmod(backup, 0o600)
+            fd = os.open(CMUX_CONFIG, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                f.write(json.dumps(data, ensure_ascii=False, indent=2) + "\n")
+            os.chmod(CMUX_CONFIG, 0o600)   # 里面有密码，只给自己的账号读
+            r = cmux("config", "validate", "--path", CMUX_CONFIG)
+            if r.returncode != 0:
+                if backup:
+                    os.replace(backup, CMUX_CONFIG)
+                else:
+                    os.remove(CMUX_CONFIG)
+                sys.exit("❌ cmux 校验没通过，已恢复原文件：\n" + (r.stdout + r.stderr).strip()[-600:])
+            changed = True
+            print("✅ 已改成密码模式" + ("（原文件备份在 %s）" % home_rel(backup) if backup else "（新建了这个文件）"))
+    if args.dry_run:
+        print("（--dry-run：没运行 cmux reload-config）")
+        return
+    if changed:
+        r = cmux("reload-config")
+        if r.returncode == 0:
+            print("✅ cmux reload-config 完成")
+        else:
+            print("⚠️ cmux reload-config 没成功（cmux 可能没开着，下次打开时会读新设置）：" + (r.stderr or r.stdout).strip()[:200])
+    r = cmux("workspace", "list")
+    print(("✅ cmux workspace list 通过" if r.returncode == 0 else "❌ cmux workspace list 失败：" + (r.stderr or r.stdout).strip()[:200])
+          + "（在 cmux 终端里运行时这一步本来就能过，以下面看板服务的结果为准）")
+    test = board_selftest(load_config())
+    if test is None:
+        print("➖ 看板服务没在跑（或不是这份安装），没法从服务那边实测；装好后运行 %s 看「cmux 定时唤醒」一项" % ledger_cmd("doctor"))
+    elif test.get("cmux"):
+        print("✅ 看板服务能控制 cmux 了")
+    else:
+        print("❌ 看板服务还是控制不了 cmux：确认 cmux 开着，再运行 %s" % ledger_cmd("doctor"))
+        sys.exit(1)
+
+
 def main():
     ap = argparse.ArgumentParser(prog="ledger", description="AI 任务台账")
     sub = ap.add_subparsers(dest="cmd")
@@ -2123,9 +2652,18 @@ def main():
     p = sub.add_parser("digest", help="预览或发送飞书汇总")
     p.add_argument("--send", action="store_true")
     p.add_argument("--sample", action="store_true", help="标为示意，并把今天记为已发")
+    p = sub.add_parser("rules", help="把状态行规则加进（或移出）Codex 和 Claude Code 的全局规则文件")
+    p.add_argument("action", choices=["install", "remove", "show"])
+    p = sub.add_parser("doctor", help="只读体检：逐项检查安装是否完整，并给出下一步")
+    p.add_argument("--json", action="store_true", help="输出 JSON，给脚本或 AI 代理读")
+    p = sub.add_parser("feishu-setup", help="把 lark-cli 当前登录的人写进 config.json，并发一条测试汇总")
+    p.add_argument("--dry-run", action="store_true", help="只打印会做什么，不写文件也不发消息")
+    p = sub.add_parser("cmux-setup", help="把 cmux 改成密码模式，让看板服务能控制它（定时唤醒要用）")
+    p.add_argument("--dry-run", action="store_true", help="只打印会改什么，不写文件也不重新加载")
     args = ap.parse_args()
     handlers = {"serve": cmd_serve, "scan": cmd_scan, "schedule": cmd_schedule, "schedules": cmd_schedules,
-                "cancel": cmd_cancel, "digest": cmd_digest}
+                "cancel": cmd_cancel, "digest": cmd_digest, "rules": cmd_rules, "doctor": cmd_doctor,
+                "feishu-setup": cmd_feishu_setup, "cmux-setup": cmd_cmux_setup}
     if args.cmd not in handlers:
         ap.print_help()
         sys.exit(1)

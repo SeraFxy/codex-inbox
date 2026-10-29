@@ -9,9 +9,20 @@ AGENTS="$HOME/Library/LaunchAgents"
 PLIST="$AGENTS/$LABEL.plist"
 GUI="gui/$(id -u)"
 
+# 不自动搬家：已经在别处装过的话，自动复制会多装出一份没有数据的新看板
 case "$DIR" in
   "$HOME/Desktop"*|"$HOME/Documents"*|"$HOME/Downloads"*)
-    echo "请先把整个目录复制到别处（如 ~/codex-inbox）再运行安装：macOS 不让后台服务读桌面、文稿、下载里的文件。"
+    echo "不能在这里安装：macOS 不让后台服务读「桌面」「文稿」「下载」里的文件。"
+    echo "把整个目录复制到 ~/codex-inbox，再运行那边的 install.sh（这里的文件不会被改动）："
+    if [ -e "$HOME/codex-inbox" ]; then
+      echo "  ~/codex-inbox 已经存在。如果它就是 codex-inbox，直接运行：~/codex-inbox/install.sh"
+      echo "  否则换个目录名：cp -R \"$DIR\" ~/codex-inbox-app && ~/codex-inbox-app/install.sh"
+    else
+      echo "  cp -R \"$DIR\" ~/codex-inbox && ~/codex-inbox/install.sh"
+      echo "或者重新下载一份："
+      echo "  git clone https://github.com/SeraFxy/codex-inbox.git ~/codex-inbox && ~/codex-inbox/install.sh"
+    fi
+    echo "以后更新代码、运行 ledger 命令，都用新目录里的那一份。"
     exit 1 ;;
 esac
 
@@ -67,11 +78,26 @@ try:
     print(json.load(open(sys.argv[1])).get("port", 47800))
 except Exception:
     print(47800)' "$DIR/config.json")
+up=0
 for _ in 1 2 3 4 5 6 7 8 9 10; do
   if curl -s -o /dev/null "http://127.0.0.1:$PORT/"; then
-    echo "已启动：http://127.0.0.1:$PORT"
-    exit 0
+    up=1
+    break
   fi
   sleep 1
 done
-echo "服务还没起来，稍等再打开 http://127.0.0.1:$PORT ；仍不行就看 $DIR/logs/launchd.err"
+if [ "$up" = 1 ]; then
+  echo "已启动：http://127.0.0.1:$PORT"
+else
+  echo "服务还没起来，稍等再打开 http://127.0.0.1:$PORT ；仍不行就看 $DIR/logs/launchd.err"
+fi
+
+# 弹一条欢迎通知：第一次弹会触发 macOS 的通知授权提示（通知小程序读 data/notify.txt 的「标题\n正文」）
+APP="$DIR/notifier/AI 任务台账.app"
+if [ -d "$APP" ] && printf '%s\n%s' "AI 任务台账已就绪" "到点提醒会从这里弹出，点通知打开看板" > "$DIR/data/notify.txt" \
+    && open -g "$APP" 2>/dev/null; then :
+else
+  osascript -e 'display notification "到点提醒会从这里弹出" with title "AI 任务台账已就绪"' 2>/dev/null || true
+fi
+echo "刚弹了一条通知「AI 任务台账已就绪」。如果弹出系统提示，请点允许；没看到通知就去「系统设置 → 通知 → AI 任务台账」打开。"
+echo "下一步：运行 $DIR/ledger doctor"
