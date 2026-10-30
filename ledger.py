@@ -549,11 +549,13 @@ def take_text(content):
 
 
 AMBIENT_RE = re.compile(r'(?:\s*<([\w-]+) source="ambient-ui-state">.*?</\1>)+\s*(?:## My request:\s*)?', re.S)
+FILES_RE = re.compile(r'\s*# Files mentioned by the user:\n.*?\n## My request(?: for Codex)?:[ \t]*\n?', re.S)
 
 
 def strip_ambient(text):
-    """Codex 开着内置浏览器时，会在你的话前面套一段 <in-app-browser-context>，「## My request:」后面才是你说的。"""
-    m = AMBIENT_RE.match(text)
+    """Codex 会在你的话前面套几段说明：发了图或文件时的「# Files mentioned by the user:」清单，开着内置浏览器时的
+    <in-app-browser-context>（两段可能都有）。「## My request:」（旧版是「## My request for Codex:」）后面才是你说的。"""
+    m = FILES_RE.match(text) or AMBIENT_RE.match(text)
     return text[m.end():] if m else text
 
 
@@ -768,6 +770,7 @@ def session_id_from_path(tool, path):
 def scan(conn, cfg):
     migrate_tz(conn)
     migrate_codex_prompts(conn)
+    migrate_codex_files_preamble(conn)
     t0 = time.time()
     horizon = t0 - max(cfg["window_days"], 30) * 86400
     files = [("claude", p) for p in glob.glob(os.path.join(CLAUDE_PROJECTS, "*", "*.jsonl"))]
@@ -2233,6 +2236,36 @@ def migrate_codex_prompts(conn):
     meta_set(conn, "codex_prompts_v2", time.time())
     conn.commit()
     log("已补回 %d 个 Codex 会话里你说过的话" % n)
+
+
+def migrate_codex_files_preamble(conn):
+    """早期版本没去掉 Codex 套在你的话前面的附件清单，「最初的要求」显示成了「# Files mentioned by the user:」：已存的去一遍。"""
+    if meta_get(conn, "codex_files_preamble_v1"):
+        return
+    for r in conn.execute("SELECT id, text FROM prompts WHERE tool='codex' AND text LIKE '%# Files mentioned by the user:%'").fetchall():
+        t = strip_ambient(r["text"])
+        if t != r["text"]:
+            conn.execute("UPDATE prompts SET text=? WHERE id=?", (t, r["id"]))
+    n = 0
+    for r in conn.execute("SELECT key, data FROM sessions WHERE key LIKE 'codex:%'").fetchall():
+        st = json.loads(r["data"])
+        old = (st.get("first_prompt"), st.get("last_prompt"))
+        got = None
+        for k in ("first_prompt", "last_prompt"):
+            t = strip_ambient(st.get(k) or "")
+            if "# Files mentioned by the user:" in t[:40]:
+                # 清单太长，存的前 500 字里没到「## My request:」：改用 prompts 表里完整的那句
+                got = got or conn.execute("SELECT text FROM prompts WHERE session_key=? ORDER BY ts", (r["key"],)).fetchall()
+                if got:
+                    t = got[0 if k == "first_prompt" else -1]["text"]
+            if t[:500] != (st.get(k) or ""):
+                st[k] = t[:500]
+        if (st.get("first_prompt"), st.get("last_prompt")) != old:
+            conn.execute("UPDATE sessions SET data=? WHERE key=?", (json.dumps(st, ensure_ascii=False), r["key"]))
+            n += 1
+    meta_set(conn, "codex_files_preamble_v1", time.time())
+    conn.commit()
+    log("已去掉 %d 个 Codex 会话里套在你的话前面的附件清单" % n)
 
 
 def backfill_media():
