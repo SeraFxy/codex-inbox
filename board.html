@@ -777,10 +777,14 @@ function fillView() {
 function manual(v) { return !!(state && state.order && (state.order[v] || []).length); }
 function needCount() { const g = state && state.groups.find(x => x.id === "need"); return g ? g.items.length : 0; }
 
+let orderAt = 0;   // 本地最近一次改顺序的时间
+function setOrder(order) { state.order = order; orderAt = Date.now(); }
 async function load(refresh) {
+  const t0 = Date.now();
   try {
     const r = await fetch("/api/state" + (refresh ? "?refresh=" + refresh : ""), { cache: "no-store" });
     const next = await r.json();
+    if (state && orderAt >= t0) next.order = state.order;   // 拉取途中你刚调过顺序：先用本地的，免得被旧数据盖回去
     failed = false;
     hopNow = new Set();
     allItems(next).forEach(it => {
@@ -1073,7 +1077,7 @@ function projectMore(el) {
 }
 function resetRailOrder() {
   closeMenu();
-  const order = Object.assign({}, state.order); delete order.rail; state.order = order;
+  const order = Object.assign({}, state.order); delete order.rail; setOrder(order);
   renderRail();
   post("order", "", { view: "rail", keys: [] }).then(() => toast("左栏已恢复默认顺序"), () => toast("操作失败：本机服务没响应"));
 }
@@ -1206,12 +1210,12 @@ function saveOrder(sub) {
   const full = viewItems(view, true).map(it => it.key), mine = new Set(sub);
   let n = 0;
   const keys = full.map(k => mine.has(k) ? sub[n++] : k);
-  state.order = Object.assign({}, state.order, { [view]: keys });
+  setOrder(Object.assign({}, state.order, { [view]: keys }));
   render();
   post("order", "", { view, keys }).then(res => { if (!res.ok) toast(res.message || "顺序没存上"); }, () => toast("顺序没存上：本机服务没响应"));
 }
 function resetOrder() {
-  const order = Object.assign({}, state.order); delete order[view]; state.order = order;
+  const order = Object.assign({}, state.order); delete order[view]; setOrder(order);
   render();
   post("order", "", { view, keys: [] }).then(() => toast("已恢复默认排序"), () => toast("操作失败：本机服务没响应"));
 }
@@ -1293,7 +1297,7 @@ function railMove(e) {
   e.preventDefault();
   const keys = railData().projects.map(x => x.key).filter(k => k !== p);
   keys.splice(keys.indexOf(at.p) + (at.after ? 1 : 0), 0, p);
-  state.order = Object.assign({}, state.order, { rail: keys });
+  setOrder(Object.assign({}, state.order, { rail: keys }));
   renderRail();
   post("order", "", { view: "rail", keys }).then(res => { if (!res.ok) toast(res.message || "顺序没存上"); }, () => toast("顺序没存上：本机服务没响应"));
 }
