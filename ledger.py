@@ -1412,8 +1412,9 @@ def search_prompts(conn, q, limit=100, offset=0):
             "all": first[1], "since": fmt_time(first[0], now) if first[0] else ""}
 
 
-def search_sessions(conn, q, limit=50, offset=0, tool=""):
-    """按会话汇总：有命中的会话按最近一次命中排序，每个会话带最多 3 条命中预览。tool = claude / codex 时只看这个工具的。"""
+def search_sessions(conn, q, limit=50, offset=0, tool="", cross=True):
+    """按会话汇总：有命中的会话按最近一次命中排序，每个会话带最多 3 条命中预览。tool = claude / codex 时只看这个工具的。
+    cross：搜第一页时顺带搜产出物，带回总数和前 3 个，页面上两边一起列（不用先想清楚是你说的还是 AI 给的）。"""
     now = time.time()
     conds, args = _like_where(q)
     by_tool = (" WHERE tool=?", [tool]) if tool in ("claude", "codex") else ("", [])
@@ -1441,9 +1442,12 @@ def search_sessions(conn, q, limit=50, offset=0, tool=""):
                     "preview": [{"ts": it["ts"], "timeText": it["timeText"], "text": it["text"], "images": it["images"]}
                                 for it in items]})
     first = conn.execute("SELECT MIN(ts), COUNT(*), COUNT(DISTINCT session_key) FROM prompts" + by_tool[0], by_tool[1]).fetchone()
-    return {"q": q, "total": total, "sessions": out, "all": first[1], "allSessions": first[2],
-            "since": fmt_time(first[0], now) if first[0] else "",
-            "outputHits": count_outputs(conn, q, tool) if q.strip() else 0}
+    res = {"q": q, "total": total, "sessions": out, "all": first[1], "allSessions": first[2],
+           "since": fmt_time(first[0], now) if first[0] else "", "outputHits": 0, "outputs": []}
+    if cross and q.strip() and not offset:
+        got = search_outputs(conn, q, tool=tool, limit=3, cross=False)
+        res["outputHits"], res["outputs"] = got["total"], got["items"]
+    return res
 
 
 def session_prompts(conn, key):
@@ -1515,7 +1519,7 @@ def session_briefs(conn, keys, now):
     return out
 
 
-def search_outputs(conn, q, cat="", key="", tool="", limit=100, offset=0):
+def search_outputs(conn, q, cat="", key="", tool="", limit=100, offset=0, cross=True):
     """AI 给过你的产出物（链接和本机文件），同一个链接只列一次，带上给过它的会话（最近的在前）和 AI 给出它时的原话。"""
     now = time.time()
     where, args = _out_where(q, cat, key, tool)
@@ -1555,7 +1559,7 @@ def search_outputs(conn, q, cat="", key="", tool="", limit=100, offset=0):
             x.update(briefs.get(x["key"], {}))
     allc = conn.execute("SELECT COUNT(DISTINCT " + OUT_KEY + "), COUNT(DISTINCT l.session_key) FROM links l WHERE l.cat != 'mr'").fetchone()
     res = {"q": q, "cat": cat, "key": key, "total": total, "counts": counts, "items": items,
-           "all": allc[0], "allSessions": allc[1], "wider": 0, "promptHits": 0}
+           "all": allc[0], "allSessions": allc[1], "wider": 0, "promptHits": 0, "promptSessions": []}
     if q.strip():
         # 只看某个会话、某一类时没搜到：告诉你放开后有几个；你自己发过这个词的会话数，给「我说过的话」的入口
         if (key or cat) and not total:
@@ -1564,6 +1568,8 @@ def search_outputs(conn, q, cat="", key="", tool="", limit=100, offset=0):
         if tool in ("claude", "codex"):
             pw, pargs = pw + ["tool=?"], pargs + [tool]
         res["promptHits"] = conn.execute("SELECT COUNT(DISTINCT session_key) FROM prompts WHERE " + " AND ".join(pw), pargs).fetchone()[0]
+        if cross and not offset and res["promptHits"]:
+            res["promptSessions"] = search_sessions(conn, q, 3, 0, tool, cross=False)["sessions"]
     return res
 
 

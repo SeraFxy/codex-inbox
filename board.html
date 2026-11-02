@@ -382,6 +382,9 @@ kbd.k.lg { min-width: 22px; height: 22px; padding: 0 6px; border-radius: 6px; fo
 .seg { display: inline-flex; align-self: flex-start; gap: 2px; padding: 3px; border-radius: 12px; background: var(--bk-sunken); }
 .seg a { display: inline-flex; align-items: center; height: 32px; padding: 0 16px; border-radius: 9px; color: var(--bk-ink-2); font-size: 13px; font-weight: 500; text-decoration: none; }
 .seg a:hover { color: var(--bk-ink-1); }
+.seg a .n { margin-left: 6px; font: 500 12px/1 var(--bk-mono); color: var(--bk-ink-3); }
+.hhead .btn.back { margin-left: -10px; padding: 0 10px 0 6px; gap: 2px; }
+.hhead .vsep { flex: none; width: 1px; height: 20px; background: var(--bk-line); }
 .seg a[aria-current="page"] { background: var(--bk-surface); color: var(--bk-ink-1); font-weight: 600; box-shadow: var(--bk-on); }
 .seg.src { align-self: center; }
 .seg.src button { display: inline-flex; align-items: center; gap: 6px; height: 28px; padding: 0 12px; border: 0; border-radius: 9px;
@@ -443,6 +446,8 @@ kbd.k.lg { min-width: 22px; height: 22px; padding: 0 6px; border-radius: 6px; fo
 .orow .om { min-width: 0; display: flex; flex-direction: column; gap: 4px; }
 .orow .ot { font-size: 14px; line-height: 22px; font-weight: 600; color: var(--bk-ink-1); text-decoration: none; word-break: break-word; }
 .orow .ot:hover { color: var(--bk-run-ink); text-decoration: underline; }
+.orow button.ot { padding: 0; border: 0; background: none; text-align: left; cursor: pointer; }
+.xb .dayh .btn { margin: -4px 0 -4px auto; }
 .orow .ot.gone { color: var(--bk-ink-3); text-decoration: line-through; }
 .orow .op { font: 12px/18px var(--bk-mono); color: var(--bk-ink-3); word-break: break-all; }
 .orow .oc { margin: 0; font-size: 13px; line-height: 20px; color: var(--bk-ink-2); word-break: break-word;
@@ -456,7 +461,6 @@ kbd.k.lg { min-width: 22px; height: 22px; padding: 0 6px; border-radius: 6px; fo
 .orow .oacts { display: flex; gap: 2px; opacity: 0; transition: opacity .12s; }
 .orow:hover .oacts, .orow:focus-within .oacts { opacity: 1; }
 @media (hover: none) { .orow .oacts { opacity: 1; } }
-.hsum .hl1 { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; }
 .hsum .btn.xs { height: 24px; margin: -3px 0; }
 .ocats { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; }
 .ocats .seg.src { align-self: flex-start; max-width: 100%; overflow-x: auto; scrollbar-width: none; }
@@ -514,7 +518,7 @@ mark { background: var(--bk-lime-mark); color: #1B2026; border-radius: 3px; box-
     </div>
     <div class="tools">
       <div class="seg src" id="srcseg" role="group" aria-label="只看哪个工具的会话"></div>
-      <button type="button" class="btn sec searchbtn" onclick="goSearch()"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg><span>搜会话和说过的话</span><kbd class="k md">⌘K</kbd></button>
+      <button type="button" class="btn sec searchbtn" onclick="goSearch()"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg><span>搜说过的话和产出物</span><kbd class="k md">⌘K</kbd></button>
       <a class="btn ghost" href="#history" onclick="event.preventDefault();setTab('history')"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 5.5h14a1.5 1.5 0 0 1 1.5 1.5v8a1.5 1.5 0 0 1-1.5 1.5h-8l-4.5 3.5V16.5H5A1.5 1.5 0 0 1 3.5 15V7A1.5 1.5 0 0 1 5 5.5Z"/></svg>我说过的话</a>
       <a class="btn ghost" href="#outputs" title="AI 给你的链接和文件，能搜、能跳回会话" onclick="event.preventDefault();goOutputs()"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 3.5H7A2.5 2.5 0 0 0 4.5 6v12A2.5 2.5 0 0 0 7 20.5h10a2.5 2.5 0 0 0 2.5-2.5V9L14 3.5Z"/><path d="M14 3.5V9h5.5"/><path d="M8.5 13.5h7M8.5 17h4"/></svg>产出物</a>
     </div>
@@ -553,6 +557,8 @@ mark { background: var(--bk-lime-mark); color: #1B2026; border-radius: 3px; box-
   <div class="hhead">
     <header>
       <div class="brand">
+        <button type="button" class="btn ghost back" title="回到看板（Esc）" onclick="setTab('board')"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m15 18-6-6 6-6"/></svg>看板</button>
+        <span class="vsep" aria-hidden="true"></span>
         <span id="logo-h"></span>
         <div class="stack"><h1>AI 任务台账</h1><span class="metam js-date js-tz"></span></div>
       </div>
@@ -561,17 +567,16 @@ mark { background: var(--bk-lime-mark); color: #1B2026; border-radius: 3px; box-
         <button type="button" class="btn sec hd" onclick="refresh()"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/></svg>刷新</button>
       </div>
     </header>
-    <nav class="seg" aria-label="视图">
-      <a href="#" onclick="event.preventDefault();setTab('board')">看板</a>
+    <nav class="seg" aria-label="搜哪一边">
       <a href="#history" id="seg-history" aria-current="page" onclick="event.preventDefault();setTab('history')">我说过的话</a>
       <a href="#outputs" id="seg-outputs" onclick="event.preventDefault();setTab('outputs')">产出物</a>
     </nav>
   </div>
   <div class="hsearch">
-    <label for="q" class="sr-only" id="q-label">搜索我说过的话</label>
+    <label for="q" class="sr-only">搜索我说过的话和 AI 给的产出物</label>
     <div class="search">
       <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
-      <input id="q" type="search" autocomplete="off" placeholder="搜你发给 Claude / Codex 的话、会话名或标签，多个词用空格隔开">
+      <input id="q" type="search" autocomplete="off" placeholder="搜你说过的话和 AI 给的产出物：原话、链接、标题、会话名，多个词用空格隔开">
       <button type="button" class="btn ghost xs" id="q-clear" aria-label="清空搜索" hidden onclick="clearSearch()" style="width: 28px; padding: 0"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12"/></svg></button>
       <kbd class="k lg">/</kbd>
     </div>
@@ -1819,27 +1824,37 @@ async function saveTag(reset) {
 // ---------------- 我说过的话（按会话）
 const TAB_HASH = { history: "#history", outputs: "#outputs" };
 let tab = location.hash === "#history" ? "history" : location.hash === "#outputs" ? "outputs" : (store("ledger.tab") || "board");
-let hq = "", hSessions = [], hTotal = 0, hAll = 0, hAllSessions = 0, hSince = "", hOutHits = 0, hTimer = null, hLoaded = false, hReady = false;
+let sq = "";   // 搜索框里的词：「我说过的话」和「产出物」共用，切换标签页不清空
+let hq = "", hSessions = [], hTotal = 0, hAll = 0, hAllSessions = 0, hSince = "", hOutHits = 0, hOuts = [], hTimer = null, hLoaded = false, hReady = false;
 const hFull = {};      // 会话 key -> 这个会话里你说过的全部话、目标
 const hOpen = {};      // 展开的会话
 const hLong = {};      // 展开全文的单条
 function setTab(t) {
-  const prev = tab;
   tab = t; store("ledger.tab", t);
   document.getElementById("view-board").hidden = t !== "board";
   document.getElementById("view-history").hidden = t === "board";
   history.replaceState(null, "", TAB_HASH[t] || "#");
   if (t === "board") return;
-  // 「我说过的话」和「产出物」共用一个搜索框，各记各的词
+  // 两个标签页共用一个搜索框和同一个词：切过去就按这个词搜那一边
   const q = document.getElementById("q"), out = t === "outputs";
   document.getElementById("seg-history").setAttribute("aria-current", out ? "false" : "page");
   document.getElementById("seg-outputs").setAttribute("aria-current", out ? "page" : "false");
-  q.placeholder = out ? "搜 AI 给你的链接和文件：标题、链接、AI 的原话、会话名或项目" : "搜你发给 Claude / Codex 的话、会话名或标签，多个词用空格隔开";
-  document.getElementById("q-label").textContent = out ? "搜索产出物" : "搜索我说过的话";
-  if (prev !== t || q.value !== (out ? oq : hq)) q.value = out ? oq : hq;
-  document.getElementById("q-clear").hidden = !q.value;
-  if (out) { if (!oLoaded) searchOut(oq); else if (oReady) renderOutputs(); }
-  else { if (!hLoaded) search(hq); else if (hReady) renderHistory(); }
+  if (q.value.trim() !== sq) q.value = sq;
+  document.getElementById("q-clear").hidden = !sq;
+  if (out) { if (!oLoaded || oq !== sq) searchOut(sq); else if (oReady) renderOutputs(); }
+  else { if (!hLoaded || hq !== sq) search(sq); else if (hReady) renderHistory(); }
+}
+function segCounts(nh, no) {
+  // 搜着词时，两个标签上都写命中几个，一眼看出在哪边
+  const n = x => sq && x != null ? '<span class="n">' + num(x) + "</span>" : "";
+  document.getElementById("seg-history").innerHTML = "我说过的话" + n(nh);
+  document.getElementById("seg-outputs").innerHTML = "产出物" + n(no);
+}
+function xblock(title, where, n, more, rows) {
+  // 另一边的前 3 个，放在结果最上面
+  return '<section class="day xb"><div class="dayh"><b>' + title + "</b><span>" + num(n) + " 个对得上</span>" +
+    btn((n > 3 ? "在「" + where + "」里看全部 " + num(n) + " 个" : "去「" + where + "」") + ico("right", 12), more, "ghost xs") +
+    '</div><div class="olist">' + rows + "</div></section>";
 }
 function goSearch() {
   if (tab !== "outputs") setTab("history");
@@ -1848,7 +1863,7 @@ function goSearch() {
 }
 function clearSearch() {
   const q = document.getElementById("q");
-  q.value = ""; q.focus();
+  q.value = ""; q.focus(); sq = "";
   if (tab === "outputs") searchOut(""); else search("");
 }
 async function search(q, more) {
@@ -1859,7 +1874,8 @@ async function search(q, more) {
   const res = await r.json();
   if (q !== hq) return;  // 打字快时旧结果晚到，丢掉
   hSessions = more ? hSessions.concat(res.sessions) : res.sessions;
-  hTotal = res.total; hAll = res.all; hAllSessions = res.allSessions; hSince = res.since; hOutHits = res.outputHits || 0;
+  hTotal = res.total; hAll = res.all; hAllSessions = res.allSessions; hSince = res.since;
+  if (!more) { hOutHits = res.outputHits || 0; hOuts = res.outputs || []; }
   hReady = true;
   renderHistory();
 }
@@ -1884,9 +1900,9 @@ function hl(text, q) {
   if (words.length) out = out.replace(new RegExp("(" + words.join("|") + ")", "gi"), "<mark>$1</mark>");
   return out;
 }
-function snippet(text) {
+function snippet(text, q) {
   // 折叠时从第一个命中词前面一点开始显示，免得命中的地方被折掉
-  const words = hq.split(/\s+/).filter(Boolean);
+  const words = (q == null ? hq : q).split(/\s+/).filter(Boolean);
   let at = -1;
   for (const w of words) { const i = text.toLowerCase().indexOf(w.toLowerCase()); if (i >= 0 && (at < 0 || i < at)) at = i; }
   return at > 120 ? "…" + text.slice(Math.max(0, at - 60)) : text;
@@ -1929,21 +1945,22 @@ function dayHead(ts) {
   return '<div class="dayh"><b>' + label + "</b><span>" + (diff >= -1 ? md(ts) + " " : "") + week(ts) + "</span></div>";
 }
 function renderHistory() {
-  document.getElementById("hsum").innerHTML = '<span class="hl1">' + (hq
+  segCounts(hTotal, hOutHits);
+  document.getElementById("hsum").innerHTML = (hq
     ? '<span class="mono hit">找到 ' + num(hTotal) + " 个会话</span>"
     : '<span class="mono">共 ' + num(hAllSessions) + " 个会话 · " + num(hAll) + " 句 · 最早到 " + esc(hSince) + "</span>") +
-    (hq && hOutHits ? btn("AI 给的产出物里有 " + num(hOutHits) + " 个对得上" + ico("right", 12), "goOutputs(hq)", "ghost xs") : "") + "</span>" +
     '<span class="note">' + ico("info", 13) + "Claude Code 默认只保留最近 30 天的对话记录，更早的只剩台账另存的你说过的话</span>";
   const list = document.getElementById("hlist");
+  const cross = hq && hOuts.length ? xblock("AI 给的产出物", "产出物", hOutHits, "goOutputs(sq)", hOuts.map(o => orow(o, hq)).join("")) : "";
   if (hq && !hSessions.length) {
-    list.innerHTML = '<div class="dash" style="margin: 0; padding: 20px; gap: 14px">' + face("search", 36) + '<span class="tx"><b>翻遍了，没找到「' + esc(hq) +
-      "」</b><span>" + (hOutHits ? "你没说过这句，但 AI 给你的产出物里有 " + num(hOutHits) + " 个对得上。" : "换个说法，或者少打几个词试试。") + "</span></span>" +
-      (hOutHits ? btn("去产出物里看", "goOutputs(hq)", "sec sm", "", 'style="margin-left: auto"') : "") + "</div>";
+    list.innerHTML = cross + '<div class="dash" style="margin: 0; padding: 20px; gap: 14px">' + face("search", 36) + '<span class="tx"><b>' +
+      (cross ? "你没说过「" + esc(hq) + "」" : "翻遍了，没找到「" + esc(hq) + "」") + "</b><span>" +
+      (cross ? "上面是 AI 给你的产出物里对得上的。" : "换个说法，或者少打几个词试试。") + "</span></span></div>";
     return;
   }
   const faces = {};
   allItems(state).forEach(it => { faces[it.key] = faceOf(it); });
-  let html = "", day = null;
+  let html = cross ? cross + '<div class="dayh"><b>你说过的话</b><span>' + num(hTotal) + " 个会话</span></div>" : "", day = null;
   hSessions.forEach((s, i) => {
     const ts = s.lastTs || (s.preview[0] && s.preview[0].ts) || 0;
     const dn = ts ? dayNo(ts) : null;
@@ -1958,10 +1975,10 @@ function renderHistory() {
 // ---------------- 产出物：AI 在回复里给你的链接和本机文件，能搜，能跳回给出它的会话
 // 产物一直留着；MR 和流水线是临时的，单独一组，「全部产物」里不算它们
 const CATS = [["all", "全部产物"], ["feishu", "飞书"], ["file", "文件"], ["web", "网页"], ["code", "代码"]];
-let oq = "", oCat = "all", oKey = "", oItems = [], oTotal = 0, oCounts = {}, oAll = 0, oAllSessions = 0, oWider = 0, oPromptHits = 0, oLoaded = false, oReady = false, oSig = "";
+let oq = "", oCat = "all", oKey = "", oItems = [], oTotal = 0, oCounts = {}, oAll = 0, oAllSessions = 0, oWider = 0, oPromptHits = 0, oPrompts = [], oLoaded = false, oReady = false, oSig = "";
 function goOutputs(q, key, cat) {
   // 从看板详情、我说过的话跳过来：key = 只看这个会话的，cat = 只看哪一类
-  oq = q || ""; oKey = key || ""; oCat = cat || "all"; oLoaded = false;
+  sq = q || ""; oKey = key || ""; oCat = cat || "all"; oLoaded = false;
   setTab("outputs");
   window.scrollTo(0, 0);
 }
@@ -1976,7 +1993,8 @@ async function searchOut(q, more) {
     const res = await r.json();
     if (sig !== oSig) return;  // 打字快时旧结果晚到，丢掉
     oItems = more ? oItems.concat(res.items) : res.items;
-    oTotal = res.total; oCounts = res.counts || {}; oAll = res.all; oAllSessions = res.allSessions; oWider = res.wider || 0; oPromptHits = res.promptHits || 0;
+    oTotal = res.total; oCounts = res.counts || {}; oAll = res.all; oAllSessions = res.allSessions; oWider = res.wider || 0;
+    if (!more) { oPromptHits = res.promptHits || 0; oPrompts = res.promptSessions || []; }
   } catch (e) { if (sig === oSig) toast("没取到产出物：本机服务没响应"); return; }
   oReady = true;
   if (tab === "outputs") renderOutputs();
@@ -1985,7 +2003,7 @@ function setCat(c) { oCat = c; searchOut(oq); }
 function clearOutKey() { oKey = ""; searchOut(oq); }
 function widenOut() { oKey = ""; oCat = "all"; searchOut(oq); }
 function goHistory(q) {
-  hq = q || ""; hLoaded = false;
+  sq = q || ""; hLoaded = false;
   setTab("history");
   window.scrollTo(0, 0);
 }
@@ -1993,15 +2011,27 @@ function oKeyTitle() {
   const it = findItem(oKey), x = oItems.length && oItems[0].sessions.find(s => s.key === oKey);
   return it ? it.title : x ? x.title : "这个会话";
 }
-function sessLink(x) {
+function sessLink(x, q) {
   // 给出它的会话：在看板上的点一下回到看板打开详情，不在了的直接打开会话
   const on = !!findItem(x.key);
   return '<span class="os1">' + toolChip(x) + '<span class="chip sm">' + esc(x.project || "") + '</span><button type="button" class="sl" title="' +
     (on ? "回到看板，打开这个会话的详情" : "已不在看板上，点一下直接打开会话") + '" onclick="' + (on ? "locate" : "openSession") + "(clips[" + clip(x.key) + '])">' +
-    hl(x.title || "（未命名会话）", oq) + "</button></span>";
+    hl(x.title || "（未命名会话）", q) + "</button></span>";
 }
 const CAT_NAME = { feishu: "飞书", code: "代码", file: "文件", web: "网页", mr: "MR 和流水线", mr_open: "还开着的 MR" };
-function orow(o) {
+function xsess(s, q) {
+  // 「你说过的话」里对得上的会话，在产出物页最上面列一行：标题点了回看板，下面一句你的原话
+  const on = !!findItem(s.key), k = clip(s.key), p = s.preview[0] || {};
+  const acts = (on ? btn("在看板里看", "locate(clips[" + k + "])", "ghost xs", "回到看板，打开这个会话的详情") : "") +
+    btn("打开会话" + ico("open", 12), "openSession(clips[" + k + "],this)", "ghost xs");
+  return '<div class="orow"><span class="ok">你说过 ' + num(s.hits) + " 句</span>" +
+    '<div class="om"><button type="button" class="ot" title="' + (on ? "回到看板，打开这个会话的详情" : "已不在看板上，点一下直接打开会话") + '" onclick="' +
+    (on ? "locate" : "openSession") + "(clips[" + k + '])">' + hl(s.title, q) + "</button>" +
+    (p.text ? '<p class="oc">「' + hl(snippet(p.text, q), q) + "」</p>" : "") +
+    '<div class="os"><span class="os1">' + toolChip(s) + '<span class="chip sm">' + esc(s.project) + "</span></span></div></div>" +
+    '<div class="oa"><span class="otm">' + esc(s.lastTs ? when(s.lastTs) : s.lastText) + '</span><span class="oacts">' + acts + "</span></div></div>";
+}
+function orow(o, q) {
   const s0 = o.sessions[0], k0 = s0 ? clip(s0.key) : 0;
   const acts = (s0 && findItem(s0.key) ? btn("在看板里看", "locate(clips[" + k0 + "])", "ghost xs", "回到看板，打开给出它的会话的详情") : "") +
     (s0 ? btn("打开会话" + ico("open", 12), "openSession(clips[" + k0 + "],this)", "ghost xs") : "") +
@@ -2010,23 +2040,25 @@ function orow(o) {
   const more = o.nSessions > o.sessions.length ? "<span>等 " + num(o.nSessions) + " 个会话都给过</span>" : "";
   return '<div class="orow' + (o.cat === "mr" && !mrLive(o) ? " done" : "") + '"><span class="ok" title="' + esc(o.name) + '">' +
     esc(o.text !== o.name ? o.name : CAT_NAME[o.cat] || "") + "</span>" +
-    '<div class="om">' + outLink(o, "ot" + (o.gone ? " gone" : ""), hl(o.text, oq)) +
-    (o.cat === "file" ? '<span class="op">' + hl(o.path || o.url, oq) + (o.gone ? "　已经不在了" : "") + "</span>" : "") +
-    (o.ctx ? '<p class="oc" title="AI 给出它时说的话">「' + hl(o.ctx, oq) + "」</p>" : "") +
-    '<div class="os">' + (MR_STATE[o.state] ? '<span class="chip sm">' + MR_STATE[o.state] + "</span>" : "") + o.sessions.map(sessLink).join("") + more + "</div></div>" +
+    '<div class="om">' + outLink(o, "ot" + (o.gone ? " gone" : ""), hl(o.text, q)) +
+    (o.cat === "file" ? '<span class="op">' + hl(o.path || o.url, q) + (o.gone ? "　已经不在了" : "") + "</span>" : "") +
+    (o.ctx ? '<p class="oc" title="AI 给出它时说的话">「' + hl(o.ctx, q) + "」</p>" : "") +
+    '<div class="os">' + (MR_STATE[o.state] ? '<span class="chip sm">' + MR_STATE[o.state] + "</span>" : "") + o.sessions.map(x => sessLink(x, q)).join("") + more + "</div></div>" +
     '<div class="oa"><span class="otm">' + esc(when(o.ts)) + '</span><span class="oacts">' + acts + "</span></div></div>";
 }
 function renderOutputs() {
   const n = c => c === "all" ? CATS.reduce((a, [k]) => a + (k === "all" ? 0 : oCounts[k] || 0), 0) : oCounts[c] || 0;
   const mr = oCat === "mr" || oCat === "mr_open", seg = ([c, label]) =>
     '<button type="button" aria-pressed="' + (oCat === c) + '" onclick="setCat(\'' + c + "')\">" + label + '<span class="n">' + num(n(c)) + "</span></button>";
-  document.getElementById("hsum").innerHTML = '<span class="hl1">' + (oq || oKey || oCat !== "all"
+  segCounts(oPromptHits, oTotal);
+  document.getElementById("hsum").innerHTML = (oq || oKey || oCat !== "all"
     ? '<span class="mono hit">找到 ' + num(oTotal) + (oCat === "mr_open" ? " 个还开着的 MR" : mr ? " 个 MR 和流水线" : " 个产出物") + "</span>"
     : '<span class="mono">共 ' + num(oAll) + " 个产出物 · 来自 " + num(oAllSessions) + " 个会话</span>") +
-    (oq && oPromptHits ? btn("你自己在 " + num(oPromptHits) + " 个会话里说过" + ico("right", 12), "goHistory(oq)", "ghost xs", "到「我说过的话」里看") : "") + "</span>" +
     '<span class="note">' + ico("info", 13) + (mr ? "临时的：开着的 MR 标「待合并」，合并完的变灰，不用再管"
       : "AI 给你的文档、文件和网页，一直留着；MR 和流水线是临时的，单独放一组") + "</span>";
-  let html = '<div class="ocats"><div class="seg src" role="group" aria-label="只看哪类产出物">' + CATS.map(seg).join("") + "</div>" +
+  const cross = oq && oPrompts.length ? xblock("你说过的话", "我说过的话", oPromptHits, "goHistory(sq)", oPrompts.map(s => xsess(s, oq)).join("")) +
+    '<div class="dayh"><b>AI 给的产出物</b></div>' : "";
+  let html = cross + '<div class="ocats"><div class="seg src" role="group" aria-label="只看哪类产出物">' + CATS.map(seg).join("") + "</div>" +
     '<div class="seg src" role="group" aria-label="临时的链接">' + seg(["mr_open", "还开着的 MR"]) + seg(["mr", "MR 和流水线"]) + "</div>" +
     (oKey ? '<span class="chip" title="只看这个会话给的">只看「' + esc(oKeyTitle()) + "」</span>" + btn("看全部会话的", "clearOutKey()", "ghost xs") : "") + "</div>";
   if (!oItems.length) {
@@ -2036,14 +2068,13 @@ function renderOutputs() {
     const tip = !oq ? (oCat === "mr_open" ? "合并完、关掉的在「MR 和流水线」里。" : mr ? "AI 在回复里给你 MR 或流水线链接后，会收在这里。" : "AI 在回复里给你链接或文件后，会自动收在这里。")
       : inMr ? "产物里没有，MR 和流水线里有 " + num(oCounts.mr) + " 个对得上。"
       : oWider ? "放开到全部会话、全部类型，有 " + num(oWider) + " 个。"
-      : oPromptHits ? "AI 没给过，但你自己在 " + num(oPromptHits) + " 个会话里说过。"
+      : oPromptHits ? "AI 没给过，你自己说过的在上面。"
       : part ? "放开到全部也没有。换个说法，或者少打几个词试试。" : "换个说法，或者少打几个词试试。";
     html += '<div class="dash" style="margin: 0; padding: 20px; gap: 14px">' + face("search", 36) + '<span class="tx">' +
       (oq ? "<b>" + (part ? part + "时" : "") + "没找到「" + esc(oq) + "」</b>" : "<b>" + (oCat === "mr_open" ? "开着的 MR 都处理完了" : "这里还空着") + "</b>") +
       "<span>" + esc(tip) + "</span></span>" +
       (inMr ? btn("去 MR 和流水线里看", "setCat('mr')", "sec sm", "", 'style="margin-left: auto"')
-        : oq && oWider ? btn("看全部 " + num(oWider) + " 个", "widenOut()", "sec sm", "", 'style="margin-left: auto"')
-        : oq && oPromptHits ? btn("去我说过的话里看", "goHistory(oq)", "sec sm", "", 'style="margin-left: auto"') : "") + "</div>";
+        : oq && oWider ? btn("看全部 " + num(oWider) + " 个", "widenOut()", "sec sm", "", 'style="margin-left: auto"') : "") + "</div>";
     document.getElementById("hlist").innerHTML = html;
     return;
   }
@@ -2051,7 +2082,7 @@ function renderOutputs() {
   oItems.forEach((o, i) => {
     const dn = dayNo(o.ts);
     if (i === 0 || dn !== day) { html += (i ? "</div></section>" : "") + '<section class="day">' + dayHead(o.ts) + '<div class="olist">'; day = dn; }
-    html += orow(o);
+    html += orow(o, oq);
   });
   html += "</div></section>";
   if (oItems.length < oTotal) html += btn("再加载 100 个", "searchOut(oq, true)", "sec hd", "", 'style="align-self: flex-start"');
@@ -2064,8 +2095,8 @@ document.getElementById("logo-h").innerHTML = face("logo", 32);
 document.getElementById("q").addEventListener("input", e => {
   clearTimeout(hTimer);
   document.getElementById("q-clear").hidden = !e.target.value;
-  const v = e.target.value.trim();
-  hTimer = setTimeout(() => tab === "outputs" ? searchOut(v) : search(v), 250);
+  sq = e.target.value.trim();
+  hTimer = setTimeout(() => tab === "outputs" ? searchOut(sq) : search(sq), 250);
 });
 document.addEventListener("click", e => {
   if (menu && !e.target.closest("#menu")) closeMenu();
@@ -2074,9 +2105,11 @@ document.addEventListener("click", e => {
 document.addEventListener("keydown", e => {
   if (ime(e)) return;
   if (e.key === "Escape") {
+    const inQ = document.activeElement && document.activeElement.id === "q", busyEsc = tagEdit || menu || inQ;
     if (tagEdit) closeTag();
     if (menu) { const el = menu.el; closeMenu(); if (el.isConnected) el.focus(); }
-    if (document.activeElement && document.activeElement.id === "q") document.activeElement.blur();
+    if (inQ) document.activeElement.blur();
+    else if (!busyEsc && tab !== "board") setTab("board");   // 搜索页上没在打字时按 Esc：回看板
     return;
   }
   if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") { e.preventDefault(); goSearch(); return; }
