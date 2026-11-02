@@ -1695,21 +1695,24 @@ function renderDetail() {
   html += secs.map(s => s[2].replace("<div ", '<div id="ds-' + s[0] + '" ')).join("");
   el.innerHTML = '<div class="detail-in">' + html + "</div>";
   fitText(document.getElementById("rtext"));
-  spySec();
+  if (jumpTo && Date.now() < spyHold) goJump(); else spySec();   // 平滑滚动途中重画了（松开鼠标时补画、定时刷新）：接着滚过去
 }
 // 详情的页内导航：点一下滚到那一段；滚动时标出看到哪一段
 function dnav(secs) {
   return '<nav class="dnav" aria-label="跳到">' + secs.map(s =>
     '<button type="button" data-to="ds-' + s[0] + '" aria-current="false" onclick="jumpSec(this)">' + s[1] + "</button>").join("") + "</nav>";
 }
-let spyHold = 0;
+let spyHold = 0, jumpTo = null;
 function jumpSec(b) {
-  const el = document.getElementById(b.dataset.to);
+  jumpTo = b.dataset.to;
+  spyHold = Date.now() + 1200;   // 平滑滚动途中别让 spySec 改回去
+  goJump();
+}
+function goJump() {
+  const el = document.getElementById(jumpTo);
   if (!el) return;
-  const calm = matchMedia("(prefers-reduced-motion: reduce)").matches;
-  el.scrollIntoView({ behavior: calm ? "auto" : "smooth", block: "start" });
-  b.parentNode.querySelectorAll("button").forEach(x => x.setAttribute("aria-current", x === b));
-  spyHold = Date.now() + (calm ? 0 : 700);   // 平滑滚动途中别让 spySec 改回去
+  el.scrollIntoView({ behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth", block: "start" });
+  document.querySelectorAll(".dnav button").forEach(x => x.setAttribute("aria-current", x.dataset.to === jumpTo));
 }
 function spySec() {
   const nav = document.querySelector(".dnav");
@@ -2013,7 +2016,7 @@ function replyHint(it) {
 }
 function askRow(it, d, i, old) {
   const p = pickOf(it), k = esc(it.key);
-  const meta = (d.block ? '<span class="chip sm" title="这件没定，卡着这个任务">卡 ' + esc(d.block) + "</span>" : "") +
+  const meta = (d.block ? '<span class="chip sm" title="这件没定，卡着：' + esc(d.block) + '">卡 ' + esc(d.block) + "</span>" : "") +
     (old ? '<span class="age">问了 ' + esc(dur(nowTs() - d.first)) + "</span>" : "");
   return '<div class="dq"><span class="n">' + (i + 1) + '</span><span class="q">' + esc(d.q) + (meta ? '<span class="qm">' + meta + "</span>" : "") +
     '</span><span class="opts">' + d.opts.map((o, j) => '<button type="button" class="opt" aria-pressed="' + (p.sel[d.k] === j) + '" onclick="pickOpt(\'' + k + "'," + i + "," + j + ')">' + esc(o) + "</button>").join("") +
