@@ -1662,25 +1662,56 @@ GROUPS = [
 PALETTE = ["#3370ff", "#7f3bf5", "#0fb5a8", "#f77234", "#d83931", "#2ea121", "#c45ec0", "#8f959e"]
 
 
+# 收纳文件夹：本身不算项目，里面的每个子文件夹各算一个。和 config 里的 project_parents 一起按「最具体的那层」认。
+BUILTIN_PARENTS = [os.path.join(HOME, x) for x in (
+    "Desktop", "Documents", "Documents/ChatGPT", "Documents/Codex", "Nutstore Files", "Nutstore Files/Nutstore", "Dropbox")]
+ALL_PARENTS = sorted(set(PROJECT_PARENTS + BUILTIN_PARENTS), key=len, reverse=True)
+CODEX_WORKTREES = os.path.join(CODEX_HOME, "worktrees")
+_wt_main = {}   # Codex 工作树目录 → 主仓库目录
+
+
+def codex_worktree_main(wt, repo):
+    """Codex 开的工作树（~/.codex/worktrees/<名字>/<仓库>）对应的主仓库目录：读工作树的 .git 文件，里面写着主仓库在哪。
+    工作树已经删了的，借同名仓库别的工作树查；都查不到返回空。只读 ~/.codex 下的文件，不碰桌面。"""
+    if wt not in _wt_main:
+        for g in [os.path.join(wt, ".git")] + sorted(glob.glob(os.path.join(CODEX_WORKTREES, "*", glob.escape(repo), ".git"))):
+            try:
+                with open(g, encoding="utf-8") as f:
+                    m = re.match(r"gitdir:\s*(/.+?)/\.git/worktrees/", f.read(4096))
+            except (OSError, ValueError):
+                continue
+            if m:
+                _wt_main[wt] = m.group(1)
+                break
+    return _wt_main.get(wt, "")
+
+
+def project_name(name):
+    """文件夹名 → 项目名：去掉工作树后缀；隐藏目录、只是个日期的（Codex 自动建的临时目录）算「其他」。"""
+    name = re.sub(r"(-wt-.*|-worktrees)$", "", name)
+    return "其他" if not name or name.startswith(".") or re.fullmatch(r"\d{4}-\d{2}-\d{2}", name) else name
+
+
 def project_of(cwd):
     p = (cwd or "").rstrip("/")
-    for parent in sorted(PROJECT_PARENTS, key=len, reverse=True):
+    if p.startswith(CODEX_WORKTREES + "/"):
+        parts = p[len(CODEX_WORKTREES) + 1:].split("/")
+        if len(parts) < 2:
+            return "其他"
+        wt = os.path.join(CODEX_WORKTREES, parts[0], parts[1])
+        main = codex_worktree_main(wt, parts[1])
+        if not main:
+            return project_name(parts[1])
+        p = main + p[len(wt):]
+    for parent in ALL_PARENTS:
         if p.startswith(parent + "/"):
-            name = re.sub(r"-wt-.*$", "", p[len(parent) + 1:].split("/")[0])
-            return "其他" if name.startswith(".") else name
+            return project_name(p[len(parent) + 1:].split("/")[0])
+    if p == os.path.join(HOME, "Desktop"):
+        return "桌面"
     if not p.startswith(HOME):
         return os.path.basename(p) or "其他"
     parts = [x for x in p[len(HOME):].split("/") if x]
-    if not parts:
-        return "主目录"
-    if parts[0] == "Desktop":
-        if len(parts) == 1:
-            return "桌面"
-        name = parts[1]
-    else:
-        name = parts[0]
-    name = re.sub(r"-wt-.*$", "", name)
-    return "其他" if name.startswith(".") else name
+    return project_name(parts[0]) if parts else "主目录"
 
 
 def color_of(name):
@@ -2950,8 +2981,9 @@ def migrate_codex_prompts(conn):
 
 
 def migrate_project_parents(conn):
-    """改了 project_parents：「我说过的话」里存的项目按新规则重算一遍（看板每次现算，不用管）。"""
-    cur = json.dumps(sorted(PROJECT_PARENTS), ensure_ascii=False)
+    """改了 project_parents 或推项目名的规则：「我说过的话」里存的项目按新规则重算一遍（看板每次现算，不用管）。
+    改了 project_of 的规则就把 rules 加一。"""
+    cur = json.dumps({"rules": 2, "parents": sorted(PROJECT_PARENTS)}, ensure_ascii=False)
     if meta_get(conn, "project_parents") == cur:
         return
     for r in conn.execute("SELECT DISTINCT cwd, project FROM prompts").fetchall():

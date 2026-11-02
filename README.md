@@ -81,7 +81,7 @@ git clone https://github.com/SeraFxy/codex-inbox.git ~/codex-inbox
 | `feishu_as` | `"bot"` | 用 lark-cli 的哪种身份发 |
 | `wake_expire_hours` | `3` | 定时唤醒晚了多久就放弃（比如 Mac 一直在睡） |
 | `utc_offset_hours` | 空 | 看板按哪个时区算时间，空就用本机时区。Mac 的时区和你安排工作的时区不一样时填，比如人在国外但按北京时间工作就填 `8`。状态行和 `ledger schedule` 里的时间也按它理解 |
-| `project_parents` | `[]` | 这些目录下的每个子目录算一个项目，比如 `["~/code", "~/work/repos"]`。不填时按 `~/Desktop/<项目>`、`~/<项目>` 推断 |
+| `project_parents` | `[]` | 这些目录下的每个子目录算一个项目，比如 `["~/code", "~/work/repos"]`。不填时按 `~/Desktop/<项目>`、`~/<项目>` 推断；`~/Documents`、`~/Documents/ChatGPT`、坚果云（`~/Nutstore Files/Nutstore`）、`~/Dropbox` 这类收纳文件夹自动往下取一层。几个目录套在一起时按最里面那层算，比如再配一个 `~/Nutstore Files/Nutstore/<分类>`，这个分类下的子目录就各算一个项目。Codex 开的工作树（`~/.codex/worktrees/…`）归到主仓库所在的项目，`~/Documents/Codex/<日期>/` 这类临时目录归「其他」 |
 | `feishu_doc_titles` | `true` | 产出物里的飞书文档用 lark-cli 以你的身份查真实标题；`false` 就只用 AI 写的说明 |
 | `gitlab_mr_state` | `true` | AI 给的 GitLab MR 用 glab 以你的身份查标题和合并了没有；`false` 就不查 |
 
