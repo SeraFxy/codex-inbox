@@ -188,11 +188,12 @@ def migrate_links(conn):
     if meta_get(conn, "links_mr") != "1":   # MR、流水线、提交从「代码」里分出来，单算一类
         rows += conn.execute("SELECT DISTINCT url FROM links WHERE cat = 'code'").fetchall()
         meta_set(conn, "links_mr", "1")
-    if meta_get(conn, "links_alt") != "1":  # 已记下的本机文件：在额外 worktree 里的，补记主工作区里的同一路径
+    if meta_get(conn, "links_alt") != "2":  # 已记下的本机文件：在额外 worktree 里的，补记主工作区里的同一路径
         rows += conn.execute("SELECT DISTINCT url FROM links WHERE cat = 'file'").fetchall()
-        meta_set(conn, "links_alt", "1")
+        meta_set(conn, "links_alt", "2")
+    roots = known_roots(conn) if rows else []
     for (url,) in rows:
-        conn.execute("UPDATE links SET cat=?, doc=?, mr=?, alt=? WHERE url=?", (out_cat(url), feishu_doc(url), mr_ref(url), worktree_twin(url), url))
+        conn.execute("UPDATE links SET cat=?, doc=?, mr=?, alt=? WHERE url=?", (out_cat(url), feishu_doc(url), mr_ref(url), worktree_twin(url, roots), url))
     conn.commit()
 
 
@@ -477,9 +478,51 @@ def mr_ref(url):
     return "%s/%s!%s" % (u.netloc.lower(), m.group(1), m.group(2)) if m and u.netloc else ""
 
 
-def worktree_twin(path):
+_ROOTS = {"at": 0, "roots": []}
+_REMOTES = {"at": 0, "map": {}}
+_BRANCH = {}
+
+
+def known_roots(conn):
+    """会话待过的、AI 给过文件的仓库的主工作区目录（只用 stat 判断，十分钟重算一次）。看板服务读不了「桌面」里的文件内容，
+    靠它们认出 worktree 是哪个主仓库的。"""
+    if time.time() - _ROOTS["at"] < 600:
+        return _ROOTS["roots"]
+    roots = set()
+    dirs = [r[0] for r in conn.execute("SELECT DISTINCT cwd FROM prompts WHERE cwd != ''")]
+    dirs += [os.path.dirname(r[0]) for r in conn.execute("SELECT DISTINCT url FROM links WHERE cat = 'file'")]
+    for cwd in dirs:
+        d = cwd
+        while d and d not in ("/", HOME):
+            if os.path.isdir(os.path.join(d, ".git")):
+                roots.add(d)
+                break
+            d = os.path.dirname(d)
+    _ROOTS.update(at=time.time(), roots=sorted(roots))
+    return _ROOTS["roots"]
+
+
+def _main_of(wt, roots):
+    """额外 worktree 的根目录 -> 主工作区目录。先读 wt/.git（写着 gitdir: <主仓库>/.git/worktrees/<名字>）；
+    在「桌面」等后台服务读不了的地方，就看哪个已知主仓库里有 .git/worktrees/<wt 的文件夹名>（只用 stat）。"""
+    try:
+        with open(os.path.join(wt, ".git"), encoding="utf-8") as f:
+            m = re.match(r"gitdir:\s*(.+)", f.read(1000).strip())
+        gd = os.path.normpath(os.path.join(wt, m.group(1).strip())) if m else ""
+        # 子模块的 gitdir 是 .git/modules/…，不算
+        if not gd or os.path.basename(os.path.dirname(gd)) != "worktrees" or os.path.basename(os.path.dirname(os.path.dirname(gd))) != ".git":
+            return ""
+        return os.path.dirname(os.path.dirname(os.path.dirname(gd)))
+    except (OSError, ValueError):
+        name = os.path.basename(wt)
+        cands = [r for r in roots or [] if r != wt and os.path.isdir(os.path.join(r, ".git", "worktrees", name))]
+        cands.sort(key=lambda r: os.path.dirname(r) != os.path.dirname(wt))   # 和 worktree 在同一个文件夹里的优先
+        return cands[0] if cands else ""
+
+
+def worktree_twin(path, roots=None):
     """本机文件在 git 的额外 worktree 里时 -> 主工作区里同一相对路径的位置，worktree 被清理后从那里找；不在 worktree 里返回空。
-    只记一个路径，不复制文件；只读 worktree 根目录的 .git 文件，不跑 git。"""
+    只记一个路径，不复制文件；不跑 git。"""
     if not path.startswith("/"):
         return ""
     d = os.path.dirname(path)
@@ -488,29 +531,10 @@ def worktree_twin(path):
         if os.path.isdir(g):
             return ""   # 主工作区
         if os.path.isfile(g):
-            try:
-                with open(g, encoding="utf-8") as f:
-                    m = re.match(r"gitdir:\s*(.+)", f.read(1000).strip())
-            except (OSError, ValueError):
-                return ""
-            gd = os.path.normpath(os.path.join(d, m.group(1).strip())) if m else ""
-            # 额外 worktree 的 gitdir 是 <主仓库>/.git/worktrees/<名字>；子模块（.git/modules/…）不算
-            if not gd or os.path.basename(os.path.dirname(gd)) != "worktrees" or os.path.basename(os.path.dirname(os.path.dirname(gd))) != ".git":
-                return ""
-            main = os.path.dirname(os.path.dirname(os.path.dirname(gd)))
-            return os.path.join(main, os.path.relpath(path, d)) if main != d else ""
+            main = _main_of(d, roots)
+            return os.path.join(main, os.path.relpath(path, d)) if main and main != d else ""
         d = os.path.dirname(d)
     return ""
-
-
-def _git_ref(root, name):
-    """读 <仓库>/.git/<name>（如 HEAD、refs/remotes/origin/HEAD）里写的「ref: refs/…」，返回分支名；读不到返回空。"""
-    try:
-        with open(os.path.join(root, ".git", name), encoding="utf-8") as f:
-            m = re.match(r"ref:\s*refs/(?:heads|remotes/origin)/(.+)", f.read(300).strip())
-    except (OSError, ValueError):
-        return ""
-    return m.group(1) if m else ""
 
 
 def repo_root(path):
@@ -522,42 +546,81 @@ def repo_root(path):
     return ""
 
 
-def repo_web_url(root, rel):
-    """主仓库的 origin 在 GitLab / GitHub 上时 -> 默认分支上这个文件的网页地址；只读 .git 里的文件，不跑 git、不联网。"""
+def _web_base(raw):
+    """git 远端地址 -> (主机, 项目路径)；git@host:a/b.git、https://host/a/b.git、ssh://git@host:22/a/b 都认。"""
+    m = re.match(r"^(?:https?://(?:[^@/]+@)?|ssh://(?:[^@/]+@)?|[^@/]+@)([^/:]+)(?::\d+)?[:/](.+?)(?:\.git)?/?$", raw or "")
+    return (m.group(1).lower(), m.group(2)) if m else None
+
+
+def codex_remotes(conn, roots):
+    """{主工作区目录: 远端地址}，从 Codex 会话记录开头的 git 信息里取（后台服务读不了「桌面」里的 .git/config）。一小时重算一次。"""
+    if time.time() - _REMOTES["at"] < 3600:
+        return _REMOTES["map"]
+    out = {}
+    for (data,) in conn.execute("SELECT data FROM sessions WHERE key LIKE 'codex:%'"):
+        try:
+            st = json.loads(data)
+            with open(st.get("path") or "", encoding="utf-8") as f:
+                p = (json.loads(f.readline()) or {}).get("payload") or {}
+        except (OSError, ValueError, TypeError):
+            continue
+        url, cwd = ((p.get("git") or {}).get("repository_url") or ""), p.get("cwd") or ""
+        if not url or not cwd.startswith("/"):
+            continue
+        twin = worktree_twin(os.path.join(cwd, "_"), roots)
+        root = repo_root(twin) if twin else repo_root(os.path.join(cwd, "_"))
+        if root:
+            out.setdefault(root, url)
+    _REMOTES.update(at=time.time(), map=out)
+    return out
+
+
+def default_branch(host, proj):
+    """GitLab 项目的默认分支，用 glab 查一次记住；GitHub 和查不到的用 HEAD（网页上会跳到默认分支）。"""
+    if host == "github.com":
+        return "HEAD"
+    k = host + "/" + proj
+    if k not in _BRANCH and os.path.isabs(GLAB) and os.access(GLAB, os.X_OK):
+        r = run([GLAB, "api", "--hostname", host, "projects/" + quote_url(proj, safe="")], timeout=15)
+        try:
+            _BRANCH[k] = (json.loads(r.stdout or "") or {}).get("default_branch") or "" if r.returncode == 0 else ""
+        except (ValueError, AttributeError):
+            _BRANCH[k] = ""
+    return _BRANCH.get(k) or "HEAD"
+
+
+def repo_web_url(root, rel, remotes):
+    """主仓库在 GitLab / GitHub 上时 -> 默认分支上这个文件的网页地址。远端先读 .git/config，读不了用 Codex 记下的（remotes）。"""
+    raw = ""
     try:
         with open(os.path.join(root, ".git", "config"), encoding="utf-8") as f:
-            conf = f.read(20000)
+            m = re.search(r'\[remote "origin"\][^\[]*?\burl\s*=\s*(\S+)', f.read(20000))
+            raw = m.group(1) if m else ""
     except (OSError, ValueError):
+        pass
+    raw = raw or (remotes or {}).get(root, "")
+    hp = _web_base(raw)
+    if not hp:
         return ""
-    m = re.search(r'\[remote "origin"\][^\[]*?\burl\s*=\s*(\S+)', conf)
-    if not m:
-        return ""
-    raw = m.group(1)
-    m = re.match(r"^(?:https?://(?:[^@/]+@)?|ssh://(?:[^@/]+@)?|[^@/]+@)([^/:]+)(?::\d+)?[:/](.+?)(?:\.git)?/?$", raw)
-    if not m:
-        return ""
-    host, proj = m.group(1).lower(), m.group(2)
-    branch = _git_ref(root, "refs/remotes/origin/HEAD") or "HEAD"
+    host, proj = hp
     sep = "/blob/" if host == "github.com" else "/-/blob/"
-    return "https://%s/%s%s%s/%s" % (host, proj, sep, quote_url(branch), quote_url(rel))
+    return "https://%s/%s%s%s/%s" % (host, proj, sep, quote_url(default_branch(host, proj)), quote_url(rel))
 
 
-def file_fallback(path, alt):
-    """AI 给的本机文件不在了（所在的 worktree 被清理）时去哪找：主工作区在默认分支上、文件也在 -> ("file", 路径)；
-    否则主仓库在 GitLab / GitHub 上 -> ("web", 默认分支上的网页地址，合并进去的就在那)；再不然主工作区里有就用它。都没有返回 None。"""
+def file_fallback(path, alt, remotes=None, resolve=True):
+    """AI 给的本机文件不在了（所在的 worktree 被清理）时去哪找：主工作区里有同名文件 -> ("file", 路径)；
+    没有、但主仓库在 GitLab / GitHub 上 -> ("web", 默认分支上的网页地址；resolve=False 时只说有，不查分支)。都没有返回 None。"""
     if not alt:
         return None
+    if os.path.exists(alt):
+        return "file", alt
     root = repo_root(alt)
     if not root:
         return None
-    here = os.path.exists(alt)
-    branch, default = _git_ref(root, "HEAD"), _git_ref(root, "refs/remotes/origin/HEAD")
-    if here and (not default or branch == default):
-        return "file", alt
-    web = repo_web_url(root, os.path.relpath(alt, root))
-    if web:
-        return "web", web
-    return ("file", alt) if here else None
+    if not resolve:
+        return ("web", "") if os.path.isfile(os.path.join(root, ".git", "config")) else None
+    web = repo_web_url(root, os.path.relpath(alt, root), remotes)
+    return ("web", web) if web else None
 
 
 def feishu_doc(url):
@@ -760,7 +823,7 @@ def flush_media(conn, key, st):
                      "label=CASE WHEN excluded.label != '' THEN excluded.label ELSE links.label END, "
                      "ctx=CASE WHEN excluded.ctx != '' AND (links.ctx IS NULL OR links.ctx = '' OR excluded.ts >= links.ts) "
                      "THEN excluded.ctx ELSE links.ctx END",
-                     (key, url, label, ts or 0, ctx, out_cat(url), feishu_doc(url), mr_ref(url), worktree_twin(url)))
+                     (key, url, label, ts or 0, ctx, out_cat(url), feishu_doc(url), mr_ref(url), worktree_twin(url, known_roots(conn)) if url.startswith("/") else ""))
     for ts, sha, name, size in st.pop("new_images", []):
         conn.execute("INSERT OR IGNORE INTO images (session_key, sha, ts, file, bytes) VALUES (?, ?, ?, ?, ?)",
                      (key, sha, ts or 0, name, size))
@@ -1709,7 +1772,7 @@ def search_outputs(conn, q, cat="", key="", tool="", limit=100, offset=0):
         if it["cat"] == "file":
             it["path"] = home_rel(url)
             it["gone"] = not os.path.exists(url)
-            fb = file_fallback(url, head["alt"]) if it["gone"] else None
+            fb = file_fallback(url, head["alt"], resolve=False) if it["gone"] else None
             if fb:   # 所在的 worktree 被清理了：点开的是主工作区里的同名文件，或 GitLab 上默认分支的版本
                 it["gone"], it["twin"] = False, fb[0]
                 if fb[0] == "file":
@@ -3177,11 +3240,12 @@ def open_output_file(conn, lock, path, reveal):
     """打开 AI 给过的本机文件（或在访达里显示）。只开台账记过的；不认识的类型只在访达里显示，不直接运行。"""
     with lock:
         known = path.startswith("/") and conn.execute("SELECT alt FROM links WHERE url=? ORDER BY alt DESC LIMIT 1", (path,)).fetchone()
+        remotes = codex_remotes(conn, known_roots(conn)) if known and known["alt"] and not os.path.exists(path) else {}
     if not known:
         return False, "看板没记过这个文件"
     note = ""
     if not os.path.exists(path):
-        fb = file_fallback(path, known["alt"])
+        fb = file_fallback(path, known["alt"], remotes)   # 可能要用 glab 查默认分支，不占锁
         if not fb:
             return False, "文件已经不在了：" + home_rel(path)
         if fb[0] == "web":
