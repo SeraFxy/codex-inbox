@@ -905,8 +905,9 @@ let localAt = 0;   // 本地最近一次改顺序、置顶的时间
 let pressing = false, owedRender = false, loadedAt = 0;
 function laterRender(fn) { if (pressing) owedRender = true; else fn(); }
 document.addEventListener("pointerdown", () => { pressing = true; }, true);
-for (const ev of ["pointerup", "pointercancel"])
-  document.addEventListener(ev, () => setTimeout(() => { pressing = false; if (owedRender) { owedRender = false; render(); } }, 0), true);
+function released() { setTimeout(() => { pressing = false; if (owedRender) { owedRender = false; render(); } }, 0); }
+for (const ev of ["pointerup", "pointercancel"]) document.addEventListener(ev, released, true);
+window.addEventListener("blur", released);   // 按着鼠标切走了，收不到松开，也别一直不画
 function setLocal(patch) { Object.assign(state, patch); localAt = Date.now(); }
 async function load(refresh) {
   const t0 = Date.now();
