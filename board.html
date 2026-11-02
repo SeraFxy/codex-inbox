@@ -146,6 +146,16 @@ kbd.k.lg { min-width: 22px; height: 22px; padding: 0 6px; border-radius: 6px; fo
 .queue > * { flex-shrink: 0; }   /* 这一栏自己滚动：提示折行时别被压扁、压到下面的卡片上 */
 .detail { flex: 999 1 540px; min-width: 0; padding: 24px clamp(16px, 3vw, 44px) 40px; background: var(--bk-surface); }
 .detail-in { width: 100%; max-width: 900px; min-height: 100%; display: flex; flex-direction: column; gap: 26px; }
+/* 详情的页内导航：贴在顶上，点一下滚到那一段 */
+.dnav { position: sticky; top: 0; z-index: 3; display: flex; gap: 2px; margin: -14px 0 -10px; padding: 8px 0; overflow-x: auto; scrollbar-width: none;
+  background: var(--bk-surface); box-shadow: 0 1px 0 var(--bk-line); }
+.dnav::-webkit-scrollbar { display: none; }
+.dnav button { flex: none; height: 32px; padding: 0 12px; border: 0; border-radius: 10px; background: transparent; color: var(--bk-ink-2);
+  font-size: 13px; line-height: 20px; font-weight: 500; cursor: pointer; transition: background-color .12s, color .12s; }
+.dnav button:hover { color: var(--bk-ink-1); background: var(--bk-sunken); }
+.dnav button[aria-current="true"] { background: var(--bk-sunken); color: var(--bk-ink-1); font-weight: 600; }
+.dnav button:focus-visible { outline: 2px solid var(--bk-ink-1); outline-offset: -2px; }
+[id^="ds-"] { scroll-margin-top: 64px; }
 @media (min-width: 961px) {
   .board { height: 100vh; height: 100dvh; min-height: 0; }
   .split { flex-wrap: nowrap; min-height: 0; }
@@ -339,6 +349,9 @@ kbd.k.lg { min-width: 22px; height: 22px; padding: 0 6px; border-radius: 6px; fo
 .msg .ml { font-size: 12px; line-height: 16px; color: var(--bk-ink-3); }
 .bub { padding: 10px 14px; font-size: 14px; line-height: 22px; white-space: pre-wrap; word-break: break-word; text-wrap: pretty; }
 .bub .clamp { display: -webkit-box; -webkit-line-clamp: 5; -webkit-box-orient: vertical; overflow: hidden; }
+.bub.md .clamp { -webkit-line-clamp: 16; }
+.bub.md b { font-weight: 600; }
+.bub.md code { font: 12.5px/20px var(--bk-mono); }
 .msg.you { align-self: flex-end; align-items: flex-end; max-width: 84%; }
 .msg.you .bub { border-radius: 14px 14px 4px 14px; background: var(--bk-sunken); }
 .msg.it { align-self: flex-start; flex-direction: row; gap: 10px; max-width: 90%; }
@@ -518,7 +531,7 @@ mark { background: var(--bk-lime-mark); color: #1B2026; border-radius: 3px; box-
 .toast button:hover { background: rgba(255, 255, 255, .16); }
 
 @media (max-width: 640px) {
-  .btn, .tab, .opt, .seg.src button { min-height: 40px; }
+  .btn, .tab, .opt, .seg.src button, .dnav button { min-height: 40px; }
   .kbd-hints, kbd.k { display: none !important; }
   .btn.sec.searchbtn { width: auto; flex: 1; }
   .hline { flex-wrap: wrap; }
@@ -1668,16 +1681,46 @@ function renderDetail() {
     '<span>' + (it.auto ? esc(it.auto.paused ? "定时已暂停" : it.auto.when ? it.auto.when + " 跑" : "定时任务") + " · " : "") + "最后动静 " + esc(it.last ? when(it.last) : "—") + "</span></div></div>" +
     '<div class="dacts">' + acts + "</div></div>";
   html += '<div class="why">' + ico("info", 16) + "<span><b>" + esc(badgeOf(it)) + "</b>　" + esc(whyOf(it)) + "</span></div>";
+  const secs = [
+    ["reply", decisionsOf(it).length ? "待你决定" : oldAsksOf(it).length ? "没答的" : "推它一下", replyBox(it)],
+    ["convo", "对话", convo(it)],
+    ["handoff", "交接", handoffSec(it)],
+    ["goal", "目标", d.goal || !hidden ? goalSec(it) : ""],
+    ["out", "产出物", outSec(it)],
+    ["mr", "MR", mrSec(it)],
+    ["info", "会话信息", infoSec(it)],
+  ].filter(s => s[2]);
+  if (secs.length >= 3) html += dnav(secs);
   if (!hidden) html += '<div class="part tight"><span class="sec-l">现状</span><p class="now">' + esc(it.headline) + "</p></div>";
-  html += replyBox(it);
-  html += convo(it);
-  html += handoffSec(it);
-  if (d.goal || !hidden) html += goalSec(it);
-  html += outSec(it);
-  html += mrSec(it);
-  html += infoSec(it);
+  html += secs.map(s => s[2].replace("<div ", '<div id="ds-' + s[0] + '" ')).join("");
   el.innerHTML = '<div class="detail-in">' + html + "</div>";
   fitText(document.getElementById("rtext"));
+  spySec();
+}
+// 详情的页内导航：点一下滚到那一段；滚动时标出看到哪一段
+function dnav(secs) {
+  return '<nav class="dnav" aria-label="跳到">' + secs.map(s =>
+    '<button type="button" data-to="ds-' + s[0] + '" aria-current="false" onclick="jumpSec(this)">' + s[1] + "</button>").join("") + "</nav>";
+}
+let spyHold = 0;
+function jumpSec(b) {
+  const el = document.getElementById(b.dataset.to);
+  if (!el) return;
+  const calm = matchMedia("(prefers-reduced-motion: reduce)").matches;
+  el.scrollIntoView({ behavior: calm ? "auto" : "smooth", block: "start" });
+  b.parentNode.querySelectorAll("button").forEach(x => x.setAttribute("aria-current", x === b));
+  spyHold = Date.now() + (calm ? 0 : 700);   // 平滑滚动途中别让 spySec 改回去
+}
+function spySec() {
+  const nav = document.querySelector(".dnav");
+  if (!nav || Date.now() < spyHold) return;
+  const bs = [...nav.querySelectorAll("button")], line = nav.getBoundingClientRect().bottom + 16;
+  const box = document.getElementById("detail"), own = box.scrollHeight > box.clientHeight + 1;
+  const bottom = own ? box.scrollTop + box.clientHeight >= box.scrollHeight - 2 : innerHeight + scrollY >= document.documentElement.scrollHeight - 2;
+  let cur = bs[0];
+  bs.forEach(b => { const el = document.getElementById(b.dataset.to); if (el && el.getBoundingClientRect().top <= line) cur = b; });
+  if (bottom && bs.length && (own ? box.scrollTop > 0 : scrollY > 0)) cur = bs[bs.length - 1];
+  bs.forEach(b => b.setAttribute("aria-current", b === cur));
 }
 // 详情里的「AI 给的产出物」：先列最近 8 个，展开后按会话取全部；多于 12 个时可以在里面找
 const dOut = {};    // 会话 key -> { total, items }
@@ -1767,17 +1810,32 @@ function closeMenu() {
   menu.el.classList.remove("on"); menu.el.setAttribute("aria-expanded", "false");
   menu = null; picker = null;
 }
+// 它最后说的：状态里只带开头一段，详情打开时取全文（结论、要你做的事都在里面，不再只给最后 600 字）
+const dRe = {};   // 会话 key -> { ts, text }
+async function loadReply(key, ts) {
+  if (dRe[key] && dRe[key].ts === ts) return;
+  dRe[key] = { ts, text: "" };
+  try { dRe[key].text = (await (await fetch("/api/reply?key=" + encodeURIComponent(key), { cache: "no-store" })).json()).text || ""; } catch (e) {}
+  if (selKey === key && dRe[key].text && !typing()) laterRender(renderDetail);
+}
+function replyOf(it) {
+  const d = it.details, got = dRe[it.key];
+  if (got && got.ts === d.replyTs && got.text) return got.text;
+  if ((d.replyLen || 0) > (d.lastReply || "").length) loadReply(it.key, d.replyTs);
+  return d.lastReply;
+}
 function convo(it) {
   const d = it.details, msgs = [];
   if (d.firstPrompt) msgs.push({ you: true, label: "你 · 最初的要求", text: d.firstPrompt });
   if (d.lastPrompt) msgs.push({ you: true, label: "你 · 最后说的", text: d.lastPrompt });
-  if (d.lastReply) msgs.push({ you: false, label: waitOf(it) ? "它 · 停下来前说的" : "它 · 最后说的", text: d.lastReply });
+  if (d.lastReply) msgs.push({ you: false, label: waitOf(it) ? "它 · 停下来前说的" : "它 · 最后说的", text: replyOf(it) });
   if (!msgs.length) return "";
   return '<div class="part"><span class="sec-t">对话</span><div class="convo">' + msgs.map((m, i) => {
     if (m.you) return '<div class="msg you"><span class="ml">' + m.label + '</span><div class="bub">' + esc(m.text) + "</div></div>";
-    const id = domId(it.key) + "_" + i, long = m.text.length > 160 || m.text.split("\n").length > 5, open = bubOpen[id];
-    return '<div class="msg it">' + face("mark", 24) + '<div class="col"><span class="ml">' + m.label + '</span><div class="bub">' +
-      (long && !open ? '<div class="clamp">' + esc(m.text) + "</div>" : esc(m.text)) + "</div>" + (long ? btn(open ? "收起" : "展开全文", "bubOpen['" + id + "']=!bubOpen['" + id + "'];renderDetail()", "ghost xs") : "") + "</div></div>";
+    // 它说的比较要紧：20 行以内全文显示，更长的先露 16 行
+    const id = domId(it.key) + "_" + i, long = m.text.split("\n").length > 20 || m.text.length > 1400, open = bubOpen[id];
+    return '<div class="msg it">' + face("mark", 24) + '<div class="col"><span class="ml">' + m.label + '</span><div class="bub md">' +
+      (long && !open ? '<div class="clamp">' + hoMd(m.text) + "</div>" : hoMd(m.text)) + "</div>" + (long ? btn(open ? "收起" : "展开全文", "bubOpen['" + id + "']=!bubOpen['" + id + "'];renderDetail()", "ghost xs") : "") + "</div></div>";
   }).join("") + "</div></div>";
 }
 // 压缩时的交接：Claude 上下文满了压缩时写给自己接着干活的，只取最后一段。正文长，详情打开时再取
@@ -2379,6 +2437,8 @@ document.addEventListener("keydown", e => {
   else if (k === "s" && it && it.group !== "hidden" && faceOf(it) !== "run") openMenu(document.getElementById("snooze-btn"), it.key);
 });
 ["rail", "queue", "detail"].forEach(id => document.getElementById(id).addEventListener("scroll", closeMenu, { passive: true }));
+document.getElementById("detail").addEventListener("scroll", spySec, { passive: true });
+addEventListener("scroll", spySec, { passive: true });   // 窄屏时详情跟着整页滚
 window.addEventListener("resize", closeMenu);
 // 切回来时拉一次新的；5 秒内来回切就不拉了，省得每切一次整页重画一次
 document.addEventListener("visibilitychange", () => { if (!document.hidden && Date.now() - loadedAt > 5000) load("1"); });

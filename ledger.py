@@ -2224,10 +2224,14 @@ def excerpt(text, limit=100):
     return ""
 
 
-def tail_text(text, limit=600):
-    t = "\n".join(l.replace("**", "") for l in (text or "").splitlines() if not l.strip().startswith(("📌", "🎯")))
-    t = t.strip()
-    return t if len(t) <= limit else "…" + t[-limit:]
+def reply_text(text):
+    """它最后说的：去掉 📌、🎯 两行（详情顶上已经有了），其余原样，Markdown 交给看板渲染。"""
+    return "\n".join(l for l in (text or "").splitlines() if not l.strip().startswith(("📌", "🎯"))).strip()
+
+
+def head_text(text, limit=800):
+    """看板状态里只带开头一段（结论多在开头）；详情打开时再按 /api/reply 取全文，免得每分钟拉的状态太大。"""
+    return text if len(text) <= limit else text[:limit].rstrip() + "…"
 
 
 def claude_live():
@@ -2498,7 +2502,9 @@ def make_item(st, now, cfg, ov, sched, titles, goals, ctx):
             "mrsTotal": sum(1 for l in ctx["links"].get(key, []) if l["cat"] == "mr"),
             "firstPrompt": (st.get("first_prompt") or "")[:300],
             "lastPrompt": (st.get("last_prompt") or "")[:300] if st.get("last_prompt") != st.get("first_prompt") else "",
-            "lastReply": tail_text(st.get("last_text") or st.get("progress_text")),
+            "lastReply": head_text(reply_text(st.get("last_text") or st.get("progress_text"))),
+            "replyLen": len(reply_text(st.get("last_text") or st.get("progress_text"))),
+            "replyTs": st.get("final_ts") or last,
             "handoffTs": ctx.get("handoffs", {}).get(key) or 0,   # 压缩时的交接：正文较长，详情里再按 /api/handoff 取
             "status": ("📌 " + status["label"] + ("｜" + status["desc"] if status.get("desc") else "")) if status else "",
             "decisions": decisions, "doneAsk": done_ask, "oldAsks": old_asks,
@@ -3503,6 +3509,12 @@ class Handler(BaseHTTPRequestHandler):
                 res = search_outputs(APP.conn, arg("q"), arg("cat"), arg("key"), arg("tool"),
                                      min(int(arg("limit", "100")), 500), int(arg("offset", "0")))
             return self._send(200, json.dumps(res, ensure_ascii=False))
+        if u.path == "/api/reply":
+            q = parse_qs(u.query)
+            with APP.lock:
+                r = APP.conn.execute("SELECT data FROM sessions WHERE key=?", ((q.get("key") or [""])[0],)).fetchone()
+            st = json.loads(r["data"]) if r else {}
+            return self._send(200, json.dumps({"text": reply_text(st.get("last_text") or st.get("progress_text"))}, ensure_ascii=False))
         if u.path == "/api/handoff":
             q = parse_qs(u.query)
             with APP.lock:
