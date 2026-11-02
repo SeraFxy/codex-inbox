@@ -939,7 +939,7 @@ async function act(key, action, arg) {
     const res = await post(action, key, arg);
     const undo = res.ok && (action === "done" || action === "untrack" || action === "snooze") && !Array.isArray(arg);
     let msg = res.message || (res.ok ? "好了" : "没成功"), fc = null;
-    if (res.ok && action === "done" && !Array.isArray(arg)) { msg = "完成了，已移出看板"; fc = "review"; }
+    if (res.ok && action === "done" && !Array.isArray(arg)) { msg = res.message || "完成了，已移出看板"; fc = "review"; }   // 服务端会说终端标签页关没关
     if (res.ok && action === "snooze") { msg = "好，" + snoozeAt(arg) + " 再叫你"; fc = "timer"; }
     toast(msg, undo ? () => act(key, "restore") : null, fc);
   } catch (e) { toast("操作失败：本机服务没响应"); }

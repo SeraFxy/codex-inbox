@@ -2539,6 +2539,52 @@ def surface_checkpoint(ws, sf):
         return None
 
 
+def close_cmux_tab(conn, key):
+    """看板上点了「完成」：把这个会话在 cmux 里的标签页也关掉，开着的标签页就都是还要跟的。
+    AI 还没停下来（在跑、在等你批准）的不关；工作区里还有别的标签页（比如浏览器、另一个会话）就只关它自己；
+    分组的标题工作区不动。关之前按标签页的恢复记录再核对一遍是不是这个会话。返回给提示条的半句话，没在 cmux 里开着的返回空。"""
+    tool, _, sid = key.partition(":")
+    if not os.path.exists(CMUX) or not conn.execute("SELECT 1 FROM cmux_open WHERE session_key=?", (key,)).fetchone():
+        return ""
+    row = conn.execute("SELECT data FROM sessions WHERE key=?", (key,)).fetchone()
+    st = json.loads(row["data"]) if row else {}
+    live = claude_live().get(sid) if tool == "claude" else None
+    if (live.get("status") not in ("idle", None)) if live else (st.get("turn") == "running" and time.time() - (st.get("last_ts") or 0) < 600):
+        return "它还没停下来，终端标签页没关"
+    surfaces = cmux_surfaces()
+    if surfaces is None:
+        return "cmux 不让看板控制它，终端标签页没关"
+    loc = surfaces.get(sid)
+    if loc and surface_checkpoint(*loc) != sid:   # 缓存里的过期了（标签页关过、挪过），重新找
+        _surface_cache["at"] = 0
+        loc = (cmux_surfaces() or {}).get(sid)
+    if not loc:
+        return ""
+    ws, sf = loc
+    try:
+        tree = json.loads(cmux("tree", "--all", "--json").stdout or "")
+        w = next(w for win in tree.get("windows") or [] for w in win.get("workspaces") or [] if w.get("ref") == ws)
+        with open(CMUX_STATE, encoding="utf-8") as f:
+            anchors = {g.get("anchorWorkspaceId") for win in json.load(f).get("windows") or []
+                       for g in (win.get("tabManager") or {}).get("workspaceGroups") or []}
+    except (ValueError, StopIteration, OSError, AttributeError):
+        return "没找到它在 cmux 里的标签页，没关"
+    if w.get("id") in anchors:
+        return "它是 cmux 分组的标题标签，没替你关"
+    if sum(len(p.get("surfaces") or []) for p in w.get("panes") or []) > 1:
+        r = cmux("close-surface", "--surface", sf, "--workspace", ws, "--force")
+    else:
+        r = cmux("workspace", "close", "--workspace", ws, "--force")
+    _surface_cache["at"] = 0
+    if r.returncode != 0:
+        log("关 cmux 标签页失败：%s %s" % (key, (r.stderr or r.stdout).strip()[:200]))
+        return "终端标签页没关成"
+    # 不等 cmux 的状态文件：先从「开着的」里拿掉，免得下次核对时当成你在 cmux 里关的，撤销完成后又被标回去
+    conn.execute("DELETE FROM cmux_open WHERE session_key=?", (key,))
+    conn.commit()
+    return "终端标签页也关了"
+
+
 def resume_in_new_workspace(st, title):
     sid, cwd = st["id"], st.get("cwd") or HOME
     if not UUID_RE.match(sid):
@@ -2830,7 +2876,10 @@ class App:
                 for k in keys:
                     c.execute("INSERT OR REPLACE INTO overrides (key, action, until_ts, at) VALUES (?, ?, NULL, ?)", (k, action, now))
                 c.commit()
-                return True, ("已标为完成" if action == "done" else "已不再跟踪 %d 个" % len(keys) if len(keys) > 1 else "已不再跟踪")
+                if action == "done":
+                    tab = close_cmux_tab(c, key)
+                    return True, "完成了，已移出看板" + ("，" + tab if tab else "")
+                return True, "已不再跟踪 %d 个" % len(keys) if len(keys) > 1 else "已不再跟踪"
             if action == "snooze":
                 until = snooze_until(arg, now)
                 c.execute("INSERT OR REPLACE INTO overrides (key, action, until_ts, at) VALUES (?, 'snooze', ?, ?)", (key, until, now))
