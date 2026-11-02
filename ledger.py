@@ -2416,16 +2416,8 @@ def make_item(st, now, cfg, ov, sched, titles, goals, ctx):
     else:
         k, desc, at = status["kind"], status.get("desc") or "", status.get("at")
         who = status.get("who") or "同事"
-        if k == "me" and at and at > (status.get("ts") or 0) + 300:
-            # 「等你」后面写了将来的时间：先放「等时间点」，到点挪到「现在需要你」并弹通知
-            kind = "time"
-            if at > now:
-                group, sort = "time", at
-                headline = "%s 到点后：%s" % (fmt_time(at, now), desc)
-            else:
-                group, sort = "need", 0
-                headline = "%s 提醒：%s" % (fmt_hm(at, now), desc)
-        elif k == "me":
+        if k == "me":
+            # 「等你」就是现在轮到你，后面的时间不管：AI 常把它估的「现在几点」填进去，估晚了会被当成将来、压在「在等」里。要你到点再做的，它该写「等时间点」
             group = "stale" if idle > stale_sec else "need"
             kind, sort = "me", 2
             headline = ("%s没动静 · 下一步：%s" % (fmt_ago(idle), desc)) if group == "stale" else "下一步：" + desc

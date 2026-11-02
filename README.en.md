@@ -71,7 +71,7 @@ If you prefer English wording, add the version below by hand instead. Keep the s
 End every reply addressed directly to me with a status line (skip it when running as a subagent or non-interactively):
 `📌 <status>｜<one-line summary>｜<time, optional>`
 Use exactly one of these six status words, in Chinese:
-- 等你 (waiting on me): write the concrete action I need to take next, not "please review".
+- 等你 (waiting on me): write the concrete action I need to take next, not "please review". Leave the time out (the dashboard always treats 等你 as my turn now); if I should do it at a later time, use 等时间点.
 - 等同事 (waiting on a colleague): write it as 「等同事（name）」; the time is when to follow up.
 - 等时间点 (waiting for a time): something I must do myself at a set time; the time is required.
 - 已定时 (scheduled): you have scheduled yourself to resume at a set time; the time is required (currently only Claude sessions in cmux support this).
