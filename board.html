@@ -351,6 +351,8 @@ kbd.k.lg { min-width: 22px; height: 22px; padding: 0 6px; border-radius: 6px; fo
 .sum-goal dt { color: var(--bk-ink-3); }
 .sum-goal dt .pill { margin: 0 0 0 4px; height: 18px; font-size: 11px; }
 .sum-goal dd { margin: 0; color: var(--bk-ink-1); word-break: break-word; text-wrap: pretty; }
+.sum-goal dd code { padding: 0 4px; border-radius: 4px; background: var(--bk-sunken); font: 12px/20px var(--bk-mono); }
+.sum-goal dd b { font-weight: 600; }
 .sum-src { margin-left: 8px; font-size: 12px; color: var(--bk-ink-3); white-space: nowrap; }
 .sum-goal.nogoal { padding: 12px 0 0; border: 0; border-top: 1px dashed var(--bk-line-strong); border-radius: 0; flex-direction: row; }
 @media (max-width: 640px) { .sum { padding: 14px 16px; } .sum-goal > div { grid-template-columns: 1fr; gap: 0; } }
@@ -1772,9 +1774,9 @@ function sumCard(it) {
       : '<p class="now">' + esc(it.headline) + "</p>" + (loud ? '<p class="sum-why">' + esc(whyOf(it)) + "</p>" : "")) + "</div>";
   if (d.goal) {
     const src = d.goalFrom === "handoff" ? "取自 " + when(d.goalTs) + " 压缩时的交接" : d.goalTs ? "写于 " + when(d.goalTs) : "";
-    html += '<dl class="sum-goal"><div><dt>目标' + (d.goalStatus ? '<span class="pill">' + esc(d.goalStatus) + "</span>" : "") + "</dt><dd>" + esc(d.goal) +
+    html += '<dl class="sum-goal"><div><dt>目标' + (d.goalStatus ? '<span class="pill">' + esc(d.goalStatus) + "</span>" : "") + "</dt><dd>" + mdInline(d.goal) +
       (src ? '<span class="sum-src">' + esc(src) + "</span>" : "") + "</dd></div>" +
-      (d.criteria ? "<div><dt>完成标准</dt><dd>" + esc(d.criteria) + "</dd></div>" : "") + "</dl>";
+      (d.criteria ? "<div><dt>完成标准</dt><dd>" + mdInline(d.criteria) + "</dd></div>" : "") + "</dl>";
   } else if (!hidden)
     html += '<div class="sum-goal nogoal"><span>还没写目标。有了一句目标，它跑偏的时候台账才能提醒你。</span>' +
       btn("让它补一句", "copyOpen(GOAL_ASK,'" + esc(it.key) + "')", "sec sm", "复制一句提示并打开会话，你粘贴发出去") + "</div>";
