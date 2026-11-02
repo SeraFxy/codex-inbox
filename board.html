@@ -631,7 +631,7 @@ const railFold = new Set(store("ledger.fold") || []);   // 收起的项目
 let archOpen = store("ledger.arch") === true;            // 左栏「归档」展开着
 let src = store("ledger.src") || "all";                  // 只看哪个工具的会话：all / claude / codex
 let favOpen = store("ledger.favx") !== true;             // 左栏「收藏」展开着（默认展开）
-let picker = null;      // 「归到主题」菜单：{ key, q }
+let picker = null;      // 「归到主题」「移到项目」菜单：{ key, q, list }
 const prevFace = {};    // 会话 key -> 上次的表情，用来发现「AI 在做 → 待你确认完成」，跳一下
 const bubOpen = {};     // 展开全文的气泡
 const picks = {};       // 会话 key -> { sig: 这一轮的选项, sel: { 第几件: 第几个选项 }, quick: 第几句, note: 补充 }
@@ -1095,14 +1095,14 @@ function renderRail() {
       html += d.archTopics.map(x => topicRow(x, plabel(x.t.project) + " · " + x.t.name)).join("");
     }
   }
-  document.getElementById("rail").innerHTML = html + '<p class="rfoot">把会话拖到主题上就归进去了，也可以在发给 AI 的消息里写 #主题。双击项目或主题改名，拖项目换位置。红色数字 = 里面有轮到你的事。</p>';
+  document.getElementById("rail").innerHTML = html + '<p class="rfoot">把会话拖到项目或主题上就移过去了，也可以在发给 AI 的消息里写 #主题。双击项目或主题改名，拖项目换位置。红色数字 = 里面有轮到你的事。</p>';
 }
 function railGroup(p) {
   // 左栏一个项目：项目行（⋯ 改名、归档）和它下面的主题
   const open = !railFold.has(p.key);
   let html = '<div class="rgroup" data-p="' + esc(p.key) + '"><div class="rp"' + (p.archived ? "" : ' draggable="true"') + ">" + (p.topics.length ? '<button type="button" class="rfold" aria-label="' + (open ? "收起 " : "展开 ") + esc(p.label) +
     '" aria-expanded="' + open + '" data-p="' + esc(p.key) + '" onclick="foldProject(this)">' + ico(open ? "down" : "right", 14) + "</button>" : '<span class="rfold"></span>') +
-    railItem(p.label, { t: "p", p: p.key }, p.c, "proj") +
+    railItem(p.label, { t: "p", p: p.key }, p.c, "proj", p.archived ? null : "proj") +
     '<button type="button" class="ra" title="改名、归档" aria-label="「' + esc(p.label) + '」改名、归档" aria-haspopup="menu" aria-expanded="false" data-p="' + esc(p.key) +
     '" data-l="' + esc(p.label) + '" data-c="' + esc((allItems(state).find(it => it.projectKey === p.key) || {}).color || "") +
     '" onclick="event.stopPropagation();projectMore(this)">' + ico("more", 15) + "</button></div>";
@@ -1200,25 +1200,27 @@ function openScopes(el) {
     d.archTopics.map(x => b(plabel(x.t.project) + " · " + x.t.name, { t: "t", id: x.t.id }, x.c, "sub")).join("");
   showMenu(el, "", '<div class="mlist">' + html + "</div>", { left: true, wide: true });
 }
-// 归到主题：行上「⋯」、详情里的主题标签、拖到左栏，三处都走 setTopic
-function openTopics(el, key) {
-  const it = findItem(key);
-  if (!it) return closeMenu();
-  const keep = !!(menu && menu.el === el && !menu.picker);   // 从行上「⋯」菜单点进来的：原地换成主题列表
-  showMenu(el, key, '<span class="ml">归到主题</span><input id="tp-q" autocomplete="off" placeholder="搜主题，或打字新建" aria-label="搜主题，或打字新建">' +
+// 带搜索框的选单：归到主题、移到项目共用。keep = 从别的菜单点进来，原地换成这个列表
+function openPicker(el, key, title, ph, list, keep) {
+  showMenu(el, key, '<span class="ml">' + title + '</span><input id="tp-q" autocomplete="off" placeholder="' + ph + '" aria-label="' + ph + '">' +
     '<div class="mlist" id="tp-list"></div>', { keep, wide: true });
   if (!menu) return;
   menu.picker = true;
-  picker = { key, q: "" };
+  picker = { key, q: "", list };
   const q = document.getElementById("tp-q");
-  q.addEventListener("input", () => { picker.q = q.value; pickerList(); });
+  q.addEventListener("input", () => { picker.q = q.value; picker.list(); });
   q.addEventListener("keydown", e => {
     const first = document.querySelector("#tp-list button");
     if (ime(e)) return;
     if (e.key === "Enter" && first && q.value.trim()) { e.preventDefault(); first.click(); }   // 空着按回车不乱归
     else if (e.key === "ArrowDown" && first) { e.preventDefault(); first.focus(); }
   });
-  pickerList();
+  list();
+}
+// 归到主题：行上「⋯」、详情里的主题标签、拖到左栏，三处都走 setTopic
+function openTopics(el, key) {
+  if (!findItem(key)) return closeMenu();
+  openPicker(el, key, "归到主题", "搜主题，或打字新建", pickerList, !!(menu && menu.el === el && !menu.picker));   // 从行上「⋯」菜单点进来的：原地换成主题列表
 }
 function pickerList() {
   const it = findItem(picker.key);
@@ -1230,9 +1232,44 @@ function pickerList() {
   if (name && !list.some(t => t.project === home && t.name.toLowerCase() === q))
     html += mi(ico("plus", 14) + "新建「" + esc(name) + "」", "setTopic('" + k + "',null," + clip(name) + ")", esc(plabel(home)));
   if (!html) html = '<span class="mnone">' + ((state.topics || []).length ? "没有叫这个的主题" : "还没有主题，打字新建一个") + "</span>";
-  if (it.topic) html += "<hr>" + mi("移出主题", "setTopic('" + k + "',null)");
-  if (it.topicPinned) html += mi("改回按 #主题 自动归", "setTopic('" + k + "','auto')", "", ' title="以后看你在消息里写的 #主题"');
+  html += "<hr>" + (it.topic ? mi("移出主题", "setTopic('" + k + "',null)") : "") +
+    (it.topicPinned ? mi("改回按 #主题 自动归", "setTopic('" + k + "','auto')", "", ' title="以后看你在消息里写的 #主题"') : "") +
+    mi("移到项目…", "openProjects(menu.el,'" + k + "')", esc(plabel(home)));
   document.getElementById("tp-list").innerHTML = html;
+}
+// 移到项目：会话不再按文件夹算在哪个项目，比如放错文件夹的通用定时任务，移到你打字新建的「定时任务」里。行上「⋯」、主题选单、拖到左栏的项目上，都走 moveTo
+function openProjects(el, key) {
+  if (!findItem(key)) return closeMenu();
+  openPicker(el, key, "移到项目", "搜项目，或打字新建", projList, !!(menu && menu.el === el));
+}
+function projList() {
+  const it = findItem(picker.key);
+  if (!it) return;
+  const k = esc(picker.key), name = picker.q.trim(), q = name.toLowerCase(), cur = railProject(it);
+  const all = railData().projects.filter(p => !p.archived || p.key === cur);
+  const list = all.filter(p => !q || p.label.toLowerCase().includes(q) || p.key.toLowerCase().includes(q));
+  let html = list.map(p => mi((p.key === cur ? ico("check", 14, 2.2) : "") + esc(p.label), "moveTo('" + k + "'," + clip(p.key) + ")")).join("");
+  if (name && !all.some(p => p.label.toLowerCase() === q || p.key.toLowerCase() === q))
+    html += mi(ico("plus", 14) + "新建项目「" + esc(name) + "」", "moveTo('" + k + "'," + clip(name) + ")", "", ' title="左栏多一个项目，以后别的会话也能移进来"');
+  if (!html) html = '<span class="mnone">没有叫这个的项目</span>';
+  if (it.moved) html += "<hr>" + mi("移回「" + esc(it.moved.label) + "」", "moveTo('" + k + "',null)", "", ' title="回到会话所在文件夹的项目"');
+  document.getElementById("tp-list").innerHTML = html;
+}
+async function moveTo(key, id, untopic) {
+  // untopic = 拖到别的项目的「未归类」上：移过去，也不留在那个项目的主题里
+  const it = findItem(key);
+  closeMenu();
+  if (!it) return;
+  const to = id == null ? it.moved && it.moved.from : clips[id];   // null = 移回会话所在文件夹的项目
+  if (!to) return;
+  if (!untopic && to === railProject(it)) return toast("已经在「" + plabel(to) + "」里了");
+  const back = it.topicPinned ? { id: it.topic ? it.topic.id : null } : { auto: true };   // 撤销：移回原来的项目，主题也回到原样
+  try {
+    const res = await post("move", key, { project: to, untopic: !!untopic });
+    toast(res.message || (res.ok ? "好了" : "没成功"), res.ok ? () => post("move", key, { project: it.projectKey }).then(() => post("topic", key, back))
+      .then(() => load(), () => toast("操作失败：本机服务没响应")) : null);
+  } catch (e) { toast("操作失败：本机服务没响应"); }
+  load();
 }
 async function setTopic(key, id, nameId) {
   const it = findItem(key);
@@ -1458,7 +1495,7 @@ qlist.addEventListener("dragend", () => {
   document.querySelectorAll(".row.dragging, .ri.drop").forEach(el => el.classList.remove("dragging", "drop"));
   drag = null;
 });
-// 行拖到左栏的主题上 = 归到这个主题，拖到「未归类」= 移出主题
+// 行拖到左栏的主题上 = 归到这个主题，拖到项目上 = 移到这个项目，拖到「未归类」= 移出主题（别的项目的，就移到那个项目）
 const railEl = document.getElementById("rail");
 function railDrop(e) {
   const t = drag && e.target.closest && e.target.closest("[data-drop]");
@@ -1477,7 +1514,9 @@ railEl.addEventListener("drop", e => {
   e.preventDefault();
   t.classList.remove("drop");
   drag = null;
-  setTopic(key, t.dataset.drop === "none" ? null : Number(t.dataset.drop));
+  const d = t.dataset.drop, p = JSON.parse(t.dataset.scope).p, it = findItem(key);
+  if (d === "proj" || (d === "none" && it && it.projectKey !== p)) moveTo(key, clip(p), d === "none");
+  else setTopic(key, d === "none" ? null : Number(d));
 });
 // 左栏拖项目换位置：整组（项目和它下面的主题）一起挪，顺序存在服务端
 let rdrag = null;
@@ -1608,6 +1647,7 @@ function openMenu(el, key, more) {
     mi(favOn(key) ? "取消收藏" : "收藏", "toggleFav('" + k + "')", "", favOn(key) ? "" : ' title="放进左栏「收藏」，完成了也留着，方便以后找到再打开"') +
     mi("改名…", "renameSession('" + k + "')", "", ' title="Claude / Codex 里和 cmux 标签页一起改"') +
     mi("归到主题…", "openTopics(menu.el,'" + k + "')", it.topic ? esc(it.topic.name) : "") +
+    mi("移到项目…", "openProjects(menu.el,'" + k + "')", esc(plabel(railProject(it))), ' title="不按文件夹算了，放到别的项目或新建一个"') +
     mi("不再跟踪这个会话", "act('" + k + "','untrack')");
   showMenu(el, key, html);
 }

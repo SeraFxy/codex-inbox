@@ -1333,7 +1333,7 @@ GOAL_STATUS = {"active": "进行中", "paused": "已暂停", "blocked": "卡住�
 def prompt_rows_to_items(conn, rows, now):
     titles, _ = codex_extras()
     threads = codex_threads()
-    names, tags = name_map(conn), tag_map(conn)
+    names, tags, moved = name_map(conn), tag_map(conn), load_moved(conn)
     out = []
     for r in rows:
         tool, sid = r["session_key"].split(":", 1)
@@ -1351,11 +1351,12 @@ def prompt_rows_to_items(conn, rows, now):
             fp = conn.execute("SELECT text FROM prompts WHERE session_key=? ORDER BY ts LIMIT 1", (r["session_key"],)).fetchone()
             if fp:
                 title = prompt_title(fp["text"], 30)
-        label, color = tag_of(tags, r["project"])
+        project = moved.get(r["session_key"]) or r["project"]
+        label, color = tag_of(tags, project)
         out.append({
             "key": r["session_key"], "tool": tool, "toolLabel": "Claude" if tool == "claude" else "Codex",
             "ts": r["ts"], "timeText": fmt_time(r["ts"], now), "text": r["text"], "project": label,
-            "projectKey": r["project"], "color": color, "title": title or "（未命名会话）", "images": [],
+            "projectKey": project, "color": color, "title": title or "（未命名会话）", "images": [],
             "resume": ("cd %s && claude --resume %s" % (shell_quote(r["cwd"] or HOME), sid)) if tool == "claude"
                       else "codex resume %s" % sid,
         })
@@ -1474,7 +1475,7 @@ def session_briefs(conn, keys, now):
             tool = k.split(":", 1)[0]
             got = conn.execute("SELECT data FROM sessions WHERE key=?", (k,)).fetchone()
             st = json.loads(got["data"]) if got else {}
-            project = project_of(st.get("cwd") or "")
+            project = load_moved(conn).get(k) or project_of(st.get("cwd") or "")
             label, color = tag_of(tag_map(conn), project)
             out[k] = {"key": k, "title": name_map(conn).get(k) or st.get("custom_title") or readable(st.get("ai_title")) or "（未命名会话）",
                       "project": label, "projectKey": project, "color": color, "tool": tool,
@@ -1747,7 +1748,8 @@ def make_item(st, now, cfg, ov, sched, titles, goals, ctx):
     title = (ctx["names"].get(key) or st.get("custom_title") or readable(titles.get(st["id"])) or readable(st.get("ai_title")) or goal_obj.get("goal")
              or prompt_title(st.get("first_prompt"))
              or "（无标题）")
-    project = project_of(st.get("cwd"))
+    home = project_of(st.get("cwd"))
+    project = ctx["moved"].get(key) or home
     project_label, project_color = tag_of(ctx["tags"], project)
     saved = ctx["goals"].get(key) or {}
     reply_hint = excerpt(st.get("last_text")) or excerpt(st.get("progress_text"))
@@ -1882,6 +1884,7 @@ def make_item(st, now, cfg, ov, sched, titles, goals, ctx):
     return {
         "key": key, "tool": st["tool"], "toolLabel": "Claude" if st["tool"] == "claude" else "Codex",
         "title": title, "project": project_label, "projectKey": project, "color": project_color, "group": group, "kind": kind,
+        "moved": {"from": home, "label": tag_of(ctx["tags"], home)[0]} if project != home else None,
         "headline": headline, "badges": badges, "sort": sort, "idle": idle, "last": last, "wait": wait,
         "meta": "最后动静 %s（%s前）" % (fmt_time(last, now), fmt_ago(idle)) if last else "",
         "scheduleId": sched["id"] if sched and sched["status"] == "pending" else None,
@@ -1937,6 +1940,15 @@ def load_archived_topics(conn):
     return {k: v for k, v in got.items() if isinstance(v, (int, float))} if isinstance(got, dict) else {}
 
 
+def load_moved(conn):
+    """移过项目的会话 key -> 项目 key。不再按文件夹算它在哪个项目，比如放错文件夹的通用定时任务，移到你自己建的「定时任务」里。"""
+    try:
+        got = json.loads(meta_get(conn, "moved", "{}"))
+    except ValueError:
+        return {}
+    return {k: v for k, v in got.items() if isinstance(v, str) and v} if isinstance(got, dict) else {}
+
+
 def meta_keys(conn, k):
     try:
         keys = json.loads(meta_get(conn, k, "[]"))
@@ -1976,7 +1988,7 @@ def build_board(conn, cfg, now=None):
         if cur is None or (r["status"] == "pending" and cur["status"] != "pending"):
             scheds[r["session_key"]] = r
     items, hidden, hashtags = [], [], {}
-    ctx = {"names": name_map(conn), "tags": tag_map(conn), "links": {}, "live": claude_live(),
+    ctx = {"names": name_map(conn), "tags": tag_map(conn), "moved": load_moved(conn), "links": {}, "live": claude_live(),
            "goals": {r["session_key"]: dict(r) for r in conn.execute("SELECT * FROM goals")}}
     for r in conn.execute("SELECT l.session_key, l.url, l.label, l.ts, d.title" + OUT_FROM +
                           " WHERE l.session_key IN (SELECT key FROM sessions WHERE last_activity >= ?) ORDER BY l.ts DESC", (now - 30 * 86400,)):
@@ -2461,6 +2473,33 @@ class App:
                     c.execute("INSERT OR REPLACE INTO session_topics (session_key, topic_id, at) VALUES (?, ?, ?)", (key, tid, now))
                 c.commit()
                 return True, ("已归到「%s」" % row["name"] if key else "已新建主题「%s」" % row["name"]) if row else "已移出主题"
+            if action == "move" and key and isinstance(arg, dict):
+                # 移到项目：{project} 移过去，可以写个新名字（左栏就多一个项目）；空着或写回会话所在文件夹的项目 = 移回去
+                got = c.execute("SELECT data FROM sessions WHERE key=?", (key,)).fetchone()
+                if not got:
+                    return False, "找不到这个会话"
+                home = project_of(json.loads(got["data"]).get("cwd"))
+                tags = tag_map(c)
+                target = re.sub(r"\s+", " ", str(arg.get("project") or "")).strip()[:24]
+                if target and target not in tags:   # 写的是左栏显示的名字（改过的短码），就用那个项目
+                    target = next((p for p, (label, _) in tags.items() if label and label.lower() == target.lower()), target)
+                target = target or home
+                moved = load_moved(c)
+                if target == home:
+                    moved.pop(key, None)
+                else:
+                    moved[key] = target
+                meta_set(c, "moved", json.dumps(moved, ensure_ascii=False))
+                # 原来归的主题在新项目里就留着（拖到「未归类」上的除外）；不在的移出来，成了新项目里的「未归类」。移回去的改回按 #主题 自动归
+                row = c.execute("SELECT t.project FROM session_topics s JOIN topics t ON t.id = s.topic_id"
+                                " WHERE s.session_key=? AND t.deleted=0", (key,)).fetchone()
+                if arg.get("untopic") or not (row and row["project"] == target):
+                    if target == home:
+                        c.execute("DELETE FROM session_topics WHERE session_key=?", (key,))
+                    else:
+                        c.execute("INSERT OR REPLACE INTO session_topics (session_key, topic_id, at) VALUES (?, NULL, ?)", (key, now))
+                c.commit()
+                return True, ("已移回「%s」" if target == home else "已移到「%s」") % tag_of(tags, target)[0]
             if action == "topic_edit" and isinstance(arg, dict):
                 row = c.execute("SELECT * FROM topics WHERE id=? AND deleted=0", (arg.get("id"),)).fetchone()
                 if not row:
