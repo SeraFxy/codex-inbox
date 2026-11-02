@@ -320,6 +320,8 @@ kbd.k.lg { min-width: 22px; height: 22px; padding: 0 6px; border-radius: 6px; fo
 .dq .opts { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
 .dq .qm { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 4px; }
 .dq .age { font: 12px/16px var(--bk-mono); color: var(--bk-ink-3); }
+.dq .qw { display: block; margin-top: 4px; font-size: 13px; line-height: 20px; color: var(--bk-ink-2); }   /* 它为什么推荐这个 / 为什么这么定 */
+.sec-hd .hd-r { display: inline-flex; align-items: baseline; gap: 8px; }
 .chip.ask { background: var(--bk-needs-tint); color: var(--bk-needs-ink); }   /* 之前问过、你还没答的 ❓：红字，球在你这边 */
 .opt {
   min-height: 30px; padding: 4px 12px; border: 1px solid var(--bk-line); border-radius: 8px; background: var(--bk-surface);
@@ -327,6 +329,9 @@ kbd.k.lg { min-width: 22px; height: 22px; padding: 0 6px; border-radius: 6px; fo
 }
 .opt:hover { border-color: var(--bk-ink-1); }
 .opt[aria-pressed="true"] { border-color: var(--bk-pri); background: var(--bk-pri); color: var(--bk-pri-text); }
+.opt.rec { border-color: var(--bk-line-strong); }   /* 它推荐的选项：边框深一点，后面跟个「荐」 */
+.opt .rk { margin-left: 6px; font-size: 12px; font-weight: 400; color: var(--bk-ink-3); }
+.opt[aria-pressed="true"] .rk { color: inherit; }
 .opt.lg { min-height: 34px; padding: 6px 12px; border-radius: 10px; font-weight: 400; }
 .opts-row { display: flex; flex-wrap: wrap; gap: 8px; }
 .reply { display: flex; flex-direction: column; gap: 10px; padding: 12px 12px 12px 14px; border: 1px solid var(--bk-line-strong); border-radius: 14px; box-shadow: var(--bk-e1); }
@@ -1042,12 +1047,12 @@ async function openSession(key, el) {
 async function copyClip(id, msg) {
   try { await navigator.clipboard.writeText(clips[id]); toast(msg || "已复制"); } catch (e) { toast("复制失败，请手动选中"); }
 }
-async function copyOpen(text, key) {
+async function copyOpen(text, key, tail) {
   try { await navigator.clipboard.writeText(text); } catch (e) { toast("复制失败，请手动选中"); return; }
   if (!key) return toast("已复制");
   try {
     const res = await post("open", key);
-    toast(res.ok ? "已复制。" + res.message + "，在输入框按 ⌘V 再回车" : "已复制，但没打开会话：" + (res.message || "没成功"));
+    toast(res.ok ? "已复制。" + res.message + "，" + (tail || "在输入框按 ⌘V 再回车") : "已复制，但没打开会话：" + (res.message || "没成功"));
   } catch (e) { toast("已复制，但没打开会话：本机服务没响应"); }
 }
 
@@ -1759,6 +1764,7 @@ function renderDetail() {
   html += sumCard(it);
   const secs = [
     ["reply", decisionsOf(it).length ? "待你决定" : oldAsksOf(it).length ? "没答的" : "推它一下", replyBox(it)],
+    ["calls", "替你定的", callsSec(it)],
     ["convo", "对话", convo(it)],
     ["handoff", "交接", handoffSec(it)],
     ["out", "产出物", outSec(it)],
@@ -2212,12 +2218,15 @@ function replyHint(it) {
   const left = ds.filter(d => d.opts.length && p.sel[d.k] == null).length;
   return left ? "还有 " + left + " 件没选，会写成「待定」" : "都选好了，复制过去发给它";
 }
+function recOf(d) { return d.rec ? d.opts.indexOf(d.rec) : -1; }   // 它推荐的是第几个选项；没推荐或对不上 = -1
 function askRow(it, d, i, old) {
-  const p = pickOf(it), k = esc(it.key);
+  const p = pickOf(it), k = esc(it.key), ri = recOf(d);
   const meta = (d.block ? '<span class="chip sm" title="这件没定，卡着：' + esc(d.block) + '">卡 ' + esc(d.block) + "</span>" : "") +
     (old ? '<span class="age">问了 ' + esc(dur(nowTs() - d.first)) + "</span>" : "");
-  return '<div class="dq"><span class="n">' + (i + 1) + '</span><span class="q">' + esc(d.q) + (meta ? '<span class="qm">' + meta + "</span>" : "") +
-    '</span><span class="opts">' + d.opts.map((o, j) => '<button type="button" class="opt" aria-pressed="' + (p.sel[d.k] === j) + '" onclick="pickOpt(\'' + k + "'," + i + "," + j + ')">' + esc(o) + "</button>").join("") +
+  const why = d.why ? '<span class="qw">' + (ri >= 0 ? "推荐「" + esc(d.rec) + "」：" : "推荐：") + esc(d.why) + "</span>" : "";
+  return '<div class="dq"><span class="n">' + (i + 1) + '</span><span class="q">' + esc(d.q) + why + (meta ? '<span class="qm">' + meta + "</span>" : "") +
+    '</span><span class="opts">' + d.opts.map((o, j) => '<button type="button" class="opt' + (j === ri ? ' rec" title="它推荐这个' : "") + '" aria-pressed="' + (p.sel[d.k] === j) +
+      '" onclick="pickOpt(\'' + k + "'," + i + "," + j + ')">' + esc(o) + (j === ri ? '<span class="rk">荐</span>' : "") + "</button>").join("") +
     (old ? btn("不用答了", "dropAsk('" + k + "'," + i + ")", "ghost xs", "这件不再列出；它以后再问会重新列出来") : "") + "</span></div>";
 }
 function replyBox(it) {
@@ -2225,8 +2234,11 @@ function replyBox(it) {
   if (!ds.length && !olds.length && !nudges.length) return "";
   const p = pickOf(it), k = esc(it.key), text = replyText(it), n = ds.length;
   let html = "";
+  const recs = ds.filter(d => recOf(d) >= 0), allRec = recs.every(d => p.sel[d.k] === recOf(d));
   if (ds.length)
-    html += '<div class="part"><div class="sec-hd"><span class="sec-t">待你决定 · ' + n + '</span><span class="mono">已选 ' + ds.filter(d => p.sel[d.k] != null).length + " / " + n + "</span></div>" +
+    html += '<div class="part"><div class="sec-hd"><span class="sec-t">待你决定 · ' + n + '</span><span class="hd-r">' +
+      (recs.length && !allRec ? btn("全按推荐", "pickRecs('" + k + "')", "ghost xs", "有推荐的 " + recs.length + " 件都选它推荐的，别的不动") : "") +
+      '<span class="mono">已选 ' + ds.filter(d => p.sel[d.k] != null).length + " / " + n + "</span></span></div>" +
       '<div class="dlist">' + ds.map((d, i) => askRow(it, d, i, false)).join("") + "</div></div>";
   else if (nudges.length)
     html += '<div class="part"><span class="sec-t">推它一下</span><div class="opts-row">' + nudges.map((t, j) =>
@@ -2252,6 +2264,18 @@ function pickOpt(key, i, j) {
   if (!d) return;
   if (p.sel[d.k] === j) delete p.sel[d.k]; else p.sel[d.k] = j;
   if (p.text != null) p.text = setLine(p.text, d, ansOf(it, p, d, i));
+  renderDetail();
+}
+function pickRecs(key) {
+  const it = findItem(key);
+  if (!it) return;
+  const p = pickOf(it);
+  decisionsOf(it).forEach((d, i) => {
+    const j = recOf(d);
+    if (j < 0 || p.sel[d.k] === j) return;
+    p.sel[d.k] = j;
+    if (p.text != null) p.text = setLine(p.text, d, ansOf(it, p, d, i));
+  });
   renderDetail();
 }
 function pickQuick(key, j) {
@@ -2293,6 +2317,22 @@ async function dropAsk(key, i) {
     toast(res.message || (res.ok ? "好了" : "没成功"), res.ok ? () => post("ask", key, { k: ks, undo: true }).then(() => load()) : null);
   } catch (e) { toast("操作失败：本机服务没响应"); }
   load();
+}
+// 🧭 它没问你、自己拿的主意：列出来，你不同意就点「改」，复制一句开头去会话里接着说
+function callsOf(it) { return it.details && it.details.calls || []; }
+function callsSec(it) {
+  const cs = callsOf(it);
+  if (!cs.length) return "";
+  const k = esc(it.key), fresh = it.details.callsFresh || 0;
+  return '<div class="part"><div class="sec-hd"><span class="sec-t">它替你定的 · ' + cs.length + "</span>" +
+    (fresh ? '<span class="mono">最近一轮 ' + fresh + " 件</span>" : "") + "</div>" +
+    '<div class="dlist">' + cs.map((c, i) => '<div class="dq"><span class="q">' + esc(c.t) + (c.why ? '<span class="qw">' + esc(c.why) + "</span>" : "") +
+      '</span><span class="opts"><span class="age">' + esc(when(c.ts)) + "</span>" +
+      btn("改", "objectCall('" + k + "'," + i + ")", "ghost xs", "复制「关于你替我定的…」这句开头并打开会话，你接着写想怎么改") + "</span></div>").join("") + "</div></div>";
+}
+function objectCall(key, i) {
+  const it = findItem(key), c = it && callsOf(it)[i];
+  if (c) copyOpen("关于你替我定的「" + c.t + "」，我想改成：", key, "在输入框按 ⌘V，接着写你想怎么改");
 }
 function copyReply(key, open) {
   const it = findItem(key);

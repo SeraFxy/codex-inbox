@@ -394,6 +394,8 @@ def parse_goal(text):
 ASK_ID_TAIL_RE = re.compile(r"[（(\[【]\s*([A-Za-z][A-Za-z0-9]*-\d+)\s*[）)\]】]\s*[？?。.]?\s*$")
 ASK_ID_HEAD_RE = re.compile(r"^\s*[\[【]\s*([A-Za-z][A-Za-z0-9]*-\d+)\s*[\]】]")
 BLOCK_RE = re.compile(r"^(?:卡住?|阻塞|挡着)\s*[：:]\s*(.+)")
+REC_RE = re.compile(r"^(?:荐|推荐)\s*[：:]\s*(.+)")
+REC_SEP_RE = re.compile(r"^[\s，,：:；;。.、—–\-（(]+|[）)]+$")
 Q_TAIL_RE = re.compile(r"[？?：:。.\s]+$")
 
 
@@ -407,8 +409,14 @@ def ask_key(d):
     return d.get("id") or "q:" + re.sub(r"\s+", "", Q_TAIL_RE.sub("", d["q"]))
 
 
+def split_rec(text, opts):
+    """「荐：先别，现在发会打断评测」→（推荐的选项，理由）。开头对不上哪个选项的，选项留空，整段当理由。"""
+    hit = max((o for o in opts if text.startswith(o)), key=len, default="")
+    return hit, REC_SEP_RE.sub("", text[len(hit):]).strip()[:120]
+
+
 def parse_decisions(text):
-    """「❓ 事情（编号）｜选项｜选项｜卡：任务」：每行一件等你拍板的事；代码块里的是举例，不算。"""
+    """「❓ 事情（编号）｜选项｜选项｜卡：任务｜荐：选项，理由」：每行一件等你拍板的事；代码块里的是举例，不算。"""
     items, fence = [], False
     for line in (text or "").splitlines():
         if line.lstrip().startswith("```"):
@@ -417,17 +425,59 @@ def parse_decisions(text):
         m = None if fence else ASK_RE.match(line)
         parts = split_parts(m.group(1)) if m else None
         if parts:
-            q, opts, block = parts[0][:200], [], []
+            q, opts, block, rec = parts[0][:200], [], [], ""
             for p in parts[1:]:
-                b = BLOCK_RE.match(p)
+                b, r = BLOCK_RE.match(p), REC_RE.match(p)
                 if b:
                     block.append(b.group(1))
+                elif r:
+                    rec = r.group(1).strip()
                 elif len(opts) < 6:
                     opts.append(p[:40])
             d = {"q": q, "opts": opts, "id": ask_id(q), "block": "；".join(block)[:80]}
+            d["rec"], d["why"] = split_rec(rec, opts) if rec else ("", "")
             d["k"] = ask_key(d)
             items.append(d)
     return items[:12]
+
+
+# 🧭 它没问你、自己定了的事：「🧭 定了什么｜为什么」，每轮最多记 5 件，会话详情里列出来，你不同意就去会话里说
+CALL_RE = re.compile(r"^\s*(?:[-*]\s+)?🧭\s*(.+)")
+CALL_HEAD_RE = re.compile(r"^(?:我(?:替你)?定了|替你定了|定了|我决定)\s*[：:]\s*")
+CALL_WHY_RE = re.compile(r"^(?:因为|为什么|理由|原因)\s*[：:]\s*")
+CALLS_MAX = 40
+
+
+def parse_calls(text):
+    items, fence = [], False
+    for line in (text or "").splitlines():
+        if line.lstrip().startswith("```"):
+            fence = not fence
+            continue
+        m = None if fence else CALL_RE.match(line)
+        parts = split_parts(m.group(1)) if m else None
+        if parts:
+            t = CALL_HEAD_RE.sub("", parts[0])[:160]
+            why = CALL_WHY_RE.sub("", "；".join(parts[1:]))[:160]
+            if t:
+                items.append({"t": t, "why": why})
+    return items[:5]
+
+
+def note_calls(st, text, ts):
+    """这一轮的 🧭 记进 st["calls"]。按原文认同一件（重读对话记录时不重复记），留最近 CALLS_MAX 件。"""
+    items = parse_calls(text)
+    if not items:
+        return
+    calls = st.setdefault("calls", [])
+    seen = {c["k"] for c in calls}
+    for d in items:
+        k = re.sub(r"\s+", "", d["t"])
+        if k not in seen:
+            seen.add(k)
+            calls.append({"k": k, "t": d["t"], "why": d["why"], "ts": ts})
+    if len(calls) > CALLS_MAX:
+        st["calls"] = calls[-CALLS_MAX:]
 
 
 # ---------------------------------------------------------------- 没答的 ❓：跨轮记账，按固定格式判断答没答（不调模型）
@@ -449,7 +499,7 @@ def note_asks(st, text, ts):
         if a is None:
             a = idx[d["k"]] = {"k": d["k"], "first": ts}
             asks.append(a)
-        a.update(q=d["q"], opts=d["opts"], id=d["id"], block=d["block"], last=ts, done=0, ans="")
+        a.update(q=d["q"], opts=d["opts"], id=d["id"], block=d["block"], rec=d["rec"], why=d["why"], last=ts, done=0, ans="")
     if len(asks) > ASKS_MAX:
         # 先丢最早答掉的，再丢最早问的
         drop = sorted(asks, key=lambda a: (not a.get("done"), a.get("last") or 0))[:len(asks) - ASKS_MAX]
@@ -487,7 +537,8 @@ def answer_of(a, lines):
             continue
         rest = body[len(q):] if hit_q else body
         rest = re.sub(r"^[？?：:。.｜|\s]+", "", rest).strip()
-        if hit_q and (not rest or "｜".join(split_parts(rest)) == echo):
+        # 原样抄回来的（「卡：」「荐：」那几段不算选项）不算答了
+        if hit_q and (not rest or "｜".join(p for p in split_parts(rest) if not BLOCK_RE.match(p) and not REC_RE.match(p)) == echo):
             continue
         return (rest or line)[:80]
     return ""
@@ -1079,6 +1130,7 @@ def on_final(st, text, ts):
     if text.strip():
         st["last_text"] = text[-6000:]
     note_asks(st, text, ts or time.time())
+    note_calls(st, text, ts or time.time())
     s = parse_status(text, ts or time.time())
     st["final_has_status"] = bool(s)
     if s:
@@ -2555,12 +2607,18 @@ def make_item(st, now, cfg, ov, sched, titles, goals, ctx):
         gone = ctx["ask_dismiss"].get(key, {})
         closed = (ov["at"] or 0) if ov and ov["action"] in ("done", "closed") else 0
         old_asks = sorted(({"k": a["k"], "q": a["q"], "opts": a.get("opts") or [], "id": a.get("id") or "", "block": a.get("block") or "",
-                            "first": a.get("first") or 0}
+                            "rec": a.get("rec") or "", "why": a.get("why") or "", "first": a.get("first") or 0}
                            for a in st.get("asks") or []
                            if not a.get("done") and a["k"] not in cur and max(gone.get(a["k"], 0), closed) < (a.get("last") or 0)),
                           key=lambda a: a["first"])[:20]
         if old_asks:
             badges.append("%d 件没答" % len(old_asks))
+    # 🧭 它没问你、自己定了的事：详情里列最近的；最后一轮回复里有的，行上提一句
+    calls = st.get("calls") or []
+    final_ts = st.get("final_ts") or 0
+    fresh_calls = sum(1 for c in calls if (c.get("ts") or 0) >= final_ts) if final_ts and final_ts >= (st.get("last_user_ts") or 0) else 0
+    if fresh_calls and group != "hidden":
+        badges.append("替你定了 %d 件" % fresh_calls)
 
     if st["tool"] == "claude":
         resume = "cd %s && claude --resume %s" % (shell_quote(st.get("cwd") or HOME), st["id"])
@@ -2594,6 +2652,9 @@ def make_item(st, now, cfg, ov, sched, titles, goals, ctx):
             "handoffTs": ctx.get("handoffs", {}).get(key) or 0,   # 压缩时的交接：正文较长，详情里再按 /api/handoff 取
             "status": ("📌 " + status["label"] + ("｜" + status["desc"] if status.get("desc") else "")) if status else "",
             "decisions": decisions, "doneAsk": done_ask, "oldAsks": old_asks,
+            "calls": [{"t": c["t"], "why": c.get("why") or "", "ts": c.get("ts") or 0}   # 新的在前，同一轮的按原文顺序
+                      for c in sorted(calls[-20:], key=lambda c: -(c.get("ts") or 0))],
+            "callsFresh": fresh_calls,
             "cwd": st.get("cwd") or "", "branch": st.get("branch") or "", "id": st["id"], "resume": resume,
             "projectDir": home_dir, "projectDirMine": home_mine,   # 按哪层文件夹分的项目；Mine = 你在「位置」那一行点的
         },
