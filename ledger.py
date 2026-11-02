@@ -112,6 +112,7 @@ CREATE TABLE IF NOT EXISTS topics (id INTEGER PRIMARY KEY AUTOINCREMENT, project
 CREATE UNIQUE INDEX IF NOT EXISTS topics_name ON topics(project, name);
 CREATE TABLE IF NOT EXISTS session_topics (session_key TEXT PRIMARY KEY, topic_id INTEGER, at REAL);
 CREATE TABLE IF NOT EXISTS handoffs (session_key TEXT PRIMARY KEY, ts REAL, text TEXT);
+CREATE TABLE IF NOT EXISTS ask_dismiss (session_key TEXT, k TEXT, at REAL, PRIMARY KEY (session_key, k));
 """
 
 
@@ -380,8 +381,25 @@ def parse_goal(text):
     return {"goal": goal, "criteria": criteria}
 
 
+# ❓ 的编号写在事情末尾的括号里，如（Q-031）；也认开头的【Q-031】。「BUG-0016（…）」这种正文里的编号不算
+ASK_ID_TAIL_RE = re.compile(r"[（(\[【]\s*([A-Za-z][A-Za-z0-9]*-\d+)\s*[）)\]】]\s*[？?。.]?\s*$")
+ASK_ID_HEAD_RE = re.compile(r"^\s*[\[【]\s*([A-Za-z][A-Za-z0-9]*-\d+)\s*[\]】]")
+BLOCK_RE = re.compile(r"^(?:卡住?|阻塞|挡着)\s*[：:]\s*(.+)")
+Q_TAIL_RE = re.compile(r"[？?：:。.\s]+$")
+
+
+def ask_id(q):
+    m = ASK_ID_TAIL_RE.search(q) or ASK_ID_HEAD_RE.match(q)
+    return m.group(1).upper() if m else ""
+
+
+def ask_key(d):
+    """同一件事认编号；没编号的按问题原文（去掉空白和末尾标点）认。"""
+    return d.get("id") or "q:" + re.sub(r"\s+", "", Q_TAIL_RE.sub("", d["q"]))
+
+
 def parse_decisions(text):
-    """「❓ 事情｜选项｜选项」：每行一件等你拍板的事；代码块里的是举例，不算。"""
+    """「❓ 事情（编号）｜选项｜选项｜卡：任务」：每行一件等你拍板的事；代码块里的是举例，不算。"""
     items, fence = [], False
     for line in (text or "").splitlines():
         if line.lstrip().startswith("```"):
@@ -390,8 +408,84 @@ def parse_decisions(text):
         m = None if fence else ASK_RE.match(line)
         parts = split_parts(m.group(1)) if m else None
         if parts:
-            items.append({"q": parts[0][:200], "opts": [o[:40] for o in parts[1:7]]})
+            q, opts, block = parts[0][:200], [], []
+            for p in parts[1:]:
+                b = BLOCK_RE.match(p)
+                if b:
+                    block.append(b.group(1))
+                elif len(opts) < 6:
+                    opts.append(p[:40])
+            d = {"q": q, "opts": opts, "id": ask_id(q), "block": "；".join(block)[:80]}
+            d["k"] = ask_key(d)
+            items.append(d)
     return items[:12]
+
+
+# ---------------------------------------------------------------- 没答的 ❓：跨轮记账，按固定格式判断答没答（不调模型）
+
+ASKS_MAX = 60
+NUM_HEAD_RE = re.compile(r"^\s*(?:\d+\s*[.、．)）]|❓️?|[-*•])\s*")
+PENDING_RE = re.compile(r"[：:｜|]\s*待定\s*[。.]?\s*$")
+
+
+def note_asks(st, text, ts):
+    """这一轮回复里的 ❓ 记进 st["asks"]。同一件再问：用新说法，保留第一次问的时间；之前算答了的重新打开（又问了说明没定下来）。"""
+    items = parse_decisions(text)
+    if not items:
+        return
+    asks = st.setdefault("asks", [])
+    idx = {a["k"]: a for a in asks}
+    for d in items:
+        a = idx.get(d["k"])
+        if a is None:
+            a = idx[d["k"]] = {"k": d["k"], "first": ts}
+            asks.append(a)
+        a.update(q=d["q"], opts=d["opts"], id=d["id"], block=d["block"], last=ts, done=0, ans="")
+    if len(asks) > ASKS_MAX:
+        # 先丢最早答掉的，再丢最早问的
+        drop = sorted(asks, key=lambda a: (not a.get("done"), a.get("last") or 0))[:len(asks) - ASKS_MAX]
+        st["asks"] = [a for a in asks if a not in drop]
+
+
+def answer_of(a, lines):
+    """你这条消息里有没有答这件。认三种：「N. 事情：选项」（看板拼的格式）、把 ❓ 行抄回来改过选项、提到编号。
+    写「待定」的不算；原样抄回来、选项一个没删的也不算。"""
+    q = Q_TAIL_RE.sub("", a.get("q") or "")
+    pid = re.compile(r"(?<![A-Za-z0-9-])%s(?!\d)" % re.escape(a["id"]), re.I) if a.get("id") else None
+    echo = "｜".join(a.get("opts") or [])
+    for line in lines:
+        body = NUM_HEAD_RE.sub("", line, count=1)
+        hit_q = bool(q) and body.startswith(q)
+        if not hit_q and not (pid and pid.search(line)):
+            continue
+        if PENDING_RE.search(line):
+            continue
+        rest = body[len(q):] if hit_q else body
+        rest = re.sub(r"^[？?：:。.｜|\s]+", "", rest).strip()
+        if hit_q and (not rest or "｜".join(split_parts(rest)) == echo):
+            continue
+        return (rest or line)[:80]
+    return ""
+
+
+def note_answers(st, text, ts):
+    """你发的消息：把答了的 ❓ 标成已答。"""
+    asks = [a for a in st.get("asks") or [] if not a.get("done")]
+    if not asks or not (text or "").strip():
+        return
+    lines = [l.strip() for l in text.splitlines() if l.strip()]
+    for a in asks:
+        ans = answer_of(a, lines)
+        if ans:
+            a["done"], a["ans"] = ts or time.time(), ans
+
+
+PASTE_TAG_RE = re.compile(r'</?pasted_content(?:\s+id="[^"]*")?\s*>')
+
+
+def unwrap_paste(text):
+    """Claude Code 把整段粘贴的文字包在 <pasted_content id="…"> 里；去掉标签，不然整条消息会被当成系统注入的跳过。"""
+    return PASTE_TAG_RE.sub("", text) if "pasted_content" in (text or "") else text
 
 
 # ---------------------------------------------------------------- 产出链接与图片
@@ -935,6 +1029,7 @@ def on_final(st, text, ts):
     st["final_ts"] = ts or st["final_ts"]
     if text.strip():
         st["last_text"] = text[-6000:]
+    note_asks(st, text, ts or time.time())
     s = parse_status(text, ts or time.time())
     st["final_has_status"] = bool(s)
     if s:
@@ -945,7 +1040,7 @@ def on_final(st, text, ts):
 
 
 CLAUDE_KEYS = ('"type":"assistant"', '"type":"user"', '"type":"system"', '"type":"ai-title"',
-               '"type":"custom-title"', '"type":"last-prompt"')
+               '"type":"custom-title"', '"type":"last-prompt"', '"queued_command"')
 
 
 def claude_line(st, line):
@@ -982,6 +1077,14 @@ def claude_line(st, line):
         return
     if rec.get("isSidechain"):
         return
+    if typ == "attachment":
+        # 它干活时你插进来的话：不算新的一轮，只看里面有没有答 ❓
+        a = rec.get("attachment") or {}
+        if a.get("type") == "queued_command" and (a.get("origin") or {}).get("kind") == "human":
+            text = unwrap_paste(a.get("prompt") if isinstance(a.get("prompt"), str) else take_text(a.get("prompt")))
+            if not is_injected(text):
+                note_answers(st, text, ts)
+        return
     msg = rec.get("message") or {}
     content = msg.get("content")
     if typ == "user":
@@ -996,7 +1099,7 @@ def claude_line(st, line):
             st["turn"] = "running"
             st["last_kind"] = "tool"
             return
-        text = take_text(content)
+        text = unwrap_paste(take_text(content))
         if isinstance(content, list) and not text.lstrip().startswith(("<", "[Request interrupted")):
             note_images(st, ts, [((b.get("source") or {}).get("data"), (b.get("source") or {}).get("media_type"))
                                  for b in content if isinstance(b, dict) and b.get("type") == "image"
@@ -1017,6 +1120,7 @@ def claude_line(st, line):
             st["first_prompt"] = text[:500]
         st["last_prompt"] = text[:500]
         note_hashtag(st, ts, text)
+        note_answers(st, text, ts)
         st["last_user_ts"] = ts
         st["turn"] = "running"
         st["last_kind"] = "user"
@@ -1093,6 +1197,7 @@ def codex_line(st, line):
                 st["first_prompt"] = text[:500]
             st["last_prompt"] = text[:500]
             note_hashtag(st, ts, text)
+            note_answers(st, text, ts)
         elif p.get("role") == "assistant" and text.strip():
             st["progress_text"] = text[-1500:]
             if st.get("thread_source") != "subagent":   # 子代理的回复是给主会话的，不是给你的（Claude 的 isSidechain 同理）
@@ -1145,6 +1250,7 @@ def scan(conn, cfg):
     migrate_codex_source(conn)
     migrate_project_parents(conn)
     migrate_handoffs(conn)
+    migrate_asks(conn, cfg)
     t0 = time.time()
     horizon = t0 - max(cfg["window_days"], 30) * 86400
     files = [("claude", p) for p in glob.glob(os.path.join(CLAUDE_PROJECTS, "*", "*.jsonl"))]
@@ -2352,6 +2458,19 @@ def make_item(st, now, cfg, ov, sched, titles, goals, ctx):
             group, kind, sort, done_ask = "need", "me", 2, True
     else:
         decisions = []
+    # 之前问过、你还没答的 ❓：只加徽标，不挪组（最新 📌 说了算）。点了「不用答了」、会话点过完成的收起来；它再问就再列出来
+    old_asks = []
+    if group != "hidden":
+        cur = {d["k"] for d in decisions}
+        gone = ctx["ask_dismiss"].get(key, {})
+        closed = (ov["at"] or 0) if ov and ov["action"] in ("done", "closed") else 0
+        old_asks = sorted(({"k": a["k"], "q": a["q"], "opts": a.get("opts") or [], "id": a.get("id") or "", "block": a.get("block") or "",
+                            "first": a.get("first") or 0}
+                           for a in st.get("asks") or []
+                           if not a.get("done") and a["k"] not in cur and max(gone.get(a["k"], 0), closed) < (a.get("last") or 0)),
+                          key=lambda a: a["first"])[:20]
+        if old_asks:
+            badges.append("%d 件没答" % len(old_asks))
 
     if st["tool"] == "claude":
         resume = "cd %s && claude --resume %s" % (shell_quote(st.get("cwd") or HOME), st["id"])
@@ -2382,7 +2501,7 @@ def make_item(st, now, cfg, ov, sched, titles, goals, ctx):
             "lastReply": tail_text(st.get("last_text") or st.get("progress_text")),
             "handoffTs": ctx.get("handoffs", {}).get(key) or 0,   # 压缩时的交接：正文较长，详情里再按 /api/handoff 取
             "status": ("📌 " + status["label"] + ("｜" + status["desc"] if status.get("desc") else "")) if status else "",
-            "decisions": decisions, "doneAsk": done_ask,
+            "decisions": decisions, "doneAsk": done_ask, "oldAsks": old_asks,
             "cwd": st.get("cwd") or "", "branch": st.get("branch") or "", "id": st["id"], "resume": resume,
             "projectDir": home_dir, "projectDirMine": home_mine,   # 按哪层文件夹分的项目；Mine = 你在「位置」那一行点的
         },
@@ -2391,6 +2510,13 @@ def make_item(st, now, cfg, ov, sched, titles, goals, ctx):
 
 def shell_quote(s):
     return "'" + s.replace("'", "'\\''") + "'"
+
+
+def load_ask_dismiss(conn):
+    out = {}
+    for r in conn.execute("SELECT session_key, k, at FROM ask_dismiss"):
+        out.setdefault(r["session_key"], {})[r["k"]] = r["at"]
+    return out
 
 
 ORDER_VIEWS = ("rail",)   # 拖过的顺序：rail 是左栏项目的顺序（存项目 key）。队列不再拖着排，改成置顶，见 load_pins
@@ -2488,7 +2614,8 @@ def build_board(conn, cfg, now=None):
     items, hidden, hashtags = [], [], {}
     ctx = {"names": name_map(conn), "tags": tag_map(conn), "moved": load_moved(conn), "links": {}, "live": claude_live(),
            "goals": {r["session_key"]: dict(r) for r in conn.execute("SELECT * FROM goals")},
-           "handoffs": {r["session_key"]: r["ts"] for r in conn.execute("SELECT session_key, ts FROM handoffs")}}
+           "handoffs": {r["session_key"]: r["ts"] for r in conn.execute("SELECT session_key, ts FROM handoffs")},
+           "ask_dismiss": load_ask_dismiss(conn)}
     seen_out = set()
     for r in conn.execute("SELECT l.session_key, l.url, l.label, l.ts, l.doc, COALESCE(d.title, m.title, '') AS title, m.state" + OUT_FROM +
                           " WHERE l.session_key IN (SELECT key FROM sessions WHERE last_activity >= ?) ORDER BY l.ts DESC", (now - 30 * 86400,)):
@@ -3143,6 +3270,16 @@ class App:
                 meta_set(c, "order", json.dumps(order, ensure_ascii=False))
                 c.commit()
                 return True, "顺序已保存" if keys else "已恢复默认排序"
+            if action == "ask" and key and isinstance(arg, dict) and arg.get("k"):
+                # 详情里「不用答了」：这几件不再列；它以后再问会重新列出来。undo = 撤销
+                ks = [str(x) for x in (arg["k"] if isinstance(arg["k"], list) else [arg["k"]])]
+                for k in ks:
+                    if arg.get("undo"):
+                        c.execute("DELETE FROM ask_dismiss WHERE session_key=? AND k=?", (key, k))
+                    else:
+                        c.execute("INSERT OR REPLACE INTO ask_dismiss (session_key, k, at) VALUES (?, ?, ?)", (key, k, now))
+                c.commit()
+                return True, "又列出来了" if arg.get("undo") else ("好，这件不再列出" if len(ks) == 1 else "好，这 %d 件不再列出" % len(ks))
             if action == "restore":
                 c.execute("DELETE FROM overrides WHERE key=?", (key,))
                 c.commit()
@@ -3479,6 +3616,43 @@ def migrate_handoffs(conn):
     meta_set(conn, "handoffs_v1", time.time())
     conn.commit()
     log("已补回 %d 个 Claude 会话压缩时的交接" % n)
+
+
+def migrate_asks(conn, cfg):
+    """没答的 ❓ 是后加的：最近 window_days 天、问过 ❓ 的会话重读一遍，把问过没答的补进来。只跑一次。"""
+    if meta_get(conn, "asks_v1"):
+        return
+    t0, n = time.time(), 0
+    horizon = t0 - cfg["window_days"] * 86400
+    mark, cap = "❓".encode(), 16 * 1024 * 1024   # 平时增量读不漏；补的时候大文件只读最后 16MB（问答多在后面）
+    for r in conn.execute("SELECT f.path, f.session_key, s.data FROM files f JOIN sessions s ON s.key = f.session_key "
+                          "WHERE f.mtime >= ?", (horizon,)).fetchall():
+        tool = r["session_key"].split(":", 1)[0]
+        try:
+            size = os.path.getsize(r["path"])
+            with open(r["path"], "rb") as f:
+                f.seek(max(0, size - cap))
+                data = f.read()
+        except OSError:
+            continue
+        if mark not in data:
+            continue
+        if size > cap:
+            data = data[data.find(b"\n") + 1:]
+        fresh = new_state(tool, r["session_key"].split(":", 1)[1], r["path"])
+        handler = claude_line if tool == "claude" else codex_line
+        for raw in data.split(b"\n"):
+            if raw:
+                handler(fresh, raw.decode("utf-8", "replace"))
+        if not fresh.get("asks"):
+            continue
+        st = json.loads(r["data"])
+        st["asks"] = fresh["asks"]
+        conn.execute("UPDATE sessions SET data=? WHERE key=?", (json.dumps(st, ensure_ascii=False), r["session_key"]))
+        n += 1
+    meta_set(conn, "asks_v1", time.time())
+    conn.commit()
+    log("已补回 %d 个会话问过的 ❓，用时 %d ms" % (n, int((time.time() - t0) * 1000)))
 
 
 def migrate_project_parents(conn):

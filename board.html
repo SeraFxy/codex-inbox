@@ -308,7 +308,10 @@ kbd.k.lg { min-width: 22px; height: 22px; padding: 0 6px; border-radius: 6px; fo
 .dq { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; padding: 10px 12px 10px 14px; background: var(--bk-surface); }
 .dq .n { flex: none; width: 16px; font: 12px/20px var(--bk-mono); color: var(--bk-ink-3); }
 .dq .q { flex: 1 1 220px; min-width: 0; font-size: 14px; line-height: 21px; word-break: break-word; }
-.dq .opts { display: flex; flex-wrap: wrap; gap: 6px; }
+.dq .opts { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.dq .qm { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 4px; }
+.dq .age { font: 12px/16px var(--bk-mono); color: var(--bk-ink-3); }
+.chip.ask { background: var(--bk-needs-tint); color: var(--bk-needs-ink); }   /* 之前问过、你还没答的 ❓：红字，球在你这边 */
 .opt {
   min-height: 30px; padding: 4px 12px; border: 1px solid var(--bk-line); border-radius: 8px; background: var(--bk-surface);
   color: var(--bk-ink-1); font-size: 13px; line-height: 20px; font-weight: 500; text-align: left; cursor: pointer; transition: border-color .12s;
@@ -318,15 +321,14 @@ kbd.k.lg { min-width: 22px; height: 22px; padding: 0 6px; border-radius: 6px; fo
 .opt.lg { min-height: 34px; padding: 6px 12px; border-radius: 10px; font-weight: 400; }
 .opts-row { display: flex; flex-wrap: wrap; gap: 8px; }
 .reply { display: flex; flex-direction: column; gap: 10px; padding: 12px 12px 12px 14px; border: 1px solid var(--bk-line-strong); border-radius: 14px; box-shadow: var(--bk-e1); }
-.rpre { margin: 0; min-height: 44px; font-size: 14px; line-height: 22px; white-space: pre-wrap; word-break: break-word; }
-.rpre.ph { color: var(--bk-ink-3); }
 .reply textarea {
-  display: block; width: 100%; min-height: 56px; padding: 8px 12px; resize: vertical; border: 1px solid var(--bk-line); border-radius: 12px;
-  background: var(--bk-surface); font-size: 13px; line-height: 20px; outline: none; transition: border-color .12s, box-shadow .12s;
+  display: block; width: 100%; min-height: 76px; max-height: 60vh; padding: 8px 12px; resize: vertical; border: 1px solid var(--bk-line); border-radius: 12px;
+  background: var(--bk-surface); font-size: 14px; line-height: 22px; outline: none; transition: border-color .12s, box-shadow .12s;
 }
 .reply textarea::placeholder { color: var(--bk-ink-3); }
 .reply textarea:focus { border-color: var(--bk-ink-1); box-shadow: 0 0 0 4px var(--bk-ring); }
 .rfoot { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 12px; }
+.rfoot .rl { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; }
 .rfoot .rh { font-size: 12px; line-height: 18px; color: var(--bk-ink-3); }
 .rfoot .bs { display: flex; gap: 6px; }
 
@@ -1521,7 +1523,9 @@ function row(it, i) {
     '<span class="fc' + (hopNow.has(it.key) ? " bk-hop" : "") + '">' + face(f, 24, i) + "</span>" +
     '<span class="t" title="' + esc(it.title) + '">' + esc(it.title) + "</span>" +
     '<span class="w' + (f === "stuck" || f === "alarm" || f === "wait" ? " hot" : "") + '">' + esc(rowTime(it)) + "</span>" +
-    '<span class="s">' + toolChip(it) + '<span class="chip sm">' + esc(chipText(it)) + "</span><span>" + esc(shortOf(it)) + "</span></span>" +
+    '<span class="s">' + toolChip(it) + '<span class="chip sm">' + esc(chipText(it)) + "</span>" +
+    (oldAsksOf(it).length ? '<span class="chip sm ask" title="它之前问过、你还没答的事，详情里能接着选">' + oldAsksOf(it).length + " 件没答</span>" : "") +
+    "<span>" + esc(shortOf(it)) + "</span></span>" +
     '<span class="racts">' + acts + "</span></div>";
 }
 function pick(key) {
@@ -1661,6 +1665,7 @@ function renderDetail() {
   html += mrSec(it);
   html += infoSec(it);
   el.innerHTML = '<div class="detail-in">' + html + "</div>";
+  fitText(document.getElementById("rtext"));
 }
 // 详情里的「AI 给的产出物」：先列最近 8 个，展开后按会话取全部；多于 12 个时可以在里面找
 const dOut = {};    // 会话 key -> { total, items }
@@ -1885,71 +1890,138 @@ async function setProjectDir(key, id, remove) {
   load();
 }
 
-// ---------------- 待你决定 / 推它一下：选项拼成一条回复，只复制并打开会话
+// ---------------- 待你决定 / 推它一下：选项拼成一条回复，框里能直接改，只复制并打开会话
+// 「之前问过、还没答」：台账记着的、它前几轮问过你还没答的 ❓（这一轮又问的不重复列）
+function oldAsksOf(it) { return it.group !== "hidden" && it.details && it.details.oldAsks || []; }
+function asksOf(it) { return decisionsOf(it).concat(oldAsksOf(it)); }
 function nudgesOf(it) { return faceOf(it) === "stuck" && it.kind === "interrupted" && !decisionsOf(it).length ? NUDGES : []; }
 function pickOf(it) {
   const sig = JSON.stringify(decisionsOf(it));
-  if (!picks[it.key] || picks[it.key].sig !== sig) picks[it.key] = { sig, sel: {}, quick: null, note: "" };  // AI 又回了一轮，旧的选择作废
+  // AI 又回了一轮，旧的选择和改过的回复作废；sel 按问题的 k 记，「不用答了」收掉一件不影响别的
+  if (!picks[it.key] || picks[it.key].sig !== sig) picks[it.key] = { sig, sel: {}, quick: null, text: null };
   return picks[it.key];
 }
-function replyLines(it) {
-  const p = pickOf(it), ds = decisionsOf(it);
-  if (!ds.length) return p.quick != null ? nudgesOf(it)[p.quick] || "" : "";
-  return ds.map((d, i) => (i + 1) + ". " + d.q.replace(/[？?：:。.\s]+$/, "") + "：" +
-    (p.sel[i] != null ? d.opts[p.sel[i]] : !d.opts.length && p.note.trim() ? "见下面" : "待定")).join("\n");
+function qText(d) { return d.q.replace(/[？?：:。.\s]+$/, ""); }
+function ansOf(it, p, d, i) {
+  // 这一轮问的没选写「待定」；之前问的没选就不写进回复
+  return p.sel[d.k] != null ? d.opts[p.sel[d.k]] : i < decisionsOf(it).length ? "待定" : null;
 }
-function replyText(it) {
-  const lines = replyLines(it), note = pickOf(it).note.trim();
-  return lines + (lines && note ? "\n\n" : "") + note;
+function replyLines(it) {
+  const p = pickOf(it), all = asksOf(it);
+  if (!all.length) return p.quick != null ? nudgesOf(it)[p.quick] || "" : "";
+  const out = [];
+  all.forEach((d, i) => { const a = ansOf(it, p, d, i); if (a != null) out.push((out.length + 1) + ". " + qText(d) + "：" + a); });
+  return out.join("\n");
+}
+function replyText(it) { const p = pickOf(it); return p.text != null ? p.text : replyLines(it); }
+const NUM_LINE = /^\s*\d+\s*[.、．]\s*/;
+function setLine(text, d, ans) {
+  // 改过回复后再点选项：只改这件对应的那一行（按问题原文认），别的字不动；ans = null 删掉这行
+  const q = qText(d), lines = text.split("\n");
+  const at = lines.findIndex(l => l.replace(NUM_LINE, "").startsWith(q + "："));
+  if (at >= 0) {
+    if (ans == null) lines.splice(at, 1);
+    else lines[at] = lines[at].slice(0, lines[at].indexOf(q) + q.length) + "：" + ans;
+    return lines.join("\n");
+  }
+  if (ans == null) return text;
+  let last = -1, n = 0;
+  lines.forEach((l, i) => { if (NUM_LINE.test(l)) { last = i; n++; } });
+  const line = (n + 1) + ". " + q + "：" + ans;
+  if (!text.trim()) return line;
+  if (last < 0) return line + "\n\n" + text;
+  lines.splice(last + 1, 0, line);
+  return lines.join("\n");
 }
 function replyHint(it) {
   const p = pickOf(it), ds = decisionsOf(it);
-  if (!ds.length) return "也可以打开会话自己说";
-  const left = ds.filter((d, i) => d.opts.length && p.sel[i] == null).length;
+  if (p.text != null) return "改过了，复制的就是框里这段";
+  if (!asksOf(it).length) return "也可以直接在框里写";
+  if (!ds.length) return "选了的会写进回复，没选的不写";
+  const left = ds.filter(d => d.opts.length && p.sel[d.k] == null).length;
   return left ? "还有 " + left + " 件没选，会写成「待定」" : "都选好了，复制过去发给它";
 }
+function askRow(it, d, i, old) {
+  const p = pickOf(it), k = esc(it.key);
+  const meta = (d.block ? '<span class="chip sm" title="这件没定，卡着这个任务">卡 ' + esc(d.block) + "</span>" : "") +
+    (old ? '<span class="age">问了 ' + esc(dur(nowTs() - d.first)) + "</span>" : "");
+  return '<div class="dq"><span class="n">' + (i + 1) + '</span><span class="q">' + esc(d.q) + (meta ? '<span class="qm">' + meta + "</span>" : "") +
+    '</span><span class="opts">' + d.opts.map((o, j) => '<button type="button" class="opt" aria-pressed="' + (p.sel[d.k] === j) + '" onclick="pickOpt(\'' + k + "'," + i + "," + j + ')">' + esc(o) + "</button>").join("") +
+    (old ? btn("不用答了", "dropAsk('" + k + "'," + i + ")", "ghost xs", "这件不再列出；它以后再问会重新列出来") : "") + "</span></div>";
+}
 function replyBox(it) {
-  const ds = decisionsOf(it), nudges = nudgesOf(it);
-  if (!ds.length && !nudges.length) return "";
-  const p = pickOf(it), k = esc(it.key), lines = replyLines(it);
+  const ds = decisionsOf(it), olds = oldAsksOf(it), nudges = nudgesOf(it);
+  if (!ds.length && !olds.length && !nudges.length) return "";
+  const p = pickOf(it), k = esc(it.key), text = replyText(it), n = ds.length;
   let html = "";
   if (ds.length)
-    html += '<div class="part"><div class="sec-hd"><span class="sec-t">待你决定 · ' + ds.length + '</span><span class="mono">已选 ' + Object.keys(p.sel).length + " / " + ds.length + "</span></div>" +
-      '<div class="dlist">' + ds.map((d, i) => '<div class="dq"><span class="n">' + (i + 1) + '</span><span class="q">' + esc(d.q) + '</span><span class="opts">' +
-        d.opts.map((o, j) => '<button type="button" class="opt" aria-pressed="' + (p.sel[i] === j) + '" onclick="pickOpt(\'' + k + "'," + i + "," + j + ')">' + esc(o) + "</button>").join("") +
-        "</span></div>").join("") + "</div></div>";
-  else
+    html += '<div class="part"><div class="sec-hd"><span class="sec-t">待你决定 · ' + n + '</span><span class="mono">已选 ' + ds.filter(d => p.sel[d.k] != null).length + " / " + n + "</span></div>" +
+      '<div class="dlist">' + ds.map((d, i) => askRow(it, d, i, false)).join("") + "</div></div>";
+  else if (nudges.length)
     html += '<div class="part"><span class="sec-t">推它一下</span><div class="opts-row">' + nudges.map((t, j) =>
       '<button type="button" class="opt lg" aria-pressed="' + (p.quick === j) + '" onclick="pickQuick(\'' + k + "'," + j + ')">' + esc(t) + "</button>").join("") + "</div></div>";
-  return html + '<div class="reply"><span class="sec-l">回复它 · 会复制成这样</span>' +
-    '<p class="rpre' + (lines ? "" : " ph") + '" id="rpre">' + esc(lines || "选一句，或者在下面自己写。") + "</p>" +
-    '<textarea placeholder="还想补充的写在这里，会接在后面（可不填）" oninput="setNote(\'' + k + "',this)\">" + esc(p.note) + "</textarea>" +
-    '<div class="rfoot"><span class="rh">' + esc(replyHint(it)) + '</span><span class="bs">' +
+  if (olds.length)
+    html += '<div class="part"><div class="sec-hd"><span class="sec-t">之前问过、还没答 · ' + olds.length + "</span>" +
+      btn("都不用答了", "dropAsk('" + k + "')", "ghost xs", "这几件都不再列出；它以后再问会重新列出来") + "</div>" +
+      '<div class="dlist">' + olds.map((d, i) => askRow(it, d, n + i, true)).join("") + "</div></div>";
+  return html + '<div class="reply"><span class="sec-l">回复它 · 会复制成这样，可以直接改</span>' +
+    '<textarea id="rtext" rows="3" placeholder="选上面的选项，或者直接在这里写" oninput="setText(\'' + k + "',this)\">" + esc(text) + "</textarea>" +
+    '<div class="rfoot"><span class="rl"><span class="rh">' + esc(replyHint(it)) + "</span>" +
+    (p.text != null ? btn("按选项重写", "resetText('" + k + "')", "ghost xs", "丢掉你改的字，按上面选的重新拼") : "") +
+    '</span><span class="bs">' +
     btn("复制", "copyReply('" + k + "')", "sec hd") +
     btn("复制并打开会话" + ico("send"), "copyReply('" + k + "',true)", "pri hd", "复制到剪贴板并打开这个会话，你在输入框按 ⌘V 再回车") +
     "</span></div></div>";
 }
+function fitText(el) { if (el) { el.style.height = "auto"; el.style.height = el.scrollHeight + 2 + "px"; } }
 function pickOpt(key, i, j) {
   const it = findItem(key);
   if (!it) return;
-  const p = pickOf(it);
-  if (p.sel[i] === j) delete p.sel[i]; else p.sel[i] = j;
+  const p = pickOf(it), d = asksOf(it)[i];
+  if (!d) return;
+  if (p.sel[d.k] === j) delete p.sel[d.k]; else p.sel[d.k] = j;
+  if (p.text != null) p.text = setLine(p.text, d, ansOf(it, p, d, i));
   renderDetail();
 }
 function pickQuick(key, j) {
   const it = findItem(key);
   if (!it) return;
-  const p = pickOf(it);
+  const p = pickOf(it), nudges = nudgesOf(it), was = p.quick != null ? nudges[p.quick] : "";
   p.quick = p.quick === j ? null : j;
+  const now = p.quick != null ? nudges[p.quick] : "";
+  if (p.text != null) p.text = was && p.text.includes(was) ? p.text.replace(was, now) : now ? now + (p.text.trim() ? "\n\n" + p.text : "") : p.text;
   renderDetail();
 }
-function setNote(key, el) {
+function setText(key, el) {
   const it = findItem(key);
   if (!it) return;
-  pickOf(it).note = el.value;
-  const lines = replyLines(it), pre = document.getElementById("rpre");
-  pre.textContent = lines || "选一句，或者在下面自己写。";
-  pre.classList.toggle("ph", !lines);
+  const p = pickOf(it), was = p.text;
+  p.text = el.value === replyLines(it) ? null : el.value;   // 改回和选项拼的一样，就当没改
+  fitText(el);
+  if ((was == null) !== (p.text == null)) {
+    // 「按选项重写」出现或消失：只重画底栏，不动输入框（光标还在）
+    const foot = el.parentNode.querySelector(".rfoot"), tmp = document.createElement("div");
+    tmp.innerHTML = replyBox(it);
+    foot.replaceWith(tmp.querySelector(".rfoot"));
+  }
+}
+function resetText(key) {
+  const it = findItem(key);
+  if (!it) return;
+  pickOf(it).text = null;
+  renderDetail();
+}
+async function dropAsk(key, i) {
+  const it = findItem(key);
+  if (!it) return;
+  const olds = oldAsksOf(it), ks = i == null ? olds.map(d => d.k) : [asksOf(it)[i].k];
+  const p = pickOf(it);
+  ks.forEach(k => { const d = olds.find(x => x.k === k); if (d && p.text != null) p.text = setLine(p.text, d, null); delete p.sel[k]; });
+  try {
+    const res = await post("ask", key, { k: ks });
+    toast(res.message || (res.ok ? "好了" : "没成功"), res.ok ? () => post("ask", key, { k: ks, undo: true }).then(() => load()) : null);
+  } catch (e) { toast("操作失败：本机服务没响应"); }
+  load();
 }
 function copyReply(key, open) {
   const it = findItem(key);
