@@ -369,6 +369,15 @@ kbd.k.lg { min-width: 22px; height: 22px; padding: 0 6px; border-radius: 6px; fo
 .info .v { min-width: 0; font-size: 13px; line-height: 20px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .info .v.mono { font-size: 12px; }
 .info .v.wrap { white-space: pre-wrap; word-break: break-word; }
+/* 位置：主目录下每一段都能点，点哪段就按那层文件夹分项目；现在按的那层加底色 */
+.info .v.path { white-space: normal; overflow: visible; padding: 6px 0; }
+.info .v.path .pre, .info .v.path .sl { color: var(--bk-ink-3); }
+.pseg { font: inherit; color: var(--bk-ink-2); background: none; border: 0; padding: 0 2px; border-radius: 6px; cursor: pointer;
+  max-width: 100%; text-align: left; white-space: normal; overflow-wrap: anywhere; }
+.pseg:hover { color: var(--bk-ink-1); background: var(--bk-sunken); }
+.pseg.on { color: var(--bk-ink-1); font-weight: 600; background: var(--bk-sunken); padding: 0 4px; }
+.pseg:focus-visible { outline: 2px solid var(--bk-ring); outline-offset: 1px; }
+.info .phint { display: block; color: var(--bk-ink-3); }
 .dfoot { display: flex; flex-wrap: wrap; gap: 4px; margin-left: -8px; }
 .dfoot .btn { color: var(--bk-ink-3); font-weight: 400; }
 .dempty { margin: auto; display: flex; flex-direction: column; align-items: center; gap: 12px; padding: 40px 0; text-align: center; }
@@ -507,6 +516,7 @@ mark { background: var(--bk-lime-mark); color: #1B2026; border-radius: 3px; box-
   .htop .hm { margin-left: 0; width: 100%; }
   .orow { grid-template-columns: minmax(0, 1fr); padding: 12px; }
   .orow .oa { flex-direction: row; flex-wrap: wrap; align-items: center; justify-content: space-between; }
+  .pseg { padding-top: 8px; padding-bottom: 8px; }
 }
 </style>
 </head>
@@ -1742,15 +1752,46 @@ function goalSec(it) {
 function infoSec(it) {
   const d = it.details, k = esc(it.key);
   const rows = [
-    ["原标题", d.originalTitle], ["位置", d.cwd], ["分支", d.branch], ["状态行", d.status, "wrap"],
+    ["原标题", d.originalTitle], ["位置", d.cwd, "path", d.projectDirMine ? btn("恢复默认", "setProjectDir('" + k + "'," + clip(d.projectDir) + ",true)", "ghost xs", "去掉你点的这一层，回到默认的取法") : ""],
+    ["分支", d.branch], ["状态行", d.status, "wrap"],
     ["恢复命令", d.resume, "mono", btn(ico("copy", 13) + "复制", "copyClip(" + clip(d.resume) + ",'恢复命令已复制')", "ghost xs")]
   ].filter(r => r[1]);
   let foot = "";
   if (it.scheduleId) foot += btn("取消定时唤醒", "act('" + k + "','cancel_schedule')", "ghost sm");
   if (it.group !== "hidden") foot += btn("不再跟踪这个会话", "act('" + k + "','untrack')", "ghost sm");
   return '<div class="part"><span class="sec-t">会话信息</span><div class="info">' + rows.map(r =>
-    '<div><span class="k">' + r[0] + '</span><span class="v ' + (r[2] || "") + '" title="' + esc(r[1]) + '">' + esc(r[1]) + "</span>" + (r[3] || "<span></span>") + "</div>").join("") +
+    '<div><span class="k">' + r[0] + '</span><span class="v ' + (r[2] || "") + '" title="' + esc(r[1]) + '">' + (r[2] === "path" ? pathSegs(it) : esc(r[1])) + "</span>" + (r[3] || "<span></span>") + "</div>").join("") +
     "</div>" + (foot ? '<div class="dfoot">' + foot + "</div>" : "") + "</div>";
+}
+function pathSegs(it) {
+  // 主目录下的每一段都能点：点哪段，就把那层文件夹当项目，以后在它里面开的会话都归它
+  const d = it.details, home = state.home || "", cwd = d.cwd || "", k = esc(it.key);
+  if (!home || !cwd.startsWith(home + "/")) return esc(cwd);
+  let acc = home, html = '<span class="pre">' + esc(home) + "</span>";
+  for (const s of cwd.slice(home.length + 1).split("/").filter(Boolean)) {
+    acc += "/" + s;
+    const on = acc === d.projectDir && !it.moved;
+    html += '<span class="sl">/</span><button type="button" class="pseg' + (on ? " on" : "") + '" title="' +
+      esc(on ? "现在按这一层分项目" : "把「" + s + "」当项目，以后在这个文件夹里开的会话都归它") +
+      '" onclick="event.stopPropagation();setProjectDir(\'' + k + "'," + clip(acc) + ')">' + esc(s) + "</button>";
+  }
+  return html + '<span class="phint">' + (it.moved ? "手动移到了「" + esc(it.project) + "」，点一段就改回按文件夹分" : "点路径里的一段，就按那一层分项目") + "</span>";
+}
+async function setProjectDir(key, id, remove) {
+  const it = findItem(key), path = clips[id];
+  closeMenu();
+  if (!it || !path) return;
+  if (!remove && path === it.details.projectDir && !it.moved) return toast("现在就是按「" + path.split("/").pop() + "」这层分的");
+  const dirs = (state.projectDirs || []).slice();   // 撤销：你点过的文件夹换回原来那份，手动移过的移回去，主题也回到原样
+  const back = it.topicPinned ? { id: it.topic ? it.topic.id : null } : { auto: true };
+  try {
+    const res = await post("project_dir", key, { path, remove: !!remove });
+    toast(res.message || (res.ok ? "好了" : "没成功"), res.ok ? () => post("project_dirs", null, { dirs })
+      .then(() => it.moved ? post("move", key, { project: it.projectKey }) : null)
+      .then(() => post("topic", key, back))
+      .then(() => load(), () => toast("操作失败：本机服务没响应")) : null);
+  } catch (e) { toast("操作失败：本机服务没响应"); }
+  load();
 }
 
 // ---------------- 待你决定 / 推它一下：选项拼成一条回复，只复制并打开会话
