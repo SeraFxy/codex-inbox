@@ -1604,6 +1604,15 @@ def load_order(conn):
     return {k: v for k, v in order.items() if k in ORDER_VIEWS} if isinstance(order, dict) else {}
 
 
+def load_archived(conn):
+    """归档的项目 -> 归档时间。归档的项目不出现在「全部」里，在左栏最下面的「归档」里看。"""
+    try:
+        got = json.loads(meta_get(conn, "archived", "{}"))
+    except ValueError:
+        return {}
+    return {k: v for k, v in got.items() if isinstance(v, (int, float))} if isinstance(got, dict) else {}
+
+
 def load_pins(conn):
     """置顶的会话 key，新钉的在前。看板上置顶的排在每个标签页最上面，其余按更新时间。"""
     try:
@@ -1668,6 +1677,14 @@ def build_board(conn, cfg, now=None):
             g.sort(key=lambda it: it["idle"])
         groups.append({"id": gid, "title": title, "hint": hint, "items": g})
     hidden.sort(key=lambda it: it["idle"])
+    # 归档的项目里再有会话动起来（比归档晚），项目自动回来
+    archived = load_archived(conn)
+    back = {p for p in archived for it in items
+            if (it["topic"]["project"] if it["topic"] else it["projectKey"]) == p and it["last"] > archived[p]}
+    if back:
+        archived = {p: t for p, t in archived.items() if p not in back}
+        meta_set(conn, "archived", json.dumps(archived, ensure_ascii=False))
+        conn.commit()
     # 置顶只给还在看板上的会话：完成了、不再跟踪了，就不再钉着
     pins = load_pins(conn)
     active = {it["key"] for it in items}
@@ -1682,7 +1699,7 @@ def build_board(conn, cfg, now=None):
         "tzOffsetMin": int(clock(now).astimezone(WORK_TZ).utcoffset().total_seconds() // 60),
         "staleHours": cfg["stale_hours"], "interruptedMin": cfg["interrupted_min"], "windowDays": cfg["window_days"],
         "scanMs": int(meta_get(conn, "last_scan_ms", 0) or 0), "scanIntervalMin": cfg["scan_interval_min"],
-        "groups": groups, "hidden": hidden, "order": load_order(conn), "pins": pins, "digestTime": cfg["digest_time"], "tzText": tz_text(cfg),
+        "groups": groups, "hidden": hidden, "order": load_order(conn), "pins": pins, "archived": archived, "digestTime": cfg["digest_time"], "tzText": tz_text(cfg),
         "topics": [{"id": t["id"], "name": t["name"], "project": t["project"], "projectLabel": tag_of(ctx["tags"], t["project"])[0]}
                    for t in topics if not t["deleted"]],
     }
@@ -1959,6 +1976,15 @@ class App:
                 c.execute("INSERT OR REPLACE INTO overrides (key, action, until_ts, at) VALUES (?, 'snooze', ?, ?)", (key, until, now))
                 c.commit()
                 return True, "已推迟到 " + fmt_time(until, now)
+            if action == "archive" and isinstance(arg, dict) and arg.get("project"):
+                archived = load_archived(c)
+                if arg.get("on"):
+                    archived[str(arg["project"])] = now
+                else:
+                    archived.pop(str(arg["project"]), None)
+                meta_set(c, "archived", json.dumps(archived, ensure_ascii=False))
+                c.commit()
+                return True, "已归档" if arg.get("on") else "已取消归档"
             if action == "pin" and key and isinstance(arg, dict):
                 pins = [k for k in load_pins(c) if k != key]
                 if arg.get("on"):

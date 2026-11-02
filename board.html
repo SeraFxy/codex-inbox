@@ -185,6 +185,11 @@ kbd.k.lg { min-width: 22px; height: 22px; padding: 0 6px; border-radius: 6px; fo
 .rp:hover .ra, .rp:focus-within .ra, .rp .ra.on, .rt:hover .ra, .rt:focus-within .ra, .rt .ra.on { display: inline-flex; }
 .rp:hover .ri .n, .rp:hover .ri .count, .rp:focus-within .ri .n, .rp:focus-within .ri .count,
 .rt:hover .ri .n, .rt:hover .ri .count, .rt:focus-within .ri .n, .rt:focus-within .ri .count { visibility: hidden; }
+.rarch { display: flex; align-items: center; gap: 4px; width: 100%; height: 28px; margin-top: 16px; padding: 0 10px 0 4px; border: 0; border-radius: 8px;
+  background: transparent; color: var(--bk-ink-3); font-size: 12px; line-height: 16px; font-weight: 600; text-align: left; cursor: pointer; }
+.rarch:hover { color: var(--bk-ink-1); }
+.rarch:focus-visible { outline: 2px solid var(--bk-ink-1); outline-offset: 1px; }
+.rarch .n { margin-left: auto; font: 500 12px/1 var(--bk-mono); }
 .rfoot { margin: auto 0 0; padding: 12px 10px 0; font-size: 12px; line-height: 18px; color: var(--bk-ink-3); }
 .qtop { display: none; align-items: center; gap: 6px; margin-bottom: -4px; }
 .split.railx .qtop { display: flex; }
@@ -565,6 +570,7 @@ let hopNow = new Set();
 let scope = store("ledger.scope") || { t: "all" };
 let railOpen = store("ledger.rail") !== false;
 const railFold = new Set(store("ledger.fold") || []);   // 收起的项目
+let archOpen = store("ledger.arch") === true;            // 左栏「归档」展开着
 let picker = null;      // 「归到主题」菜单：{ key, q }
 const prevFace = {};    // 会话 key -> 上次的表情，用来发现「AI 在做 → 待你确认完成」，跳一下
 const bubOpen = {};     // 展开全文的气泡
@@ -725,8 +731,9 @@ function inScope(it, sc) {
   if (sc.t === "p") return railProject(it) === sc.p;
   if (sc.t === "t") return !!it.topic && it.topic.id === sc.id;
   if (sc.t === "n") return railProject(it) === sc.p && !it.topic;
-  return true;
+  return !archivedP(railProject(it));   // 「全部」不含归档的项目
 }
+function archivedP(p) { return !!(state && state.archived && state.archived[p]); }
 let plState = null, plMap = {};
 function plabel(p) {
   if (plState !== state) {
@@ -748,13 +755,14 @@ function railData() {
   // 左栏要列的项目：有会话在跟的，或建过主题的。每格算一共几条（灰）和其中轮到你的几条（红）
   const active = state.groups.reduce((a, g) => a.concat(g.items), []), you = new Set(viewItems("you", true).map(it => it.key));
   const cnt = sc => { const xs = active.filter(it => inScope(it, sc)); return { n: xs.length, hot: xs.filter(it => you.has(it.key)).length }; };
-  const keys = [...new Set(active.map(railProject).concat((state.topics || []).map(t => t.project)))];
+  // 归档的项目都列出来，哪怕里面的会话都完成了：点进去看「已完成」里的历史
+  const keys = [...new Set(active.map(railProject).concat((state.topics || []).map(t => t.project), Object.keys(state.archived || {})))];
   // 拖过顺序的按你排的来，没排过的新项目接在后面
   const rank = new Map(((state.order || {}).rail || []).map((k, i) => [k, i])), at = p => rank.has(p.key) ? rank.get(p.key) : Infinity;
   return {
     all: cnt({ t: "all" }),
     projects: keys.map(p => ({
-      key: p, label: plabel(p), c: cnt({ t: "p", p }), none: cnt({ t: "n", p }),
+      key: p, label: plabel(p), c: cnt({ t: "p", p }), none: cnt({ t: "n", p }), archived: archivedP(p),
       topics: state.topics.filter(t => t.project === p).map(t => ({ t, c: cnt({ t: "t", id: t.id }) }))
     })).sort((a, b) => (at(a) - at(b) || 0) || GENERIC.has(a.key) - GENERIC.has(b.key) || a.label.localeCompare(b.label, "zh"))
   };
@@ -767,7 +775,7 @@ function fixScope(d) {
 function fillView() {
   // 换了左栏范围或刚打开看板时，当前标签页是空的就跳到第一个有会话的，免得看到空的以为选错了
   if (viewItems(view).length) return;
-  const v = TABS.find(id => viewItems(id).length);
+  const v = TABS.find(id => viewItems(id).length) || (viewItems("hidden").length && "hidden");   // 都空着就看已完成的
   if (v) view = v;
 }
 function manual(v) { return !!(state && state.order && (state.order[v] || []).length); }
@@ -780,7 +788,7 @@ async function load(refresh) {
   try {
     const r = await fetch("/api/state" + (refresh ? "?refresh=" + refresh : ""), { cache: "no-store" });
     const next = await r.json();
-    if (state && localAt >= t0) { next.order = state.order; next.pins = state.pins; }   // 拉取途中你刚调过顺序、置顶：先用本地的，免得被旧数据盖回去
+    if (state && localAt >= t0) { next.order = state.order; next.pins = state.pins; next.archived = state.archived; }   // 拉取途中你刚调过顺序、置顶：先用本地的，免得被旧数据盖回去
     failed = false;
     hopNow = new Set();
     allItems(next).forEach(it => {
@@ -969,23 +977,35 @@ function renderRail() {
     '<button type="button" class="btn ghost icon" aria-label="新建主题" title="新建主题" onclick="event.stopPropagation();newTopic(this)">' + ico("plus", 15) + "</button>" +
     '<button type="button" class="btn ghost icon" aria-label="收起侧栏" title="收起侧栏（[）" onclick="toggleRail()">' + ico("railL", 16) + "</button></div>" +
     railItem("全部", { t: "all" }, d.all, "all");
-  d.projects.forEach(p => {
-    const open = !railFold.has(p.key);
-    html += '<div class="rgroup" data-p="' + esc(p.key) + '"><div class="rp" draggable="true">' + (p.topics.length ? '<button type="button" class="rfold" aria-label="' + (open ? "收起 " : "展开 ") + esc(p.label) +
-      '" aria-expanded="' + open + '" data-p="' + esc(p.key) + '" onclick="foldProject(this)">' + ico(open ? "down" : "right", 14) + "</button>" : '<span class="rfold"></span>') +
-      railItem(p.label, { t: "p", p: p.key }, p.c, "proj") +
-      '<button type="button" class="ra" title="改名" aria-label="「' + esc(p.label) + '」改名" aria-haspopup="menu" aria-expanded="false" data-p="' + esc(p.key) +
-      '" data-l="' + esc(p.label) + '" data-c="' + esc((allItems(state).find(it => it.projectKey === p.key) || {}).color || "") +
-      '" onclick="event.stopPropagation();projectMore(this)">' + ico("more", 15) + "</button></div>";
-    if (open) {
-      html += p.topics.map(x => '<div class="rt">' + railItem(x.t.name, { t: "t", id: x.t.id }, x.c, "sub", x.t.id) +
-        '<button type="button" class="ra" title="改名或删除" aria-label="「' + esc(x.t.name) + '」改名或删除" aria-haspopup="menu" aria-expanded="false" data-tid="' + x.t.id +
-        '" onclick="event.stopPropagation();topicMore(this)">' + ico("more", 15) + "</button></div>").join("");
-      if (p.topics.length && p.none.n) html += railItem("未归类", { t: "n", p: p.key }, p.none, "sub none", "none");
-    }
-    html += "</div>";
-  });
+  const live = d.projects.filter(p => !p.archived), arch = d.projects.filter(p => p.archived);
+  live.forEach(p => { html += railGroup(p); });
+  if (arch.length) {
+    html += '<button type="button" class="rarch" aria-expanded="' + archOpen + '" onclick="toggleArch()">' + ico(archOpen ? "down" : "right", 14) +
+      "<span>归档</span><span class=\"n\">" + arch.length + "</span></button>";
+    if (archOpen) arch.forEach(p => { html += railGroup(p); });
+  }
   document.getElementById("rail").innerHTML = html + '<p class="rfoot">把会话拖到主题上就归进去了，也可以在发给 AI 的消息里写 #主题。双击项目或主题改名，拖项目换位置。红色数字 = 里面有轮到你的事。</p>';
+}
+function railGroup(p) {
+  // 左栏一个项目：项目行（⋯ 改名、归档）和它下面的主题
+  const open = !railFold.has(p.key);
+  let html = '<div class="rgroup" data-p="' + esc(p.key) + '"><div class="rp"' + (p.archived ? "" : ' draggable="true"') + ">" + (p.topics.length ? '<button type="button" class="rfold" aria-label="' + (open ? "收起 " : "展开 ") + esc(p.label) +
+    '" aria-expanded="' + open + '" data-p="' + esc(p.key) + '" onclick="foldProject(this)">' + ico(open ? "down" : "right", 14) + "</button>" : '<span class="rfold"></span>') +
+    railItem(p.label, { t: "p", p: p.key }, p.c, "proj") +
+    '<button type="button" class="ra" title="改名、归档" aria-label="「' + esc(p.label) + '」改名、归档" aria-haspopup="menu" aria-expanded="false" data-p="' + esc(p.key) +
+    '" data-l="' + esc(p.label) + '" data-c="' + esc((allItems(state).find(it => it.projectKey === p.key) || {}).color || "") +
+    '" onclick="event.stopPropagation();projectMore(this)">' + ico("more", 15) + "</button></div>";
+  if (open) {
+    html += p.topics.map(x => '<div class="rt">' + railItem(x.t.name, { t: "t", id: x.t.id }, x.c, "sub", x.t.id) +
+      '<button type="button" class="ra" title="改名或删除" aria-label="「' + esc(x.t.name) + '」改名或删除" aria-haspopup="menu" aria-expanded="false" data-tid="' + x.t.id +
+      '" onclick="event.stopPropagation();topicMore(this)">' + ico("more", 15) + "</button></div>").join("");
+    if (p.topics.length && p.none.n) html += railItem("未归类", { t: "n", p: p.key }, p.none, "sub none", "none");
+  }
+  return html + "</div>";
+}
+function toggleArch() {
+  archOpen = !archOpen; store("ledger.arch", archOpen);
+  renderRail();
 }
 function setScope(el, e) {
   const sc = JSON.parse(el.dataset.scope);
@@ -997,6 +1017,7 @@ function setScope(el, e) {
   scope = sc; store("ledger.scope", scope);
   const p = scope.t === "t" ? (topicById(scope.id) || {}).project : scope.p;
   if (p && railFold.delete(p)) store("ledger.fold", [...railFold]);
+  if (p && archivedP(p) && !archOpen) { archOpen = true; store("ledger.arch", true); }
   selKey = null; selIdx = 0; closeMenu();
   fillView();
   render();
@@ -1018,10 +1039,11 @@ function openScopes(el) {
   if (!state) return;
   const d = railData(), b = (label, sc, c, cls) => mi(esc(label), "setScope(this)", cntHtml(c), (cls ? ' class="' + cls + '"' : "") + scopeData(sc));
   let html = b("全部项目", { t: "all" }, d.all);
-  d.projects.forEach(p => {
-    html += b(p.label, { t: "p", p: p.key }, p.c) + p.topics.map(x => b(x.t.name, { t: "t", id: x.t.id }, x.c, "sub")).join("") +
-      (p.topics.length && p.none.n ? b("未归类", { t: "n", p: p.key }, p.none, "sub") : "");
-  });
+  const one = p => b(p.label, { t: "p", p: p.key }, p.c) + p.topics.map(x => b(x.t.name, { t: "t", id: x.t.id }, x.c, "sub")).join("") +
+    (p.topics.length && p.none.n ? b("未归类", { t: "n", p: p.key }, p.none, "sub") : "");
+  d.projects.filter(p => !p.archived).forEach(p => { html += one(p); });
+  const arch = d.projects.filter(p => p.archived);
+  if (arch.length) html += '<span class="ml">归档</span>' + arch.map(one).join("");
   showMenu(el, "", '<div class="mlist">' + html + "</div>", { left: true, wide: true });
 }
 // 归到主题：行上「⋯」、详情里的主题标签、拖到左栏，三处都走 setTopic
@@ -1074,7 +1096,22 @@ function topicMore(el) {
   if (t) showMenu(el, "", mi("改名…", "renameTopic(" + t.id + ")") + mi("删除主题", "deleteTopic(" + t.id + ")"));
 }
 function projectMore(el) {
-  showMenu(el, "", mi("改名…", "renameProject(clips[" + clip(el.dataset.p) + "])") + (manual("rail") ? mi("恢复默认顺序", "resetRailOrder()", "", ' title="按名字排，桌面、其他放最后"') : ""));
+  const id = clip(el.dataset.p), arch = archivedP(el.dataset.p);
+  showMenu(el, "", mi("改名…", "renameProject(clips[" + id + "])") +
+    mi(arch ? "取消归档" : "归档", "archiveProject(clips[" + id + "]," + !arch + ")", "", arch ? "" : ' title="不再出现在「全部」里，在左栏最下面的「归档」里看"') +
+    (manual("rail") && !arch ? mi("恢复默认顺序", "resetRailOrder()", "", ' title="按名字排，桌面、其他放最后"') : ""));
+}
+function archiveProject(p, on, quiet) {
+  closeMenu();
+  const archived = Object.assign({}, state.archived);
+  if (on) archived[p] = nowTs(); else delete archived[p];
+  setLocal({ archived });
+  if (selKey && on && scope.t === "all" && !inScope(findItem(selKey) || {})) selKey = null;
+  render();
+  post("archive", "", { project: p, on }).then(res => {
+    if (!res.ok) return toast(res.message || "没成功");
+    if (!quiet) toast(on ? "已归档「" + plabel(p) + "」，在左栏最下面的「归档」里，有新动静会自己回来" : "已取消归档", on ? () => archiveProject(p, false, true) : null);
+  }, () => toast("操作失败：本机服务没响应"));
 }
 function resetRailOrder() {
   closeMenu();
