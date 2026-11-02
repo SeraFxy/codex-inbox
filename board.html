@@ -370,6 +370,13 @@ kbd.k.lg { min-width: 22px; height: 22px; padding: 0 6px; border-radius: 6px; fo
 .tm-b.md { padding-left: 28px; }
 .tm-a { display: flex; gap: 6px; margin-left: -8px; }
 .tm-b.md + .tm-a { margin-left: 20px; }
+.tm-h .cp { margin-left: auto; color: var(--bk-ink-3); opacity: 0; transition: opacity .12s; }
+.tm:hover .cp, .tm-h .cp:focus-visible { opacity: 1; }
+@media (hover: none) { .tm-h .cp { opacity: 1; } }
+.tm-b.you .thumbs { margin-top: 8px; }
+.tm-ho { display: flex; align-items: center; gap: 12px; font-size: 12px; line-height: 16px; color: var(--bk-ink-3); }
+.tm-ho::before, .tm-ho::after { content: ""; flex: 1; border-top: 1px dashed var(--bk-line-strong); }
+.tm-more { display: flex; justify-content: center; }
 /* 长内容先露一段，下面渐隐 */
 .fold { max-height: 420px; overflow: hidden; -webkit-mask-image: linear-gradient(to bottom, #000 72%, transparent); mask-image: linear-gradient(to bottom, #000 72%, transparent); }
 .handoff.fold { max-height: 260px; }
@@ -1912,22 +1919,64 @@ function replyOf(it) {
   if ((d.replyLen || 0) > (d.lastReply || "").length) loadReply(it.key, d.replyTs);
   return d.lastReply;
 }
+// 对话里的一条：你说的放浅灰底（长的先露 3 行），它说的按 Markdown 排（长的先露一屏）
+function tmHtml(m, id, full) {
+  const open = bubOpen[id];
+  if (m.kind === "handoff") return '<div class="tm-ho"><span>' + esc(when(m.ts)) + " 上下文满了，压缩过一次</span></div>";
+  const you = m.kind === "you";
+  const head = '<div class="tm-h">' + (you ? '<span class="who you">你</span>' : face("mark", 20) + '<span class="who">它</span>') +
+    "<span>" + (m.label ? m.label + (m.ts ? " · " : "") : "") + (m.ts ? esc(when(m.ts)) : "") + "</span>" +
+    (full && you ? btn(ico("copy", 13) + "复制", "copyClip(" + clip(m.text) + ")", "ghost xs cp") : "") + "</div>";
+  const long = you ? m.text.split("\n").length > 3 || m.text.length > 160 : m.text.split("\n").length > 30 || m.text.length > 1800;
+  const imgs = (m.images || []).length ? '<div class="thumbs">' + m.images.map(f =>
+    '<a href="/img/' + esc(f) + '" target="_blank" rel="noopener"><img src="/img/' + esc(f) + '" loading="lazy" alt=""></a>').join("") + "</div>" : "";
+  const body = you ? '<div class="tm-b you' + (long && !open ? " fold3" : "") + '">' + esc(m.text) + imgs + "</div>"
+    : '<div class="tm-b md' + (long && !open ? " fold" : "") + '">' + mdHtml(m.text) + "</div>";
+  return '<div class="tm">' + head + body + (long ? '<div class="tm-a">' + btn(open ? "收起" + ico("up") : "展开全文" + ico("down"),
+    "bubOpen['" + id + "']=!bubOpen['" + id + "'];renderDetail()", "ghost xs") + "</div>" : "") + "</div>";
+}
+// 全部对话：你说的每一句（和「我说过的话」同一份）加上它每一轮最后的回复，按时间排；可以只看你说的。先列最近 40 条，往前一次再加 60 条
+const dAll = {};   // 会话 key -> { open, ts, items, you, it, only, show, loading }
+async function loadAll(key, quiet) {
+  const it = findItem(key), g = dAll[key];
+  if (!it || !g) return;
+  g.loading = !quiet; g.ts = it.details.replyTs + "|" + it.details.promptTs;
+  if (!quiet) renderDetail();
+  try {
+    const res = await (await fetch("/api/transcript?key=" + encodeURIComponent(key), { cache: "no-store" })).json();
+    Object.assign(g, { items: res.items || [], you: res.you || 0, it: res.it || 0 });
+  } catch (e) { if (!quiet) toast("没取到：本机服务没响应"); }
+  g.loading = false;
+  if (selKey === key && !typing()) laterRender(renderDetail);
+}
+function openAll(key, on) {
+  if (!on) { if (dAll[key]) dAll[key].open = false; renderDetail(); const el = document.getElementById("ds-convo"); if (el) el.scrollIntoView({ block: "start" }); return; }
+  dAll[key] = Object.assign(dAll[key] || { only: false, show: 40 }, { open: true });
+  loadAll(key);
+}
 function convo(it) {
-  const d = it.details, msgs = [];
-  if (d.firstPrompt) msgs.push({ you: true, label: "最初的要求", text: d.firstPrompt });
-  if (d.lastPrompt) msgs.push({ you: true, label: "最后说的", text: d.lastPrompt, ts: d.promptTs });
-  if (d.lastReply) msgs.push({ you: false, label: waitOf(it) ? "停下来前说的" : "最后说的", text: replyOf(it), ts: d.replyTs });
+  const d = it.details, k = esc(it.key), g = dAll[it.key], n = d.nPrompts || 0;
+  if (g && g.open) {
+    if (!g.loading && g.ts !== d.replyTs + "|" + d.promptTs) loadAll(it.key, true);   // 又说了新的：悄悄重取
+    const list = (g.items || []).filter(m => !g.only || m.kind === "you"), start = Math.max(0, list.length - g.show);
+    const seg = '<div class="seg src" role="group" aria-label="筛选">' +
+      '<button type="button" aria-pressed="' + !g.only + '" onclick="dAll[\'' + k + '\'].only=false;renderDetail()">全部<span class="n">' + num((g.you || 0) + (g.it || 0)) + "</span></button>" +
+      '<button type="button" aria-pressed="' + g.only + '" onclick="dAll[\'' + k + '\'].only=true;renderDetail()">只看我说的<span class="n">' + num(g.you || 0) + "</span></button></div>";
+    let body = g.loading && !g.items ? '<span class="lmore">读取中…</span>' : !list.length ? '<span class="lmore">' + (g.only ? "台账里没记到你在这个会话里说的话。" : "没读到这个会话的对话记录。") + "</span>" : "";
+    if (start > 0) body += '<div class="tm-more">' + btn("再往前看 " + num(Math.min(60, start)) + " 条（还有 " + num(start) + " 条）" + ico("up"), "dAll['" + k + "'].show+=60;renderDetail()", "ghost sm") + "</div>";
+    body += list.slice(start).map((m, i) => tmHtml(m, "a" + domId(it.key) + "_" + (start + i), true)).join("");
+    return '<div class="part dsec"><div class="sec-hd"><span class="sec-t">全部对话</span><span class="ho-acts">' + seg +
+      btn("收起" + ico("up"), "openAll('" + k + "',false)", "ghost xs") + "</span></div>" +
+      '<span class="sec-l">你说的每一句都在；它的只列每一轮最后的回复，中间干活的过程不列。</span><div class="thread">' + body + "</div></div>";
+  }
+  const msgs = [];
+  if (d.firstPrompt) msgs.push({ kind: "you", label: "最初的要求", text: d.firstPrompt });
+  if (d.lastPrompt) msgs.push({ kind: "you", label: "最后说的", text: d.lastPrompt, ts: d.promptTs });
+  if (d.lastReply) msgs.push({ kind: "it", label: waitOf(it) ? "停下来前说的" : "最后说的", text: replyOf(it), ts: d.replyTs });
   if (!msgs.length) return "";
-  return '<div class="part dsec"><span class="sec-t">对话</span><div class="thread">' + msgs.map((m, i) => {
-    const id = domId(it.key) + "_" + i, open = bubOpen[id];
-    const head = '<div class="tm-h">' + (m.you ? '<span class="who you">你</span>' : face("mark", 20) + '<span class="who">它</span>') +
-      "<span>" + m.label + (m.ts ? " · " + esc(when(m.ts)) : "") + "</span></div>";
-    // 你说的：最初的要求常常很长，先露 3 行；它说的比较要紧，30 行以内全文显示，更长的先露一屏
-    const long = m.you ? m.text.split("\n").length > 3 || m.text.length > 160 : m.text.split("\n").length > 30 || m.text.length > 1800;
-    const body = m.you ? '<div class="tm-b you' + (long && !open ? " fold3" : "") + '">' + esc(m.text) + "</div>"
-      : '<div class="tm-b md' + (long && !open ? " fold" : "") + '">' + mdHtml(m.text) + "</div>";
-    return '<div class="tm">' + head + body + (long ? '<div class="tm-a">' + btn(open ? "收起" + ico("up") : "展开全文" + ico("down"), "bubOpen['" + id + "']=!bubOpen['" + id + "'];renderDetail()", "ghost xs") + "</div>" : "") + "</div>";
-  }).join("") + "</div></div>";
+  return '<div class="part dsec"><div class="sec-hd"><span class="sec-t">对话</span>' +
+    btn("看全部对话" + (n > 2 ? "（你说过 " + num(n) + " 次）" : "") + ico("down"), "openAll('" + k + "',true)", "ghost xs", "你说过的每一句，和它每一轮的回复；可以只看你说的") + "</div>" +
+    '<div class="thread">' + msgs.map((m, i) => tmHtml(m, domId(it.key) + "_" + i)).join("") + "</div></div>";
 }
 // 压缩时的交接：Claude 上下文满了压缩时写给自己接着干活的，只取最后一段。正文长，详情打开时再取
 // 以前的多是英文：浏览器自带翻译（Chrome 138 起的 Translator）在本机翻，不花 token；翻好的存在这台电脑的浏览器里

@@ -926,6 +926,8 @@ def save_image(b64, mime):
 
 
 def note_images(st, ts, pairs):
+    if st.get("_dry"):
+        return   # 重读整段对话（看全部对话）时不再存图，图在扫描时已经存过
     for b64, mime in pairs:
         got = save_image(b64, mime)
         if got:
@@ -1069,6 +1071,8 @@ def is_injected(text):
 
 
 def on_final(st, text, ts):
+    if "_collect" in st and text.strip():
+        st["_collect"].append({"kind": "it", "ts": ts or 0, "text": reply_text(text)})
     st["turn"] = "ended"
     st["last_kind"] = "final"
     st["final_ts"] = ts or st["final_ts"]
@@ -1918,6 +1922,43 @@ def search_sessions(conn, q, limit=50, offset=0, tool="", cross=True, handoff=Fa
     return res
 
 
+_TRANSCRIPTS = {}   # 会话的对话记录文件 -> (文件大小和修改时间, 它每一轮的回复)
+
+
+def transcript_replies(tool, paths):
+    """重读对话记录，取它每一轮最后的回复和压缩时的交接（和扫描用同一套解析，不调 AI）。文件没变就用上次读的"""
+    sig = tuple((p, st.st_size, st.st_mtime) for p in paths for st in [safe_stat(p)] if st)
+    got = _TRANSCRIPTS.get(tuple(paths))
+    if got and got[0] == sig:
+        return got[1]
+    out = []
+    for p, _, _ in sorted(sig, key=lambda x: x[2]):
+        st = new_state(tool, "", p)
+        st["_collect"], st["_dry"], seen = out, True, None
+        parse = claude_line if tool == "claude" else codex_line
+        try:
+            with open(p, encoding="utf-8", errors="replace") as f:
+                for line in f:
+                    parse(st, line)
+                    ho = st.get("new_handoff")
+                    if ho and ho is not seen:
+                        seen = ho
+                        out.append({"kind": "handoff", "ts": ho[0], "text": ho[1]})
+        except OSError:
+            continue
+    if len(_TRANSCRIPTS) > 16:
+        _TRANSCRIPTS.pop(next(iter(_TRANSCRIPTS)))
+    _TRANSCRIPTS[tuple(paths)] = (sig, out)
+    return out
+
+
+def safe_stat(path):
+    try:
+        return os.stat(path)
+    except OSError:
+        return None
+
+
 def session_prompts(conn, key):
     rows = conn.execute("SELECT * FROM prompts WHERE session_key=? ORDER BY ts", (key,)).fetchall()
     res = {"key": key, "items": prompt_rows_to_items(conn, rows, time.time())}
@@ -2546,7 +2587,7 @@ def make_item(st, now, cfg, ov, sched, titles, goals, ctx):
             "mrsTotal": sum(1 for l in ctx["links"].get(key, []) if l["cat"] == "mr"),
             "firstPrompt": (st.get("first_prompt") or "")[:300],
             "lastPrompt": (st.get("last_prompt") or "")[:300] if st.get("last_prompt") != st.get("first_prompt") else "",
-            "promptTs": st.get("last_user_ts") or 0,
+            "promptTs": st.get("last_user_ts") or 0, "nPrompts": st.get("n_prompts") or 0,
             "lastReply": head_text(reply_text(st.get("last_text") or st.get("progress_text"))),
             "replyLen": len(reply_text(st.get("last_text") or st.get("progress_text"))),
             "replyTs": st.get("final_ts") or last,
@@ -3589,6 +3630,16 @@ class Handler(BaseHTTPRequestHandler):
             with APP.lock:
                 r = APP.conn.execute("SELECT ts, text FROM handoffs WHERE session_key=?", ((q.get("key") or [""])[0],)).fetchone()
             return self._send(200, json.dumps({"ts": r["ts"], "text": r["text"]} if r else {}, ensure_ascii=False))
+        if u.path == "/api/transcript":
+            key = (parse_qs(u.query).get("key") or [""])[0]
+            with APP.lock:
+                rows = APP.conn.execute("SELECT * FROM prompts WHERE session_key=? ORDER BY ts", (key,)).fetchall()
+                you = [{"kind": "you", "ts": x["ts"], "text": x["text"], "images": x.get("images") or []}
+                       for x in prompt_rows_to_items(APP.conn, rows, time.time())]
+                paths = [r["path"] for r in APP.conn.execute("SELECT path FROM files WHERE session_key=?", (key,))]
+            its = transcript_replies(key.split(":", 1)[0], paths) if ":" in key else []
+            items = sorted(you + its, key=lambda x: (x["ts"] or 0, x["kind"] != "you"))
+            return self._send(200, json.dumps({"items": items, "you": len(you), "it": sum(1 for x in its if x["kind"] == "it")}, ensure_ascii=False))
         if u.path == "/api/session":
             q = parse_qs(u.query)
             with APP.lock:
