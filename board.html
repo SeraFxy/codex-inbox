@@ -343,6 +343,13 @@ kbd.k.lg { min-width: 22px; height: 22px; padding: 0 6px; border-radius: 6px; fo
 .msg.it .col { min-width: 0; display: flex; flex-direction: column; align-items: flex-start; gap: 4px; }
 .msg.it .bub { border: 1px solid var(--bk-line); border-radius: 14px 14px 14px 4px; background: var(--bk-surface); }
 
+/* 压缩时的交接：Claude 上下文满了压缩时写给自己接着干活的，原文照放，只把标题、粗体、代码标出来 */
+.handoff { padding: 12px 14px; border: 1px solid var(--bk-line); border-radius: 14px; background: var(--bk-surface); font-size: 13px; line-height: 20px; white-space: pre-wrap; word-break: break-word; }
+.handoff.clamp { display: -webkit-box; -webkit-line-clamp: 10; -webkit-box-orient: vertical; overflow: hidden; }
+.handoff b { font-weight: 600; }
+.handoff b.h { font-size: 14px; line-height: 22px; }
+.handoff code { font: 12px/20px var(--bk-mono); }
+.ho-acts { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
 .goal { margin: 0; font-size: 14px; line-height: 22px; white-space: pre-wrap; word-break: break-word; }
 .goal-sub { font-size: 13px; line-height: 20px; color: var(--bk-ink-2); white-space: pre-wrap; word-break: break-word; }
 .pill { display: inline-flex; align-items: center; height: 20px; padding: 0 7px; margin-left: 8px; border-radius: 6px; background: var(--bk-sunken); color: var(--bk-ink-2); font-size: 12px; font-weight: 600; vertical-align: 1px; }
@@ -1639,6 +1646,7 @@ function renderDetail() {
   if (!hidden) html += '<div class="part tight"><span class="sec-l">现状</span><p class="now">' + esc(it.headline) + "</p></div>";
   html += replyBox(it);
   html += convo(it);
+  html += handoffSec(it);
   if (d.goal || !hidden) html += goalSec(it);
   html += outSec(it);
   html += mrSec(it);
@@ -1744,6 +1752,70 @@ function convo(it) {
     return '<div class="msg it">' + face("mark", 24) + '<div class="col"><span class="ml">' + m.label + '</span><div class="bub">' +
       (long && !open ? '<div class="clamp">' + esc(m.text) + "</div>" : esc(m.text)) + "</div>" + (long ? btn(open ? "收起" : "展开全文", "bubOpen['" + id + "']=!bubOpen['" + id + "'];renderDetail()", "ghost xs") : "") + "</div></div>";
   }).join("") + "</div></div>";
+}
+// 压缩时的交接：Claude 上下文满了压缩时写给自己接着干活的，只取最后一段。正文长，详情打开时再取
+// 以前的多是英文：浏览器自带翻译（Chrome 138 起的 Translator）在本机翻，不花 token；翻好的存在这台电脑的浏览器里
+const dHo = {};   // 会话 key -> { ts, text, zh, showZh, busy }
+async function loadHandoff(key, ts) {
+  const cur = dHo[key];
+  if (cur && cur.ts === ts) return;
+  dHo[key] = { ts, loading: true };
+  let text = "";
+  try { text = (await (await fetch("/api/handoff?key=" + encodeURIComponent(key), { cache: "no-store" })).json()).text || ""; } catch (e) {}
+  let zh = null;
+  try { zh = localStorage.getItem("ledger.hozh." + key + "." + ts); } catch (e) {}
+  dHo[key] = { ts, text, zh, showZh: !!zh };
+  if (selKey === key) renderDetail();
+}
+function hoMd(text) {
+  return esc(text).replace(/^#{1,4} +(.+)$/gm, '<b class="h">$1</b>').replace(/\*\*([^*\n]+)\*\*/g, "<b>$1</b>").replace(/`([^`\n]+)`/g, "<code>$1</code>");
+}
+function hoEnglish(text) { return (text.match(/[\u4e00-\u9fff]/g) || []).length < text.length * 0.05; }
+function hoTr(key, g) {
+  if (!("Translator" in self) || !hoEnglish(g.text)) return "";
+  const k = esc(key);
+  if (g.busy) return '<span class="lmore" id="ho-busy">' + esc(g.busy) + "</span>";
+  if (g.zh) return btn(g.showZh ? "看英文原文" : "看中文", "dHo['" + k + "'].showZh=!dHo['" + k + "'].showZh;renderDetail()", "ghost xs");
+  return btn("翻译成中文", "translateHandoff('" + k + "')", "ghost xs", "用浏览器自带的翻译在这台电脑上翻，不花 token；第一次要先下载语言包");
+}
+async function translateHandoff(key) {
+  const g = dHo[key];
+  if (!g || !g.text || g.busy) return;
+  const say = t => { g.busy = t; const el = document.getElementById("ho-busy"); if (el) el.textContent = t; };
+  g.busy = "准备翻译…"; renderDetail();
+  try {
+    const tr = await Translator.create({ sourceLanguage: "en", targetLanguage: "zh",
+      monitor(m) { m.addEventListener("downloadprogress", e => say("下载语言包 " + Math.round(e.loaded * 100) + "%")); } });
+    // 一行一行翻，列表符号、标题井号原样留着
+    const lines = g.text.split("\n"), out = [];
+    for (let i = 0; i < lines.length; i++) {
+      const m = lines[i].match(/^(\s*(?:#{1,4} +|[-*] +|\d+\. +)?)(.*)$/);
+      out.push(/[A-Za-z]{2}/.test(m[2]) ? m[1] + await tr.translate(m[2]) : lines[i]);
+      say("翻译中 " + Math.round((i + 1) * 100 / lines.length) + "%");
+    }
+    g.zh = out.join("\n"); g.showZh = true;
+    try {
+      for (const k of Object.keys(localStorage)) if (k.startsWith("ledger.hozh." + key + ".")) localStorage.removeItem(k);
+      localStorage.setItem("ledger.hozh." + key + "." + g.ts, g.zh);
+    } catch (e) {}
+  } catch (e) { toast("没翻成：" + (e.message || e)); }
+  g.busy = ""; renderDetail();
+}
+function handoffSec(it) {
+  const d = it.details, g = dHo[it.key], id = "ho" + domId(it.key);
+  if (!d.handoffTs) return "";
+  if (!g || g.ts !== d.handoffTs) loadHandoff(it.key, d.handoffTs);
+  let body;
+  if (!g || g.ts !== d.handoffTs || g.loading) body = '<span class="lmore">读取中…</span>';
+  else if (!g.text) body = '<span class="lmore">没读到这段交接。</span>';
+  else {
+    const text = g.showZh && g.zh ? g.zh : g.text, open = bubOpen[id];
+    body = '<div class="handoff' + (open ? "" : " clamp") + '">' + hoMd(text) + "</div>" +
+      '<div class="ho-acts">' + btn(open ? "收起" : "展开全文", "bubOpen['" + id + "']=!bubOpen['" + id + "'];renderDetail()", "ghost xs") +
+      btn("复制", "copyClip(" + clip(text) + ")", "ghost xs") + hoTr(it.key, g) + "</div>";
+  }
+  return '<div class="part"><span class="sec-t">压缩时的交接<span class="pill mono">' + esc(when(d.handoffTs)) + "</span></span>" +
+    '<span class="goal-sub">上下文满了压缩时，它写给自己接着干活用的，只写到那一刻；之后的进展看上面「最后说的」。</span>' + body + "</div>";
 }
 function goalSec(it) {
   const d = it.details;
@@ -1901,6 +1973,7 @@ async function saveTag(reset) {
 const TAB_HASH = { search: "#search", history: "#history", outputs: "#outputs" };
 let tab = Object.keys(TAB_HASH).find(t => TAB_HASH[t] === location.hash) || store("ledger.tab") || "board";
 let sq = "";   // 搜索框里的词：「我说过的话」和「产出物」共用，切换标签页不清空
+let hMode = "", hPromptTotal = 0;   // 上次搜的是哪个标签：只有「全部」带上压缩时的交接
 let hq = "", hSessions = [], hTotal = 0, hAll = 0, hAllSessions = 0, hSince = "", hOutHits = 0, hOuts = [], hTimer = null, hLoaded = false, hReady = false;
 const hFull = {};      // 会话 key -> 这个会话里你说过的全部话、目标
 const hOpen = {};      // 展开的会话
@@ -1917,7 +1990,7 @@ function setTab(t) {
   if (q.value.trim() !== sq) q.value = sq;
   document.getElementById("q-clear").hidden = !sq;
   if (out) { if (!oLoaded || oq !== sq) searchOut(sq); else if (oReady) renderOutputs(); }
-  else { if (!hLoaded || hq !== sq) search(sq); else if (hReady) renderHistory(); }
+  else { if (!hLoaded || hq !== sq || (sq && hMode !== t)) search(sq); else if (hReady) renderHistory(); }
 }
 function segCounts(nh, no) {
   // 搜着词时，两个标签上都写命中几个，一眼看出在哪边
@@ -1942,16 +2015,16 @@ function clearSearch() {
   if (tab === "outputs") searchOut(""); else search("");
 }
 async function search(q, more) {
-  hq = q; hLoaded = true;
+  hq = q; hLoaded = true; hMode = tab;
   if (tab === "history" || tab === "search") document.getElementById("q-clear").hidden = !q;
   const off = more ? hSessions.length : 0;
   // 搜索是全局的：不跟看板页头的「CC / Codex」筛选走（搜索页上看不到那个筛选，跟着走会悄悄漏掉另一个工具的）
-  const r = await fetch("/api/sessions?q=" + encodeURIComponent(q) + "&offset=" + off, { cache: "no-store" });
+  const r = await fetch("/api/sessions?q=" + encodeURIComponent(q) + "&offset=" + off + (tab === "search" ? "&handoff=1" : ""), { cache: "no-store" });
   const res = await r.json();
   if (q !== hq) return;  // 打字快时旧结果晚到，丢掉
   hSessions = more ? hSessions.concat(res.sessions) : res.sessions;
   hTotal = res.total; hAll = res.all; hAllSessions = res.allSessions; hSince = res.since;
-  if (!more) { hOutHits = res.outputHits || 0; hOuts = res.outputs || []; }
+  if (!more) { hOutHits = res.outputHits || 0; hOuts = res.outputs || []; hPromptTotal = res.promptTotal != null ? res.promptTotal : res.total; }
   hReady = true;
   renderHistory();
 }
@@ -1999,16 +2072,20 @@ function sessExtra(full) {
   return '<div class="sess-extra"><span class="sec-l">目标' + (full.goalStatus ? '<span class="pill">' + esc(full.goalStatus) + "</span>" : "") +
     '</span><span class="goal-sub">' + esc(full.goal) + (full.criteria ? "\n完成标准：" + esc(full.criteria) : "") + "</span></div>";
 }
+function hoLine(h) {
+  // 搜索结果里：压缩时的交接对上的那一段
+  return '<div class="hline"><span class="ht" title="' + esc(when(h.ts)) + ' 压缩时写的交接">交接</span><div class="hx"><p class="htext">' + hl(h.text) + "</p></div></div>";
+}
 function scard(s, si, faces) {
   const k = esc(s.key), open = hOpen[s.key], full = hFull[s.key];
   const items = open ? (full ? full.items : []) : s.preview;
   const fk = faces[s.key];
-  const meta = [hq ? "命中 " + s.hits : "", s.count + " 句", s.lastTs ? when(s.lastTs) : s.lastText].filter(Boolean).join(" · ");
+  const meta = [hq && s.hits ? "命中 " + s.hits : "", hq && s.handoff ? "交接里有" : "", s.count + " 句", s.lastTs ? when(s.lastTs) : s.lastText].filter(Boolean).join(" · ");
   const more = open ? "收起" + ico("up") : (s.count > 1 ? "展开全部 " + s.count + " 句" : "展开") + (s.goal ? "和目标" : "") + ico("down");
   return '<article class="hcard" id="hs-' + domId(s.key) + '"><div class="fc">' + (fk ? face(fk, 24, si, REASON[fk]) : "") + "</div>" +
     '<div class="hbody"><div class="htop">' + tagChip(s) + "<h3>" + hl(s.title) + '</h3>' + toolChip(s) + '<span class="hm">' + esc(meta) + "</span></div>" +
     (open ? sessExtra(full) : "") +
-    '<div class="hlines">' + items.map((it, i) => line(it, (open ? "f" : "p") + si + "_" + i)).join("") + "</div>" +
+    '<div class="hlines">' + items.map((it, i) => line(it, (open ? "f" : "p") + si + "_" + i)).join("") + (s.handoff ? hoLine(s.handoff) : "") + "</div>" +
     '<div class="hfoot">' + btn(more, "toggleSession('" + k + "')", "ghost sm") +
     (findItem(s.key) ? btn("在看板里看", "locate('" + k + "')", "ghost sm", "回到看板，打开这个会话的详情：现状、目标、产出物、会话信息") : "") +
     btn("打开会话" + ico("open"), "openSession('" + k + "',this)", "ghost sm") +
@@ -2023,11 +2100,11 @@ function dayHead(ts) {
 function renderHistory() {
   // 「全部」：AI 给的产出物（前 3 个）和你说过的话一起列；「我说过的话」：只列你说过的话
   const all = tab === "search";
-  segCounts(hTotal, hOutHits);
+  segCounts(hPromptTotal, hOutHits);
   document.getElementById("hsum").innerHTML = (hq
     ? '<span class="mono hit">找到 ' + (all ? num(hOutHits) + " 个产出物、" : "") + num(hTotal) + " 个会话</span>"
     : '<span class="mono">共 ' + num(hAllSessions) + " 个会话 · " + num(hAll) + " 句 · 最早到 " + esc(hSince) + "</span>") +
-    '<span class="note">' + ico("info", 13) + (all ? "同时搜你说过的话和 AI 给的产出物；只看一边就点上面的标签"
+    '<span class="note">' + ico("info", 13) + (all ? "同时搜你说过的话、Claude 压缩时的交接和 AI 给的产出物；只看一边就点上面的标签"
       : "Claude Code 默认只保留最近 30 天的对话记录，更早的只剩台账另存的你说过的话") + "</span>";
   const list = document.getElementById("hlist");
   const cross = all && hq && hOuts.length ? xblock("AI 给的产出物", "产出物", hOutHits, "goOutputs(sq)", hOuts.map(o => orow(o, hq)).join("")) : "";
@@ -2041,7 +2118,7 @@ function renderHistory() {
   }
   const faces = {};
   allItems(state).forEach(it => { faces[it.key] = faceOf(it); });
-  let html = cross ? cross + '<div class="dayh"><b>你说过的话</b><span>' + num(hTotal) + " 个会话</span></div>" : "", day = null;
+  let html = cross ? cross + '<div class="dayh"><b>你说过的话和交接</b><span>' + num(hTotal) + " 个会话</span></div>" : "", day = null;
   hSessions.forEach((s, i) => {
     const ts = s.lastTs || (s.preview[0] && s.preview[0].ts) || 0;
     const dn = ts ? dayNo(ts) : null;

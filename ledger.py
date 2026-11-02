@@ -19,6 +19,7 @@ import getpass
 import glob
 import hashlib
 import json
+import mmap
 import os
 import plistlib
 import re
@@ -110,6 +111,7 @@ CREATE TABLE IF NOT EXISTS topics (id INTEGER PRIMARY KEY AUTOINCREMENT, project
   created REAL, deleted INTEGER DEFAULT 0);
 CREATE UNIQUE INDEX IF NOT EXISTS topics_name ON topics(project, name);
 CREATE TABLE IF NOT EXISTS session_topics (session_key TEXT PRIMARY KEY, topic_id INTEGER, at REAL);
+CREATE TABLE IF NOT EXISTS handoffs (session_key TEXT PRIMARY KEY, ts REAL, text TEXT);
 """
 
 
@@ -829,6 +831,56 @@ def flush_media(conn, key, st):
                      (key, sha, ts or 0, name, size))
 
 
+# Claude 压缩上下文时写的交接：前面一段「This session is being continued…Summary:」、后面让它接着干活的说明都是固定套话
+HANDOFF_TAIL = ("\nIf you need specific details from before compaction", "\nContinue the conversation from where it left off",
+                "\nPlease continue the conversation from where we left", "\nThe messages after this summary are")
+
+
+def clean_handoff(text):
+    t = re.sub(r"<system-reminder>.*?</system-reminder>\s*", "", text or "", flags=re.S)
+    m = re.search(r"^Summary:[ \t]*\n", t[:4000], re.M)
+    if m:
+        t = t[m.end():]
+    elif t.startswith("This session is being continued"):
+        t = t.split("\n\n", 1)[-1]
+    # 套话可能叠了两段（各带一句「If you need specific details…」），在末尾 2000 字里取最早出现的那处
+    cut = [i for i in (t.find(x, max(0, len(t) - 2000)) for x in HANDOFF_TAIL) if i >= 0]
+    if cut:
+        t = t[:min(cut)]
+    t = re.sub(r"<analysis>.*?</analysis>", "", t, flags=re.S)
+    return re.sub(r"</?summary>", "", t).strip()[:40000]
+
+
+def last_handoff(path):
+    """整个文件里最后一段压缩交接，返回 (时间, 正文)。大文件第一次读、或一次长了 2MB 以上时只读头尾，中间的交接靠这里找回来。"""
+    mark = b'"isCompactSummary":true'
+    try:
+        with open(path, "rb") as f, mmap.mmap(f.fileno(), 0, access=mmap.ACCESS_READ) as m:
+            i = m.rfind(mark)
+            while i >= 0:
+                a = m.rfind(b"\n", 0, i) + 1
+                b = m.find(b"\n", i)
+                try:
+                    rec = json.loads(m[a:b if b >= 0 else len(m)].decode("utf-8", "replace"))
+                except ValueError:
+                    rec = None
+                if isinstance(rec, dict) and rec.get("type") == "user" and rec.get("isCompactSummary") and not rec.get("isSidechain"):
+                    text = clean_handoff(take_text((rec.get("message") or {}).get("content")))
+                    if text:
+                        return parse_iso(rec.get("timestamp")) or 0, text
+                i = m.rfind(mark, 0, a)
+    except (OSError, ValueError):
+        return None
+    return None
+
+
+def flush_handoff(conn, key, st):
+    got = st.pop("new_handoff", None)
+    if got:
+        conn.execute("INSERT INTO handoffs (session_key, ts, text) VALUES (?, ?, ?) ON CONFLICT(session_key) DO UPDATE SET "
+                     "ts=excluded.ts, text=excluded.text WHERE excluded.ts >= handoffs.ts", (key, got[0] or 0, got[1]))
+
+
 def save_goal(conn, key, goal, criteria="", status=""):
     if not goal:
         return
@@ -933,6 +985,11 @@ def claude_line(st, line):
     msg = rec.get("message") or {}
     content = msg.get("content")
     if typ == "user":
+        if rec.get("isCompactSummary"):
+            text = clean_handoff(take_text(content))
+            if text:
+                st["new_handoff"] = [ts, text]
+            return
         if rec.get("isMeta"):
             return
         if isinstance(content, list) and any(isinstance(b, dict) and b.get("type") == "tool_result" for b in content):
@@ -1087,6 +1144,7 @@ def scan(conn, cfg):
     migrate_codex_files_preamble(conn)
     migrate_codex_source(conn)
     migrate_project_parents(conn)
+    migrate_handoffs(conn)
     t0 = time.time()
     horizon = t0 - max(cfg["window_days"], 30) * 86400
     files = [("claude", p) for p in glob.glob(os.path.join(CLAUDE_PROJECTS, "*", "*.jsonl"))]
@@ -1110,6 +1168,7 @@ def scan(conn, cfg):
                 st, offset = json.loads(got["data"]), row["offset"] or 0
         if st is None:
             st, offset = new_state(tool, session_id_from_path(tool, path), path), 0
+        skipped = stt.st_size - offset > (TAIL_BYTES if offset else HEAD_BYTES + TAIL_BYTES)
         try:
             n, offset = parse_file(tool, path, st, offset, stt.st_size)
         except OSError as e:
@@ -1119,6 +1178,12 @@ def scan(conn, cfg):
         parsed += 1
         key = "%s:%s" % (tool, st["id"])
         flush_media(conn, key, st)
+        if tool == "claude":
+            if skipped:
+                got = last_handoff(path)
+                if got:
+                    st["new_handoff"] = list(got)
+            flush_handoff(conn, key, st)
         if tool == "claude" and st.get("goal"):
             save_goal(conn, key, st["goal"].get("goal"), st["goal"].get("criteria"))
         conn.execute("INSERT OR REPLACE INTO sessions (key, last_activity, data) VALUES (?, ?, ?)",
@@ -1633,9 +1698,22 @@ def search_prompts(conn, q, limit=100, offset=0):
             "all": first[1], "since": fmt_time(first[0], now) if first[0] else ""}
 
 
-def search_sessions(conn, q, limit=50, offset=0, tool="", cross=True):
+def handoff_snippet(text, q):
+    """交接里第一个命中词前后各取一段，压成一行，给搜索结果当预览。"""
+    low, at = text.lower(), -1
+    for w in [w for w in (q or "").split() if w]:
+        i = low.find(w.lower())
+        if i >= 0 and (at < 0 or i < at):
+            at = i
+    a = max(0, at - 80)
+    out = re.sub(r"\s+", " ", re.sub(r"[#*`]+", "", text[a:max(at, 0) + 320])).strip()
+    return ("…" if a else "") + out + ("…" if max(at, 0) + 320 < len(text) else "")
+
+
+def search_sessions(conn, q, limit=50, offset=0, tool="", cross=True, handoff=False):
     """按会话汇总：有命中的会话按最近一次命中排序，每个会话带最多 3 条命中预览。tool = claude / codex 时只看这个工具的。
-    cross：搜第一页时顺带搜产出物，带回总数和前 3 个，页面上两边一起列（不用先想清楚是你说的还是 AI 给的）。"""
+    cross：搜第一页时顺带搜产出物，带回总数和前 3 个，页面上两边一起列（不用先想清楚是你说的还是 AI 给的）。
+    handoff：也搜 Claude 压缩时的交接（「全部」标签用）。只在交接里对上的会话，命中数记 0，排序按交接写的时间。"""
     now = time.time()
     conds, args = _like_where(q)
     by_tool = (" WHERE tool=?", [tool]) if tool in ("claude", "codex") else ("", [])
@@ -1643,27 +1721,44 @@ def search_sessions(conn, q, limit=50, offset=0, tool="", cross=True):
         conds.append("tool=?")
         args.append(tool)
     sql_where = (" WHERE " + " AND ".join(conds)) if conds else ""
-    total = conn.execute("SELECT COUNT(DISTINCT session_key) FROM prompts" + sql_where, args).fetchone()[0]
-    rows = conn.execute("SELECT session_key, COUNT(*) AS hits, MAX(ts) AS last_ts FROM prompts" + sql_where +
-                        " GROUP BY session_key ORDER BY last_ts DESC LIMIT ? OFFSET ?", args + [limit, offset]).fetchall()
+    prompt_total = conn.execute("SELECT COUNT(DISTINCT session_key) FROM prompts" + sql_where, args).fetchone()[0]
+    grouped, gargs = "SELECT session_key, COUNT(*) AS hits, MAX(ts) AS last_ts FROM prompts" + sql_where + " GROUP BY session_key", list(args)
+    words = [w for w in (q or "").split() if w][:6] if handoff and tool != "codex" else []
+    hwhere = " AND ".join(["text LIKE ? ESCAPE '\\'"] * len(words))
+    hargs = ["%" + w.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%" for w in words]
+    if words:
+        grouped = ("SELECT session_key, SUM(hits) AS hits, MAX(last_ts) AS last_ts FROM (" + grouped +
+                   " UNION ALL SELECT session_key, 0, ts FROM handoffs WHERE " + hwhere + ") GROUP BY session_key")
+        gargs += hargs
+    total = conn.execute("SELECT COUNT(*) FROM (" + grouped + ")", gargs).fetchone()[0] if words else prompt_total
+    rows = conn.execute(grouped + " ORDER BY last_ts DESC LIMIT ? OFFSET ?", gargs + [limit, offset]).fetchall()
     out = []
     for r in rows:
         key = r["session_key"]
         n = conn.execute("SELECT COUNT(*) FROM prompts WHERE session_key=?", (key,)).fetchone()[0]
         extra = (" AND " + " AND ".join(conds)) if conds else ""
         prev = conn.execute("SELECT * FROM prompts WHERE session_key=?" + extra + " ORDER BY ts DESC LIMIT ?",
-                            [key] + args + [8 if conds else 4]).fetchall()
+                            [key] + args + [8 if conds else 4]).fetchall() if r["hits"] or not conds else []
         items = prompt_rows_to_items(conn, prev, now)[:3 if conds else 1]
-        head = items[0]
+        if items:
+            head = items[0]
+        else:   # 只在交接里对上：标题、项目按这个会话最近一句取
+            last = prompt_rows_to_items(conn, conn.execute("SELECT * FROM prompts WHERE session_key=? ORDER BY ts DESC LIMIT 1", (key,)).fetchall(), now)
+            head = last[0] if last else dict(session_briefs(conn, [key], now)[key], resume="")
+        ho = None
+        if words:
+            h = conn.execute("SELECT ts, text FROM handoffs WHERE session_key=? AND " + hwhere, [key] + hargs).fetchone()
+            if h:
+                ho = {"ts": h["ts"], "text": handoff_snippet(h["text"], q)}
         ex = session_extras(conn, key)
         out.append({"key": key, "title": head["title"], "project": head["project"], "projectKey": head["projectKey"],
                     "color": head["color"], "tool": head["tool"], "toolLabel": head["toolLabel"], "auto": head["auto"], "count": n,
                     "hits": r["hits"], "lastTs": r["last_ts"], "lastText": fmt_time(r["last_ts"], now), "resume": head["resume"],
-                    "goal": ex["goal"], "linksTotal": ex["linksTotal"],
+                    "goal": ex["goal"], "linksTotal": ex["linksTotal"], "handoff": ho,
                     "preview": [{"ts": it["ts"], "timeText": it["timeText"], "text": it["text"], "images": it["images"]}
                                 for it in items]})
     first = conn.execute("SELECT MIN(ts), COUNT(*), COUNT(DISTINCT session_key) FROM prompts" + by_tool[0], by_tool[1]).fetchone()
-    res = {"q": q, "total": total, "sessions": out, "all": first[1], "allSessions": first[2],
+    res = {"q": q, "total": total, "promptTotal": prompt_total, "sessions": out, "all": first[1], "allSessions": first[2],
            "since": fmt_time(first[0], now) if first[0] else "", "outputHits": 0, "outputs": []}
     if cross and q.strip() and not offset:
         got = search_outputs(conn, q, tool=tool, limit=3)
@@ -2285,6 +2380,7 @@ def make_item(st, now, cfg, ov, sched, titles, goals, ctx):
             "firstPrompt": (st.get("first_prompt") or "")[:300],
             "lastPrompt": (st.get("last_prompt") or "")[:300] if st.get("last_prompt") != st.get("first_prompt") else "",
             "lastReply": tail_text(st.get("last_text") or st.get("progress_text")),
+            "handoffTs": ctx.get("handoffs", {}).get(key) or 0,   # 压缩时的交接：正文较长，详情里再按 /api/handoff 取
             "status": ("📌 " + status["label"] + ("｜" + status["desc"] if status.get("desc") else "")) if status else "",
             "decisions": decisions, "doneAsk": done_ask,
             "cwd": st.get("cwd") or "", "branch": st.get("branch") or "", "id": st["id"], "resume": resume,
@@ -2391,7 +2487,8 @@ def build_board(conn, cfg, now=None):
             scheds[r["session_key"]] = r
     items, hidden, hashtags = [], [], {}
     ctx = {"names": name_map(conn), "tags": tag_map(conn), "moved": load_moved(conn), "links": {}, "live": claude_live(),
-           "goals": {r["session_key"]: dict(r) for r in conn.execute("SELECT * FROM goals")}}
+           "goals": {r["session_key"]: dict(r) for r in conn.execute("SELECT * FROM goals")},
+           "handoffs": {r["session_key"]: r["ts"] for r in conn.execute("SELECT session_key, ts FROM handoffs")}}
     seen_out = set()
     for r in conn.execute("SELECT l.session_key, l.url, l.label, l.ts, l.doc, COALESCE(d.title, m.title, '') AS title, m.state" + OUT_FROM +
                           " WHERE l.session_key IN (SELECT key FROM sessions WHERE last_activity >= ?) ORDER BY l.ts DESC", (now - 30 * 86400,)):
@@ -2541,40 +2638,48 @@ def surface_checkpoint(ws, sf):
 
 def close_cmux_tab(conn, key):
     """看板上点了「完成」：把这个会话在 cmux 里的标签页也关掉，开着的标签页就都是还要跟的。
-    AI 还没停下来（在跑、在等你批准）的不关；工作区里还有别的标签页（比如浏览器、另一个会话）就只关它自己；
-    分组的标题工作区不动。关之前按标签页的恢复记录再核对一遍是不是这个会话。返回给提示条的半句话，没在 cmux 里开着的返回空。"""
+    AI 还没停下来（在跑、在等你批准）的不关；工作区里还有别的标签页（比如浏览器、另一个会话）就只关它自己；分组的标题工作区不动。
+    关之前要 cmux 自己的两份记录对得上：标签页的恢复记录，和状态文件里这个工作区跑的 AI 会话。对不上就不关（终端号会被复用，不拿它认）。
+    返回给提示条的半句话，没在 cmux 里开着的返回空。"""
     tool, _, sid = key.partition(":")
-    if not os.path.exists(CMUX) or not conn.execute("SELECT 1 FROM cmux_open WHERE session_key=?", (key,)).fetchone():
+    if not os.path.exists(CMUX):
         return ""
+    live = claude_live().get(sid) if tool == "claude" else None
+    miss = "没找到它在 cmux 里的标签页，没关" if live else ""
+    try:
+        with open(CMUX_STATE, encoding="utf-8") as f:
+            wins = json.load(f).get("windows") or []
+        tms = [win.get("tabManager") or {} for win in wins]
+        anchors = {g.get("anchorWorkspaceId") for tm in tms for g in tm.get("workspaceGroups") or []}
+        homes = {w.get("workspaceId") for tm in tms for w in tm.get("workspaces") or [] for p in w.get("panels") or []
+                 if ((p.get("terminal") or {}).get("agent") or {}).get("sessionId") == sid}
+    except (OSError, ValueError, AttributeError):
+        return miss
+    if not homes:
+        return miss
     row = conn.execute("SELECT data FROM sessions WHERE key=?", (key,)).fetchone()
     st = json.loads(row["data"]) if row else {}
-    live = claude_live().get(sid) if tool == "claude" else None
     if (live.get("status") not in ("idle", None)) if live else (st.get("turn") == "running" and time.time() - (st.get("last_ts") or 0) < 600):
         return "它还没停下来，终端标签页没关"
     surfaces = cmux_surfaces()
     if surfaces is None:
         return "cmux 不让看板控制它，终端标签页没关"
     loc = surfaces.get(sid)
-    if loc and surface_checkpoint(*loc) != sid:   # 缓存里的过期了（标签页关过、挪过），重新找
-        _surface_cache["at"] = 0
-        loc = (cmux_surfaces() or {}).get(sid)
-    if not loc:
-        return ""
-    ws, sf = loc
+    if not loc or surface_checkpoint(*loc) != sid:
+        return miss
     try:
         tree = json.loads(cmux("tree", "--all", "--json").stdout or "")
-        w = next(w for win in tree.get("windows") or [] for w in win.get("workspaces") or [] if w.get("ref") == ws)
-        with open(CMUX_STATE, encoding="utf-8") as f:
-            anchors = {g.get("anchorWorkspaceId") for win in json.load(f).get("windows") or []
-                       for g in (win.get("tabManager") or {}).get("workspaceGroups") or []}
-    except (ValueError, StopIteration, OSError, AttributeError):
-        return "没找到它在 cmux 里的标签页，没关"
+        w = next(w for win in tree.get("windows") or [] for w in win.get("workspaces") or [] if w.get("ref") == loc[0])
+    except (ValueError, AttributeError, StopIteration):
+        return miss
+    if w.get("id") not in homes:
+        return "cmux 里的记录对不上，终端标签页没关"
     if w.get("id") in anchors:
         return "它是 cmux 分组的标题标签，没替你关"
     if sum(len(p.get("surfaces") or []) for p in w.get("panes") or []) > 1:
-        r = cmux("close-surface", "--surface", sf, "--workspace", ws, "--force")
+        r = cmux("close-surface", "--surface", loc[1], "--workspace", loc[0], "--force")
     else:
-        r = cmux("workspace", "close", "--workspace", ws, "--force")
+        r = cmux("workspace", "close", "--workspace", loc[0], "--force")
     _surface_cache["at"] = 0
     if r.returncode != 0:
         log("关 cmux 标签页失败：%s %s" % (key, (r.stderr or r.stdout).strip()[:200]))
@@ -3241,7 +3346,8 @@ class Handler(BaseHTTPRequestHandler):
         if u.path == "/api/sessions":
             q = parse_qs(u.query)
             with APP.lock:
-                res = search_sessions(APP.conn, (q.get("q") or [""])[0], 50, int((q.get("offset") or ["0"])[0]), (q.get("tool") or [""])[0])
+                res = search_sessions(APP.conn, (q.get("q") or [""])[0], 50, int((q.get("offset") or ["0"])[0]), (q.get("tool") or [""])[0],
+                                      handoff=(q.get("handoff") or [""])[0] == "1")
             return self._send(200, json.dumps(res, ensure_ascii=False))
         if u.path == "/api/outputs":
             q = parse_qs(u.query)
@@ -3250,6 +3356,11 @@ class Handler(BaseHTTPRequestHandler):
                 res = search_outputs(APP.conn, arg("q"), arg("cat"), arg("key"), arg("tool"),
                                      min(int(arg("limit", "100")), 500), int(arg("offset", "0")))
             return self._send(200, json.dumps(res, ensure_ascii=False))
+        if u.path == "/api/handoff":
+            q = parse_qs(u.query)
+            with APP.lock:
+                r = APP.conn.execute("SELECT ts, text FROM handoffs WHERE session_key=?", ((q.get("key") or [""])[0],)).fetchone()
+            return self._send(200, json.dumps({"ts": r["ts"], "text": r["text"]} if r else {}, ensure_ascii=False))
         if u.path == "/api/session":
             q = parse_qs(u.query)
             with APP.lock:
@@ -3348,6 +3459,21 @@ def migrate_codex_prompts(conn):
     meta_set(conn, "codex_prompts_v2", time.time())
     conn.commit()
     log("已补回 %d 个 Codex 会话里你说过的话" % n)
+
+
+def migrate_handoffs(conn):
+    """压缩交接是后加的：已经读过的 Claude 对话记录，把每个会话最后一段交接补进来。只跑一次。"""
+    if meta_get(conn, "handoffs_v1"):
+        return
+    n = 0
+    for r in conn.execute("SELECT path, session_key FROM files WHERE session_key LIKE 'claude:%'").fetchall():
+        got = last_handoff(r["path"])
+        if got:
+            flush_handoff(conn, r["session_key"], {"new_handoff": list(got)})
+            n += 1
+    meta_set(conn, "handoffs_v1", time.time())
+    conn.commit()
+    log("已补回 %d 个 Claude 会话压缩时的交接" % n)
 
 
 def migrate_project_parents(conn):
