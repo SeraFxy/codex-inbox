@@ -746,12 +746,14 @@ function viewItems(v, all) {
 function railProject(it) { return it.topic ? it.topic.project : it.projectKey; }   // 归到别的项目的主题时，跟着主题走
 function inScope(it, sc) {
   sc = sc || scope;
-  if (sc.t === "p") return railProject(it) === sc.p;
+  const inArchT = !!it.topic && archivedT(it.topic.id);   // 归档的主题里的会话，只在点开这个主题时列出来
+  if (sc.t === "p") return railProject(it) === sc.p && !inArchT;
   if (sc.t === "t") return !!it.topic && it.topic.id === sc.id;
   if (sc.t === "n") return railProject(it) === sc.p && !it.topic;
-  return !archivedP(railProject(it));   // 「全部」不含归档的项目
+  return !archivedP(railProject(it)) && !inArchT;   // 「全部」不含归档的项目和主题
 }
 function archivedP(p) { return !!(state && state.archived && state.archived[p]); }
+function archivedT(id) { return !!(state && state.archivedTopics && state.archivedTopics[String(id)]); }
 let plState = null, plMap = {};
 function plabel(p) {
   if (plState !== state) {
@@ -781,8 +783,9 @@ function railData() {
     all: cnt({ t: "all" }),
     projects: keys.map(p => ({
       key: p, label: plabel(p), c: cnt({ t: "p", p }), none: cnt({ t: "n", p }), archived: archivedP(p),
-      topics: state.topics.filter(t => t.project === p).map(t => ({ t, c: cnt({ t: "t", id: t.id }) }))
-    })).sort((a, b) => (at(a) - at(b) || 0) || GENERIC.has(a.key) - GENERIC.has(b.key) || a.label.localeCompare(b.label, "zh"))
+      topics: state.topics.filter(t => t.project === p && !archivedT(t.id)).map(t => ({ t, c: cnt({ t: "t", id: t.id }) }))
+    })).sort((a, b) => (at(a) - at(b) || 0) || GENERIC.has(a.key) - GENERIC.has(b.key) || a.label.localeCompare(b.label, "zh")),
+    archTopics: (state.topics || []).filter(t => archivedT(t.id)).map(t => ({ t, c: cnt({ t: "t", id: t.id }) }))
   };
 }
 function fixScope(d) {
@@ -819,7 +822,7 @@ async function load(refresh) {
   try {
     const r = await fetch("/api/state" + (refresh ? "?refresh=" + refresh : ""), { cache: "no-store" });
     const next = await r.json();
-    if (state && localAt >= t0) { next.order = state.order; next.pins = state.pins; next.archived = state.archived; next.favs = state.favs; }   // 拉取途中你刚调过顺序、置顶：先用本地的，免得被旧数据盖回去
+    if (state && localAt >= t0) { next.order = state.order; next.pins = state.pins; next.archived = state.archived; next.archivedTopics = state.archivedTopics; next.favs = state.favs; }   // 拉取途中你刚调过顺序、置顶：先用本地的，免得被旧数据盖回去
     failed = false;
     hopNow = new Set();
     allItems(next).forEach(it => {
@@ -1021,10 +1024,13 @@ function renderRail() {
       '<button type="button" class="ra" title="打开或取消收藏" aria-label="「' + esc(x.title) + '」打开或取消收藏" aria-haspopup="menu" aria-expanded="false"' +
       ' data-key="' + esc(x.key) + '" onclick="event.stopPropagation();favMore(this,this.dataset.key)">' + ico("more", 15) + "</button></div>").join("");
   }
-  if (arch.length) {
+  if (arch.length || d.archTopics.length) {
     html += '<button type="button" class="rsec" aria-expanded="' + archOpen + '" onclick="toggleArch()">' + ico(archOpen ? "down" : "right", 14) +
-      "<span>归档</span><span class=\"n\">" + arch.length + "</span></button>";
-    if (archOpen) arch.forEach(p => { html += railGroup(p); });
+      "<span>归档</span><span class=\"n\">" + (arch.length + d.archTopics.length) + "</span></button>";
+    if (archOpen) {
+      arch.forEach(p => { html += railGroup(p); });
+      html += d.archTopics.map(x => topicRow(x, plabel(x.t.project) + " · " + x.t.name)).join("");
+    }
   }
   document.getElementById("rail").innerHTML = html + '<p class="rfoot">把会话拖到主题上就归进去了，也可以在发给 AI 的消息里写 #主题。双击项目或主题改名，拖项目换位置。红色数字 = 里面有轮到你的事。</p>';
 }
@@ -1038,9 +1044,7 @@ function railGroup(p) {
     '" data-l="' + esc(p.label) + '" data-c="' + esc((allItems(state).find(it => it.projectKey === p.key) || {}).color || "") +
     '" onclick="event.stopPropagation();projectMore(this)">' + ico("more", 15) + "</button></div>";
   if (open) {
-    html += p.topics.map(x => '<div class="rt">' + railItem(x.t.name, { t: "t", id: x.t.id }, x.c, "sub", x.t.id) +
-      '<button type="button" class="ra" title="改名或删除" aria-label="「' + esc(x.t.name) + '」改名或删除" aria-haspopup="menu" aria-expanded="false" data-tid="' + x.t.id +
-      '" onclick="event.stopPropagation();topicMore(this)">' + ico("more", 15) + "</button></div>").join("");
+    html += p.topics.map(x => topicRow(x, x.t.name)).join("");
     if (p.topics.length && p.none.n) html += railItem("未归类", { t: "n", p: p.key }, p.none, "sub none", "none");
   }
   return html + "</div>";
@@ -1075,6 +1079,11 @@ function goFav(key) {
   const r = document.getElementById("row-" + domId(key));
   if (r) r.scrollIntoView({ block: "nearest" });
 }
+function topicRow(x, label) {
+  return '<div class="rt">' + railItem(label, { t: "t", id: x.t.id }, x.c, "sub", x.t.id) +
+    '<button type="button" class="ra" title="改名、归档、删除" aria-label="「' + esc(x.t.name) + '」改名、归档、删除" aria-haspopup="menu" aria-expanded="false" data-tid="' + x.t.id +
+    '" onclick="event.stopPropagation();topicMore(this)">' + ico("more", 15) + "</button></div>";
+}
 function toggleArch() {
   archOpen = !archOpen; store("ledger.arch", archOpen);
   renderRail();
@@ -1089,7 +1098,7 @@ function setScope(el, e) {
   scope = sc; store("ledger.scope", scope);
   const p = scope.t === "t" ? (topicById(scope.id) || {}).project : scope.p;
   if (p && railFold.delete(p)) store("ledger.fold", [...railFold]);
-  if (p && archivedP(p) && !archOpen) { archOpen = true; store("ledger.arch", true); }
+  if (((p && archivedP(p)) || (scope.t === "t" && archivedT(scope.id))) && !archOpen) { archOpen = true; store("ledger.arch", true); }
   selKey = null; selIdx = 0; closeMenu();
   fillView();
   render();
@@ -1115,7 +1124,8 @@ function openScopes(el) {
     (p.topics.length && p.none.n ? b("未归类", { t: "n", p: p.key }, p.none, "sub") : "");
   d.projects.filter(p => !p.archived).forEach(p => { html += one(p); });
   const arch = d.projects.filter(p => p.archived);
-  if (arch.length) html += '<span class="ml">归档</span>' + arch.map(one).join("");
+  if (arch.length || d.archTopics.length) html += '<span class="ml">归档</span>' + arch.map(one).join("") +
+    d.archTopics.map(x => b(plabel(x.t.project) + " · " + x.t.name, { t: "t", id: x.t.id }, x.c, "sub")).join("");
   showMenu(el, "", '<div class="mlist">' + html + "</div>", { left: true, wide: true });
 }
 // 归到主题：行上「⋯」、详情里的主题标签、拖到左栏，三处都走 setTopic
@@ -1142,7 +1152,8 @@ function pickerList() {
   const it = findItem(picker.key);
   if (!it) return;
   const k = esc(picker.key), name = picker.q.trim().replace(/^#/, "").trim(), q = name.toLowerCase(), home = railProject(it);
-  const list = (state.topics || []).filter(t => !q || t.name.toLowerCase().includes(q)).sort((a, b) => (b.project === home) - (a.project === home));
+  const list = (state.topics || []).filter(t => (!archivedT(t.id) || (it.topic && it.topic.id === t.id)) && (!q || t.name.toLowerCase().includes(q)))
+    .sort((a, b) => (b.project === home) - (a.project === home));
   let html = list.map(t => mi((it.topic && it.topic.id === t.id ? ico("check", 14, 2.2) : "") + esc(t.name), "setTopic('" + k + "'," + t.id + ")", esc(t.projectLabel))).join("");
   if (name && !list.some(t => t.project === home && t.name.toLowerCase() === q))
     html += mi(ico("plus", 14) + "新建「" + esc(name) + "」", "setTopic('" + k + "',null," + clip(name) + ")", esc(plabel(home)));
@@ -1165,7 +1176,22 @@ async function setTopic(key, id, nameId) {
 }
 function topicMore(el) {
   const t = topicById(Number(el.dataset.tid));
-  if (t) showMenu(el, "", mi("改名…", "renameTopic(" + t.id + ")") + mi("删除主题", "deleteTopic(" + t.id + ")"));
+  if (t) showMenu(el, "", mi("改名…", "renameTopic(" + t.id + ")") +
+    mi(archivedT(t.id) ? "取消归档" : "归档", "archiveTopic(" + t.id + "," + !archivedT(t.id) + ")", "", archivedT(t.id) ? "" : ' title="不再列在项目下，会话也不进「全部」，在左栏最下面的「归档」里看"') +
+    mi("删除主题", "deleteTopic(" + t.id + ")"));
+}
+function archiveTopic(id, on, quiet) {
+  closeMenu();
+  const t = topicById(id), archivedTopics = Object.assign({}, state.archivedTopics);
+  if (!t) return;
+  if (on) archivedTopics[String(id)] = nowTs(); else delete archivedTopics[String(id)];
+  setLocal({ archivedTopics });
+  if (selKey && on && !inScope(findItem(selKey) || {})) selKey = null;
+  render();
+  post("archive", "", { topic: id, on }).then(res => {
+    if (!res.ok) return toast(res.message || "没成功");
+    if (!quiet) toast(on ? "已归档「" + t.name + "」，在左栏最下面的「归档」里，有新动静会自己回来" : "已取消归档", on ? () => archiveTopic(id, false, true) : null);
+  }, () => toast("操作失败：本机服务没响应"));
 }
 function projectMore(el) {
   const id = clip(el.dataset.p), arch = archivedP(el.dataset.p);
@@ -1233,6 +1259,25 @@ async function saveTopicName(id) {
   const name = document.getElementById("tp-name").value.trim();
   closeTag();
   try { const res = await post("topic_edit", "", { id, name }); toast(res.message || (res.ok ? "好了" : "没成功")); }
+  catch (e) { toast("操作失败：本机服务没响应"); }
+  load();
+}
+// 会话改名：看板、Claude / Codex 自己、cmux 标签页一起改（服务端只追加一条改名记录，不调 AI）
+function renameSession(key, el) {
+  const it = findItem(key);
+  closeMenu();
+  if (!it) return;
+  el = el || document.getElementById("row-" + domId(key)) || document.querySelector(".dtitle h2");
+  tagEdit = { kind: "session" };
+  openPop(el, '<label for="sn-name">改名后，' + (it.tool === "codex" ? "Codex" : "Claude Code") + " 里和 cmux 标签页也一起改</label>" +
+    '<input id="sn-name" maxlength="80" value="' + esc(it.title) + '">' +
+    '<div class="bar end">' + btn("取消", "closeTag()", "sec xs") + btn("保存", "saveSessionName(\'" + esc(key) + "\')", "pri xs") + "</div>", () => saveSessionName(key));
+}
+async function saveSessionName(key) {
+  const input = document.getElementById("sn-name"), title = input ? input.value.trim() : "";
+  if (!title) return input && input.focus();
+  closeTag();
+  try { const res = await post("rename", key, { title }); toast(res.message || (res.ok ? "好了" : "没成功")); }
   catch (e) { toast("操作失败：本机服务没响应"); }
   load();
 }
@@ -1420,7 +1465,7 @@ function renderDetail() {
   acts += btn(ico(favOn(it.key) ? "starOn" : "star", 16), "toggleFav('" + k + "')", "ghost icon", favOn(it.key) ? "取消收藏" : "收藏：放进左栏「收藏」，完成了也留着",
     'aria-pressed="' + favOn(it.key) + '" aria-label="收藏"');
   let html = '<div class="dhead"><span class="fc' + (hopNow.has(it.key) ? " bk-hop" : "") + '">' + face(f, 44, 0, REASON[f]) + "</span>" +
-    '<div class="dtitle"><h2>' + esc(it.title) + '</h2><div class="dmeta">' + toolChip(it) + tagChip(it) + topicChip(it) +
+    '<div class="dtitle"><h2 title="双击改名" ondblclick="renameSession(\'' + k + "',this)\">" + esc(it.title) + '</h2><div class="dmeta">' + toolChip(it) + tagChip(it) + topicChip(it) +
     '<span>最后动静 ' + esc(it.last ? when(it.last) : "—") + "</span></div></div>" +
     '<div class="dacts">' + acts + "</div></div>";
   html += '<div class="why">' + ico("info", 16) + "<span><b>" + esc(badgeOf(it)) + "</b>　" + esc(whyOf(it)) + "</span></div>";
@@ -1454,6 +1499,7 @@ function openMenu(el, key, more) {
     SNOOZE.map(o => mi(o[1], "act('" + k + "','snooze','" + o[0] + "')", esc(snoozeAt(o[0])))).join("");
   if (more) html += (html ? "<hr>" : "") + mi(pinned(it) ? "取消置顶" : "置顶", "togglePin('" + k + "')", "P") +
     mi(favOn(key) ? "取消收藏" : "收藏", "toggleFav('" + k + "')", "", favOn(key) ? "" : ' title="放进左栏「收藏」，完成了也留着，方便以后找到再打开"') +
+    mi("改名…", "renameSession('" + k + "')", "", ' title="Claude / Codex 里和 cmux 标签页一起改"') +
     mi("归到主题…", "openTopics(menu.el,'" + k + "')", it.topic ? esc(it.topic.name) : "") +
     mi("不再跟踪这个会话", "act('" + k + "','untrack')");
   showMenu(el, key, html);

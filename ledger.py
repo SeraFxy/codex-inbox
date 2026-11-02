@@ -1422,6 +1422,16 @@ def waiting_headline(what, tool):
     return WAITING_FOR.get(what) or "在等你处理：「%s」" % what
 
 
+# 停在哪种要你点头的地方。问题、计划、要批准的操作都只显示在会话里，看板据此写「打开会话去回答 / 去批准 / 去确认」
+WAIT_KIND = {"input needed": "question", "goal proposal": "goal", "sandbox request": "permission", "worker request": "permission"}
+
+
+def wait_kind(what, tool):
+    if what == "permission prompt" or not what:
+        return {"AskUserQuestion": "question", "ExitPlanMode": "plan"}.get(tool, "permission")
+    return WAIT_KIND.get(what, "other")
+
+
 # AI 自己调起的 Codex：codex exec（命令行跑一次）、mcp（别的 AI 把 Codex 当工具用）。thread_source 照样写 user，要看 source 认
 CODEX_AGENT_SOURCES = ("exec", "mcp")
 
@@ -1475,7 +1485,7 @@ def make_item(st, now, cfg, ov, sched, titles, goals, ctx):
     saved = ctx["goals"].get(key) or {}
     reply_hint = excerpt(st.get("last_text")) or excerpt(st.get("progress_text"))
     badges = []
-    group, kind, headline, sort = "need", "me", "", 0
+    group, kind, headline, sort, wait = "need", "me", "", 0, ""
     stale_sec = cfg["stale_hours"] * 3600
     live = ctx["live"].get(st["id"]) if st["tool"] == "claude" else None
     busy = bool(live) and live.get("status") == "busy"   # 命令跑得久，不是卡住了
@@ -1488,17 +1498,18 @@ def make_item(st, now, cfg, ov, sched, titles, goals, ctx):
         group, headline = "hidden", "已完成" if ov["action"] == "done" else "关了 cmux 标签页，自动标为完成"
     elif waiting:
         group, kind, sort = "need", "approval", 0
-        headline = waiting_headline(live.get("waitingFor"), st.get("pending_tool") if turn == "running" else "")
+        tool = st.get("pending_tool") if turn == "running" else ""
+        headline, wait = waiting_headline(live.get("waitingFor"), tool), wait_kind(live.get("waitingFor"), tool)
     elif turn == "running" and st.get("last_kind") == "tool_use" and not busy and (
             st.get("pending_tool") in ("AskUserQuestion", "ExitPlanMode") or idle > 600):
         group, kind, sort = "need", "approval", 0
         tool = st.get("pending_tool") or "操作"
         if tool == "AskUserQuestion":
-            headline = "它问了你一个问题，在等你回答"
+            headline, wait = "它问了你一个问题，在等你回答", "question"
         elif tool == "ExitPlanMode":
-            headline = "计划写好了，在等你确认"
+            headline, wait = "计划写好了，在等你确认", "plan"
         else:
-            headline = "可能在等你批准一个操作（%s），也可能命令还在跑（已 %s）" % (tool, fmt_ago(idle))
+            headline, wait = "可能在等你批准一个操作（%s），也可能命令还在跑（已 %s）" % (tool, fmt_ago(idle)), "maybe"
     elif turn == "running":
         if idle > cfg["interrupted_min"] * 60 and not busy:
             group, kind, sort = "need", "interrupted", 0
@@ -1604,7 +1615,7 @@ def make_item(st, now, cfg, ov, sched, titles, goals, ctx):
     return {
         "key": key, "tool": st["tool"], "toolLabel": "Claude" if st["tool"] == "claude" else "Codex",
         "title": title, "project": project_label, "projectKey": project, "color": project_color, "group": group, "kind": kind,
-        "headline": headline, "badges": badges, "sort": sort, "idle": idle, "last": last,
+        "headline": headline, "badges": badges, "sort": sort, "idle": idle, "last": last, "wait": wait,
         "meta": "最后动静 %s（%s前）" % (fmt_time(last, now), fmt_ago(idle)) if last else "",
         "scheduleId": sched["id"] if sched and sched["status"] == "pending" else None,
         "since": (st.get("last_user_ts") or 0) if group == "ai" else 0, "snoozed": bool(snoozed and group == "time"),
@@ -1645,6 +1656,15 @@ def load_archived(conn):
     """归档的项目 -> 归档时间。归档的项目不出现在「全部」里，在左栏最下面的「归档」里看。"""
     try:
         got = json.loads(meta_get(conn, "archived", "{}"))
+    except ValueError:
+        return {}
+    return {k: v for k, v in got.items() if isinstance(v, (int, float))} if isinstance(got, dict) else {}
+
+
+def load_archived_topics(conn):
+    """归档的主题 id（字符串）-> 归档时间。主题归档后不在项目下列出，它的会话也不进「全部」和项目，在「归档」里看。"""
+    try:
+        got = json.loads(meta_get(conn, "archived_topics", "{}"))
     except ValueError:
         return {}
     return {k: v for k, v in got.items() if isinstance(v, (int, float))} if isinstance(got, dict) else {}
@@ -1741,6 +1761,12 @@ def build_board(conn, cfg, now=None):
         archived = {p: t for p, t in archived.items() if p not in back}
         meta_set(conn, "archived", json.dumps(archived, ensure_ascii=False))
         conn.commit()
+    archived_topics = load_archived_topics(conn)
+    back = {t for t in archived_topics for it in items if it["topic"] and str(it["topic"]["id"]) == t and it["last"] > archived_topics[t]}
+    if back:
+        archived_topics = {t: at for t, at in archived_topics.items() if t not in back}
+        meta_set(conn, "archived_topics", json.dumps(archived_topics, ensure_ascii=False))
+        conn.commit()
     # 置顶只给还在看板上的会话：完成了、不再跟踪了，就不再钉着
     pins = load_pins(conn)
     active = {it["key"] for it in items}
@@ -1755,7 +1781,7 @@ def build_board(conn, cfg, now=None):
         "tzOffsetMin": int(clock(now).astimezone(WORK_TZ).utcoffset().total_seconds() // 60),
         "staleHours": cfg["stale_hours"], "interruptedMin": cfg["interrupted_min"], "windowDays": cfg["window_days"],
         "scanMs": int(meta_get(conn, "last_scan_ms", 0) or 0), "scanIntervalMin": cfg["scan_interval_min"],
-        "groups": groups, "hidden": hidden, "order": load_order(conn), "pins": pins, "archived": archived, "favs": board_favs(conn, items + hidden, now), "digestTime": cfg["digest_time"], "tzText": tz_text(cfg),
+        "groups": groups, "hidden": hidden, "order": load_order(conn), "pins": pins, "archived": archived, "archivedTopics": archived_topics, "favs": board_favs(conn, items + hidden, now), "digestTime": cfg["digest_time"], "tzText": tz_text(cfg),
         "topics": [{"id": t["id"], "name": t["name"], "project": t["project"], "projectLabel": tag_of(ctx["tags"], t["project"])[0]}
                    for t in topics if not t["deleted"]],
     }
@@ -1812,6 +1838,74 @@ def resume_in_new_workspace(st, title):
     _surface_cache["at"] = 0
     m = re.search(r"workspace:\d+", r.stdout or "")
     return m.group(0) if m else ("" if r.returncode == 0 else None)
+
+
+def rename_session(conn, key, title):
+    """看板上给会话改名：看板、Claude / Codex 自己、cmux 标签页一起改。不调 AI，只追加或改一条记录，
+    和 Claude 的 /rename、Codex 的重命名写的一样；哪处没改成就跳过，结果里说一声。"""
+    tool, _, sid = key.partition(":")
+    if tool not in ("claude", "codex") or not UUID_RE.match(sid):
+        return False, "会话 ID 不对"
+    now = time.time()
+    # 看板的标题从 Claude / Codex 自己的名字读，以后在它们里面改名看板也跟着变；
+    # 只有 cmux 标签页上的名字排在它们前面，那份也改掉（下次核对 cmux 时会按标签页新名字再同步）
+    conn.execute("UPDATE names SET title=?, at=? WHERE session_key=?", (title, now, key))
+    done, miss = [], []
+
+    def append_line(path, rec):
+        with open(path, "ab+") as f:
+            f.seek(0, os.SEEK_END)
+            if f.tell():
+                f.seek(-1, os.SEEK_END)
+                lead = b"" if f.read(1) == b"\n" else b"\n"
+            else:
+                lead = b""
+            f.write(lead + (json.dumps(rec, ensure_ascii=False) + "\n").encode("utf-8"))
+
+    if tool == "claude":
+        paths = glob.glob(os.path.join(CLAUDE_PROJECTS, "*", sid + ".jsonl"))
+        try:
+            if not paths:
+                raise OSError("找不到对话记录")
+            append_line(paths[0], {"type": "custom-title", "customTitle": title, "sessionId": sid})
+            done.append("Claude")
+            row = conn.execute("SELECT data FROM sessions WHERE key=?", (key,)).fetchone()
+            if row:   # 看板马上显示新名字，不用等下次扫描读到这一行
+                st = json.loads(row["data"])
+                st["custom_title"] = title
+                conn.execute("UPDATE sessions SET data=? WHERE key=?", (json.dumps(st, ensure_ascii=False), key))
+        except OSError as e:
+            log("改 Claude 会话名失败：%s" % e)
+            miss.append("Claude")
+    else:
+        ok = 0
+        try:   # Codex 界面显示的名字
+            c = sqlite3.connect(os.path.join(CODEX_HOME, "state_5.sqlite"), timeout=3)
+            ok += c.execute("UPDATE threads SET name=? WHERE id=?", (title, sid)).rowcount
+            c.commit()
+            c.close()
+        except sqlite3.Error as e:
+            log("改 Codex 线程名失败：%s" % e)
+        try:   # Codex 的会话索引，看板也从这里读
+            append_line(os.path.join(CODEX_HOME, "session_index.jsonl"), {"id": sid, "thread_name": title,
+                        "updated_at": dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")})
+            ok += 1
+        except OSError as e:
+            log("写 Codex 会话索引失败：%s" % e)
+        (done if ok else miss).append("Codex")
+    surfaces = cmux_surfaces()
+    loc = surfaces.get(sid) if surfaces else None
+    if loc:
+        r = cmux("workspace-action", "--action", "rename", "--workspace", loc[0], "--title", title)
+        (done if r.returncode == 0 else miss).append("cmux 标签页")
+    if tool.capitalize() in miss:
+        # 工具里没改成：看板自己记一份，至少看板上是新名字
+        conn.execute("INSERT INTO names (session_key, title, at) VALUES (?, ?, ?) ON CONFLICT(session_key) "
+                     "DO UPDATE SET title=excluded.title, at=excluded.at", (key, title, now))
+    conn.commit()
+    if not done:
+        return True, "只改了看板上的名字，" + "、".join(miss) + " 里没改成"
+    return True, "已改名，" + "、".join(done) + " 里也改了" + ("；" + "、".join(miss) + " 没改成" if miss else "")
 
 
 def open_session(conn, key):
@@ -2032,13 +2126,15 @@ class App:
                 c.execute("INSERT OR REPLACE INTO overrides (key, action, until_ts, at) VALUES (?, 'snooze', ?, ?)", (key, until, now))
                 c.commit()
                 return True, "已推迟到 " + fmt_time(until, now)
-            if action == "archive" and isinstance(arg, dict) and arg.get("project"):
-                archived = load_archived(c)
+            if action == "archive" and isinstance(arg, dict) and (arg.get("project") or arg.get("topic") is not None):
+                # {project} 归档项目，{topic: id} 归档主题；on=false 取消
+                mk, k = ("archived", str(arg["project"])) if arg.get("project") else ("archived_topics", str(arg["topic"]))
+                archived = load_archived(c) if mk == "archived" else load_archived_topics(c)
                 if arg.get("on"):
-                    archived[str(arg["project"])] = now
+                    archived[k] = now
                 else:
-                    archived.pop(str(arg["project"]), None)
-                meta_set(c, "archived", json.dumps(archived, ensure_ascii=False))
+                    archived.pop(k, None)
+                meta_set(c, mk, json.dumps(archived, ensure_ascii=False))
                 c.commit()
                 return True, "已归档" if arg.get("on") else "已取消归档"
             if action == "fav" and key and isinstance(arg, dict):
@@ -2129,6 +2225,12 @@ class App:
         if action == "open":
             with self.lock:
                 return open_session(self.conn, key)
+        if action == "rename" and isinstance(arg, dict):
+            title = re.sub(r"\s+", " ", str(arg.get("title") or "")).strip()[:80]
+            if not title:
+                return False, "名字不能空着"
+            with self.lock:
+                return rename_session(self.conn, key, title)
         return False, "未知操作"
 
     def tick(self):
