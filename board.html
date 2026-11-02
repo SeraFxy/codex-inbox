@@ -948,7 +948,7 @@ function cntHtml(c) { return c.hot ? '<span class="count hot">' + c.hot + "</spa
 function sameScope(a, b) { return a.t === b.t && a.p === b.p && a.id === b.id; }
 function scopeData(sc) { return ' data-scope="' + esc(JSON.stringify(sc)) + '" aria-current="' + sameScope(sc, scope) + '"'; }
 function railItem(label, sc, c, cls, drop) {
-  return '<button type="button" class="ri ' + cls + '"' + scopeData(sc) + (drop != null ? ' data-drop="' + drop + '"' : "") + ' onclick="setScope(this)">' +
+  return '<button type="button" class="ri ' + cls + '"' + scopeData(sc) + (drop != null ? ' data-drop="' + drop + '"' : "") + ' onclick="setScope(this,event)">' +
     '<span class="nm" title="' + esc(label) + '">' + esc(label) + "</span>" + cntHtml(c) + "</button>";
 }
 function renderRail() {
@@ -976,10 +976,16 @@ function renderRail() {
     }
     html += "</div>";
   });
-  document.getElementById("rail").innerHTML = html + '<p class="rfoot">把会话拖到主题上就归进去了，也可以在发给 AI 的消息里写 #主题。红色数字 = 里面有轮到你的事。</p>';
+  document.getElementById("rail").innerHTML = html + '<p class="rfoot">把会话拖到主题上就归进去了，也可以在发给 AI 的消息里写 #主题。双击项目或主题改名。红色数字 = 里面有轮到你的事。</p>';
 }
-function setScope(el) {
-  scope = JSON.parse(el.dataset.scope); store("ledger.scope", scope);
+function setScope(el, e) {
+  const sc = JSON.parse(el.dataset.scope);
+  // 双击项目或主题改名。第一下点击已经重画了左栏，所以看第二下的 detail，不用 dblclick
+  if (e && e.detail === 2 && sameScope(sc, scope) && (sc.t === "p" || sc.t === "t")) {
+    e.stopPropagation();
+    return sc.t === "p" ? renameProject(sc.p) : renameTopic(sc.id);
+  }
+  scope = sc; store("ledger.scope", scope);
   const p = scope.t === "t" ? (topicById(scope.id) || {}).project : scope.p;
   if (p && railFold.delete(p)) store("ledger.fold", [...railFold]);
   selKey = null; selIdx = 0; closeMenu();
@@ -1057,10 +1063,10 @@ function topicMore(el) {
   const t = topicById(Number(el.dataset.tid));
   if (t) showMenu(el, "", mi("改名…", "renameTopic(" + t.id + ")") + mi("删除主题", "deleteTopic(" + t.id + ")"));
 }
-function projectMore(el) { showMenu(el, "", mi("改名…", "renameProject(" + clip(el.dataset.p) + ")")); }
-function renameProject(id) {
+function projectMore(el) { showMenu(el, "", mi("改名…", "renameProject(clips[" + clip(el.dataset.p) + "])")); }
+function renameProject(p) {
   // 项目的名字就是详情里那个短码，改的是同一处
-  const el = [...document.querySelectorAll(".rp .ra")].find(b => b.dataset.p === clips[id]);
+  const el = [...document.querySelectorAll(".rp .ra")].find(b => b.dataset.p === p);
   closeMenu();
   if (el) editTag(el, el.closest(".rp"));
 }
