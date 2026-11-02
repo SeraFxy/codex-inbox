@@ -580,7 +580,8 @@ mark { background: var(--bk-lime-mark); color: #1B2026; border-radius: 3px; box-
       </div>
     </header>
     <nav class="seg" aria-label="搜哪一边">
-      <a href="#history" id="seg-history" aria-current="page" onclick="event.preventDefault();setTab('history')">我说过的话</a>
+      <a href="#search" id="seg-search" aria-current="page" onclick="event.preventDefault();setTab('search')">全部</a>
+      <a href="#history" id="seg-history" onclick="event.preventDefault();setTab('history')">我说过的话</a>
       <a href="#outputs" id="seg-outputs" onclick="event.preventDefault();setTab('outputs')">产出物</a>
     </nav>
   </div>
@@ -770,7 +771,9 @@ function whyOf(it) {
   if (k === "sched_failed") return "定时唤醒没能把话发回会话。打开会话手动接着做，原因看下面的现状。";
   if (f === "stuck") return "它这一轮停在半路，超过 " + ((state && state.interruptedMin) || 30) + " 分钟没动静。可能在等一个没弹出来的确认，也可能已经中断。";
   if (f === "alarm") return k === "peer" ? "和同事约好的跟进时间到了。" : "你设的提醒到点了。到点的事排在等回话的前面。";
-  if (f === "wait") return k === "approval" ? waitOf(it)[1] : "它停下来等你回话：回答它的问题、拍板，或者给下一步指示，它才能接着做。";
+  if (f === "wait") return k === "approval" ? waitOf(it)[1] : it.details && it.details.doneAsk
+    ? "它说已经达到完成标准，但还问了你 " + decisionsOf(it).length + " 件事要你拍板。选好回复它；都不用做了就点「完成」结项。"
+    : "它停下来等你回话：回答它的问题、拍板，或者给下一步指示，它才能接着做。";
   if (f === "review") return (decisionsOf(it).length ? "它说已经达到完成标准，另外问了你 " + decisionsOf(it).length + " 件事，选好回复它。" : "它说已经达到完成标准，等你验收。") +
     "看过没问题点「完成」结项；还要改就打开会话接着说。";
   if (f === "run") return "它在处理你交代的事，还没停下来问你。需要你的时候会自己挪到「轮到你」。";
@@ -791,7 +794,7 @@ function badgeOf(it) {
 function decisionsOf(it) { return it.group !== "hidden" && it.details && it.details.decisions || []; }
 function shortOf(it) {
   const n = decisionsOf(it).length;
-  return !n ? it.headline : faceOf(it) === "review" ? "做完了，另有 " + n + " 件事等你决定" : n + " 件事等你决定";
+  return !n ? it.headline : faceOf(it) === "review" || it.details && it.details.doneAsk ? "做完了，另有 " + n + " 件事等你决定" : n + " 件事等你决定";
 }
 
 // ---------------- 数据
@@ -922,7 +925,7 @@ async function refresh() {
   busy = true; renderTop();
   await load("force");
   busy = false; renderTop();
-  if (tab === "history") search(hq);
+  if (tab === "history" || tab === "search") search(hq);
   if (tab === "outputs") searchOut(oq);
 }
 async function post(action, key, arg) {
@@ -1080,7 +1083,7 @@ function render() {
   renderRail();
   renderQueue();
   renderDetail();
-  if (tab === "history" && hReady) renderHistory();
+  if ((tab === "history" || tab === "search") && hReady) renderHistory();
   if (tab === "outputs" && oReady) renderOutputs();
 }
 function setView(v) {
@@ -1893,8 +1896,9 @@ async function saveTag(reset) {
 }
 
 // ---------------- 我说过的话（按会话）
-const TAB_HASH = { history: "#history", outputs: "#outputs" };
-let tab = location.hash === "#history" ? "history" : location.hash === "#outputs" ? "outputs" : (store("ledger.tab") || "board");
+// 搜索页三个标签：全部（默认，两边一起列）、我说过的话、产出物（只看一边）
+const TAB_HASH = { search: "#search", history: "#history", outputs: "#outputs" };
+let tab = Object.keys(TAB_HASH).find(t => TAB_HASH[t] === location.hash) || store("ledger.tab") || "board";
 let sq = "";   // 搜索框里的词：「我说过的话」和「产出物」共用，切换标签页不清空
 let hq = "", hSessions = [], hTotal = 0, hAll = 0, hAllSessions = 0, hSince = "", hOutHits = 0, hOuts = [], hTimer = null, hLoaded = false, hReady = false;
 const hFull = {};      // 会话 key -> 这个会话里你说过的全部话、目标
@@ -1906,10 +1910,9 @@ function setTab(t) {
   document.getElementById("view-history").hidden = t === "board";
   history.replaceState(null, "", TAB_HASH[t] || "#");
   if (t === "board") return;
-  // 两个标签页共用一个搜索框和同一个词：切过去就按这个词搜那一边
+  // 三个标签页共用一个搜索框和同一个词：切过去就按这个词搜那一边
   const q = document.getElementById("q"), out = t === "outputs";
-  document.getElementById("seg-history").setAttribute("aria-current", out ? "false" : "page");
-  document.getElementById("seg-outputs").setAttribute("aria-current", out ? "page" : "false");
+  for (const x of ["search", "history", "outputs"]) document.getElementById("seg-" + x).setAttribute("aria-current", x === t ? "page" : "false");
   if (q.value.trim() !== sq) q.value = sq;
   document.getElementById("q-clear").hidden = !sq;
   if (out) { if (!oLoaded || oq !== sq) searchOut(sq); else if (oReady) renderOutputs(); }
@@ -1928,7 +1931,7 @@ function xblock(title, where, n, more, rows) {
     '</div><div class="olist">' + rows + "</div></section>";
 }
 function goSearch() {
-  if (tab !== "outputs") setTab("history");
+  if (tab === "board") setTab("search");   // 从看板进来先看「全部」；已经在只看一边的标签里就留在那
   const q = document.getElementById("q");
   q.focus(); q.select();
 }
@@ -1939,7 +1942,7 @@ function clearSearch() {
 }
 async function search(q, more) {
   hq = q; hLoaded = true;
-  if (tab === "history") document.getElementById("q-clear").hidden = !q;
+  if (tab === "history" || tab === "search") document.getElementById("q-clear").hidden = !q;
   const off = more ? hSessions.length : 0;
   const r = await fetch("/api/sessions?q=" + encodeURIComponent(q) + "&offset=" + off + (src === "all" ? "" : "&tool=" + src), { cache: "no-store" });
   const res = await r.json();
@@ -2016,17 +2019,22 @@ function dayHead(ts) {
   return '<div class="dayh"><b>' + label + "</b><span>" + (diff >= -1 ? md(ts) + " " : "") + week(ts) + "</span></div>";
 }
 function renderHistory() {
+  // 「全部」：AI 给的产出物（前 3 个）和你说过的话一起列；「我说过的话」：只列你说过的话
+  const all = tab === "search";
   segCounts(hTotal, hOutHits);
   document.getElementById("hsum").innerHTML = (hq
-    ? '<span class="mono hit">找到 ' + num(hTotal) + " 个会话</span>"
+    ? '<span class="mono hit">找到 ' + (all ? num(hOutHits) + " 个产出物、" : "") + num(hTotal) + " 个会话</span>"
     : '<span class="mono">共 ' + num(hAllSessions) + " 个会话 · " + num(hAll) + " 句 · 最早到 " + esc(hSince) + "</span>") +
-    '<span class="note">' + ico("info", 13) + "Claude Code 默认只保留最近 30 天的对话记录，更早的只剩台账另存的你说过的话</span>";
+    '<span class="note">' + ico("info", 13) + (all ? "同时搜你说过的话和 AI 给的产出物；只看一边就点上面的标签"
+      : "Claude Code 默认只保留最近 30 天的对话记录，更早的只剩台账另存的你说过的话") + "</span>";
   const list = document.getElementById("hlist");
-  const cross = hq && hOuts.length ? xblock("AI 给的产出物", "产出物", hOutHits, "goOutputs(sq)", hOuts.map(o => orow(o, hq)).join("")) : "";
+  const cross = all && hq && hOuts.length ? xblock("AI 给的产出物", "产出物", hOutHits, "goOutputs(sq)", hOuts.map(o => orow(o, hq)).join("")) : "";
   if (hq && !hSessions.length) {
+    const other = !all && hOutHits;   // 只看「我说过的话」时没有，但产出物里有
     list.innerHTML = cross + '<div class="dash" style="margin: 0; padding: 20px; gap: 14px">' + face("search", 36) + '<span class="tx"><b>' +
-      (cross ? "你没说过「" + esc(hq) + "」" : "翻遍了，没找到「" + esc(hq) + "」") + "</b><span>" +
-      (cross ? "上面是 AI 给你的产出物里对得上的。" : "换个说法，或者少打几个词试试。") + "</span></span></div>";
+      (cross || other ? "你没说过「" + esc(hq) + "」" : "翻遍了，没找到「" + esc(hq) + "」") + "</b><span>" +
+      (cross ? "上面是 AI 给你的产出物里对得上的。" : other ? "AI 给你的产出物里有 " + num(hOutHits) + " 个对得上。" : "换个说法，或者少打几个词试试。") + "</span></span>" +
+      (other ? btn("去产出物里看", "setTab('outputs')", "sec sm", "", 'style="margin-left: auto"') : "") + "</div>";
     return;
   }
   const faces = {};
@@ -2046,7 +2054,7 @@ function renderHistory() {
 // ---------------- 产出物：AI 在回复里给你的链接和本机文件，能搜，能跳回给出它的会话
 // 产物一直留着；MR 和流水线是临时的，单独一组，「全部产物」里不算它们
 const CATS = [["all", "全部产物"], ["feishu", "飞书"], ["file", "文件"], ["web", "网页"], ["code", "代码"]];
-let oq = "", oCat = "all", oKey = "", oItems = [], oTotal = 0, oCounts = {}, oAll = 0, oAllSessions = 0, oWider = 0, oPromptHits = 0, oPrompts = [], oLoaded = false, oReady = false, oSig = "";
+let oq = "", oCat = "all", oKey = "", oItems = [], oTotal = 0, oCounts = {}, oAll = 0, oAllSessions = 0, oWider = 0, oPromptHits = 0, oLoaded = false, oReady = false, oSig = "";
 function goOutputs(q, key, cat) {
   // 从看板详情、我说过的话跳过来：key = 只看这个会话的，cat = 只看哪一类
   sq = q || ""; oKey = key || ""; oCat = cat || "all"; oLoaded = false;
@@ -2065,7 +2073,7 @@ async function searchOut(q, more) {
     if (sig !== oSig) return;  // 打字快时旧结果晚到，丢掉
     oItems = more ? oItems.concat(res.items) : res.items;
     oTotal = res.total; oCounts = res.counts || {}; oAll = res.all; oAllSessions = res.allSessions; oWider = res.wider || 0;
-    if (!more) { oPromptHits = res.promptHits || 0; oPrompts = res.promptSessions || []; }
+    if (!more) oPromptHits = res.promptHits || 0;
   } catch (e) { if (sig === oSig) toast("没取到产出物：本机服务没响应"); return; }
   oReady = true;
   if (tab === "outputs") renderOutputs();
@@ -2090,29 +2098,18 @@ function sessLink(x, q) {
     hl(x.title || "（未命名会话）", q) + "</button></span>";
 }
 const CAT_NAME = { feishu: "飞书", code: "代码", file: "文件", web: "网页", mr: "MR 和流水线", mr_open: "还开着的 MR" };
-function xsess(s, q) {
-  // 「你说过的话」里对得上的会话，在产出物页最上面列一行：标题点了回看板，下面一句你的原话
-  const on = !!findItem(s.key), k = clip(s.key), p = s.preview[0] || {};
-  const acts = (on ? btn("在看板里看", "locate(clips[" + k + "])", "ghost xs", "回到看板，打开这个会话的详情") : "") +
-    btn("打开会话" + ico("open", 12), "openSession(clips[" + k + "],this)", "ghost xs");
-  return '<div class="orow"><span class="ok">你说过 ' + num(s.hits) + " 句</span>" +
-    '<div class="om"><button type="button" class="ot" title="' + (on ? "回到看板，打开这个会话的详情" : "已不在看板上，点一下直接打开会话") + '" onclick="' +
-    (on ? "locate" : "openSession") + "(clips[" + k + '])">' + hl(s.title, q) + "</button>" +
-    (p.text ? '<p class="oc">「' + hl(snippet(p.text, q), q) + "」</p>" : "") +
-    '<div class="os"><span class="os1">' + toolChip(s) + '<span class="chip sm">' + esc(s.project) + "</span></span></div></div>" +
-    '<div class="oa"><span class="otm">' + esc(s.lastTs ? when(s.lastTs) : s.lastText) + '</span><span class="oacts">' + acts + "</span></div></div>";
-}
 function orow(o, q) {
   const s0 = o.sessions[0], k0 = s0 ? clip(s0.key) : 0;
   const acts = (s0 && findItem(s0.key) ? btn("在看板里看", "locate(clips[" + k0 + "])", "ghost xs", "回到看板，打开给出它的会话的详情") : "") +
     (s0 ? btn("打开会话" + ico("open", 12), "openSession(clips[" + k0 + "],this)", "ghost xs") : "") +
-    (o.cat === "file" && !o.gone ? btn("在访达里显示", "openFile(clips[" + clip(o.url) + "],true)", "ghost xs") : "") +
+    (o.cat === "file" && !o.gone && o.twin !== "web" ? btn("在访达里显示", "openFile(clips[" + clip(o.url) + "],true)", "ghost xs") : "") +
     btn(o.cat === "file" ? "复制路径" : "复制链接", "copyClip(" + clip(o.url) + ")", "ghost xs");
   const more = o.nSessions > o.sessions.length ? "<span>等 " + num(o.nSessions) + " 个会话都给过</span>" : "";
   return '<div class="orow' + (o.cat === "mr" && !mrLive(o) ? " done" : "") + '"><span class="ok" title="' + esc(o.name) + '">' +
     esc(o.text !== o.name ? o.name : CAT_NAME[o.cat] || "") + "</span>" +
     '<div class="om">' + outLink(o, "ot" + (o.gone ? " gone" : ""), hl(o.text, q)) +
-    (o.cat === "file" ? '<span class="op">' + hl(o.path || o.url, q) + (o.gone ? "　已经不在了" : "") + "</span>" : "") +
+    (o.cat === "file" ? '<span class="op">' + hl(o.path || o.url, q) + (o.gone ? "　已经不在了" : o.twin === "file" ? "　原 worktree 已清理，这是主工作区里的同名文件"
+      : o.twin === "web" ? "　原 worktree 已清理，点开是仓库默认分支上的版本" : "") + "</span>" : "") +
     (o.ctx ? '<p class="oc" title="AI 给出它时说的话">「' + hl(o.ctx, q) + "」</p>" : "") +
     '<div class="os">' + (MR_STATE[o.state] ? '<span class="chip sm">' + MR_STATE[o.state] + "</span>" : "") + o.sessions.map(x => sessLink(x, q)).join("") + more + "</div></div>" +
     '<div class="oa"><span class="otm">' + esc(when(o.ts)) + '</span><span class="oacts">' + acts + "</span></div></div>";
@@ -2127,9 +2124,7 @@ function renderOutputs() {
     : '<span class="mono">共 ' + num(oAll) + " 个产出物 · 来自 " + num(oAllSessions) + " 个会话</span>") +
     '<span class="note">' + ico("info", 13) + (mr ? "临时的：开着的 MR 标「待合并」，合并完的变灰，不用再管"
       : "AI 给你的文档、文件和网页，一直留着；MR 和流水线是临时的，单独放一组") + "</span>";
-  const cross = oq && oPrompts.length ? xblock("你说过的话", "我说过的话", oPromptHits, "goHistory(sq)", oPrompts.map(s => xsess(s, oq)).join("")) +
-    '<div class="dayh"><b>AI 给的产出物</b></div>' : "";
-  let html = cross + '<div class="ocats"><div class="seg src" role="group" aria-label="只看哪类产出物">' + CATS.map(seg).join("") + "</div>" +
+  let html = '<div class="ocats"><div class="seg src" role="group" aria-label="只看哪类产出物">' + CATS.map(seg).join("") + "</div>" +
     '<div class="seg src" role="group" aria-label="临时的链接">' + seg(["mr_open", "还开着的 MR"]) + seg(["mr", "MR 和流水线"]) + "</div>" +
     (oKey ? '<span class="chip" title="只看这个会话给的">只看「' + esc(oKeyTitle()) + "」</span>" + btn("看全部会话的", "clearOutKey()", "ghost xs") : "") + "</div>";
   if (!oItems.length) {

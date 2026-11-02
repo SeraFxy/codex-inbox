@@ -175,7 +175,7 @@ def migrate_links(conn):
     """产出物表后加的列：ctx = AI 给出它的那句话，cat = 飞书 / 代码 / 文件 / 网页 / MR，doc = 飞书文档的「类型:token」，用来取真实标题，
     mr = GitLab MR 的「主机/项目!编号」，用来查合并了没有。"""
     cols = {r[1] for r in conn.execute("PRAGMA table_info(links)")}
-    for col in ("ctx", "cat", "doc", "mr"):
+    for col in ("ctx", "cat", "doc", "mr", "alt"):
         if col not in cols:
             try:
                 conn.execute("ALTER TABLE links ADD COLUMN %s TEXT DEFAULT ''" % col)
@@ -188,8 +188,11 @@ def migrate_links(conn):
     if meta_get(conn, "links_mr") != "1":   # MR、流水线、提交从「代码」里分出来，单算一类
         rows += conn.execute("SELECT DISTINCT url FROM links WHERE cat = 'code'").fetchall()
         meta_set(conn, "links_mr", "1")
+    if meta_get(conn, "links_alt") != "1":  # 已记下的本机文件：在额外 worktree 里的，补记主工作区里的同一路径
+        rows += conn.execute("SELECT DISTINCT url FROM links WHERE cat = 'file'").fetchall()
+        meta_set(conn, "links_alt", "1")
     for (url,) in rows:
-        conn.execute("UPDATE links SET cat=?, doc=?, mr=? WHERE url=?", (out_cat(url), feishu_doc(url), mr_ref(url), url))
+        conn.execute("UPDATE links SET cat=?, doc=?, mr=?, alt=? WHERE url=?", (out_cat(url), feishu_doc(url), mr_ref(url), worktree_twin(url), url))
     conn.commit()
 
 
@@ -474,6 +477,89 @@ def mr_ref(url):
     return "%s/%s!%s" % (u.netloc.lower(), m.group(1), m.group(2)) if m and u.netloc else ""
 
 
+def worktree_twin(path):
+    """本机文件在 git 的额外 worktree 里时 -> 主工作区里同一相对路径的位置，worktree 被清理后从那里找；不在 worktree 里返回空。
+    只记一个路径，不复制文件；只读 worktree 根目录的 .git 文件，不跑 git。"""
+    if not path.startswith("/"):
+        return ""
+    d = os.path.dirname(path)
+    while d not in ("/", "", HOME):
+        g = os.path.join(d, ".git")
+        if os.path.isdir(g):
+            return ""   # 主工作区
+        if os.path.isfile(g):
+            try:
+                with open(g, encoding="utf-8") as f:
+                    m = re.match(r"gitdir:\s*(.+)", f.read(1000).strip())
+            except (OSError, ValueError):
+                return ""
+            gd = os.path.normpath(os.path.join(d, m.group(1).strip())) if m else ""
+            # 额外 worktree 的 gitdir 是 <主仓库>/.git/worktrees/<名字>；子模块（.git/modules/…）不算
+            if not gd or os.path.basename(os.path.dirname(gd)) != "worktrees" or os.path.basename(os.path.dirname(os.path.dirname(gd))) != ".git":
+                return ""
+            main = os.path.dirname(os.path.dirname(os.path.dirname(gd)))
+            return os.path.join(main, os.path.relpath(path, d)) if main != d else ""
+        d = os.path.dirname(d)
+    return ""
+
+
+def _git_ref(root, name):
+    """读 <仓库>/.git/<name>（如 HEAD、refs/remotes/origin/HEAD）里写的「ref: refs/…」，返回分支名；读不到返回空。"""
+    try:
+        with open(os.path.join(root, ".git", name), encoding="utf-8") as f:
+            m = re.match(r"ref:\s*refs/(?:heads|remotes/origin)/(.+)", f.read(300).strip())
+    except (OSError, ValueError):
+        return ""
+    return m.group(1) if m else ""
+
+
+def repo_root(path):
+    d = os.path.dirname(path)
+    while d not in ("/", "", HOME):
+        if os.path.isdir(os.path.join(d, ".git")):
+            return d
+        d = os.path.dirname(d)
+    return ""
+
+
+def repo_web_url(root, rel):
+    """主仓库的 origin 在 GitLab / GitHub 上时 -> 默认分支上这个文件的网页地址；只读 .git 里的文件，不跑 git、不联网。"""
+    try:
+        with open(os.path.join(root, ".git", "config"), encoding="utf-8") as f:
+            conf = f.read(20000)
+    except (OSError, ValueError):
+        return ""
+    m = re.search(r'\[remote "origin"\][^\[]*?\burl\s*=\s*(\S+)', conf)
+    if not m:
+        return ""
+    raw = m.group(1)
+    m = re.match(r"^(?:https?://(?:[^@/]+@)?|ssh://(?:[^@/]+@)?|[^@/]+@)([^/:]+)(?::\d+)?[:/](.+?)(?:\.git)?/?$", raw)
+    if not m:
+        return ""
+    host, proj = m.group(1).lower(), m.group(2)
+    branch = _git_ref(root, "refs/remotes/origin/HEAD") or "HEAD"
+    sep = "/blob/" if host == "github.com" else "/-/blob/"
+    return "https://%s/%s%s%s/%s" % (host, proj, sep, quote_url(branch), quote_url(rel))
+
+
+def file_fallback(path, alt):
+    """AI 给的本机文件不在了（所在的 worktree 被清理）时去哪找：主工作区在默认分支上、文件也在 -> ("file", 路径)；
+    否则主仓库在 GitLab / GitHub 上 -> ("web", 默认分支上的网页地址，合并进去的就在那)；再不然主工作区里有就用它。都没有返回 None。"""
+    if not alt:
+        return None
+    root = repo_root(alt)
+    if not root:
+        return None
+    here = os.path.exists(alt)
+    branch, default = _git_ref(root, "HEAD"), _git_ref(root, "refs/remotes/origin/HEAD")
+    if here and (not default or branch == default):
+        return "file", alt
+    web = repo_web_url(root, os.path.relpath(alt, root))
+    if web:
+        return "web", web
+    return ("file", alt) if here else None
+
+
 def feishu_doc(url):
     """飞书文档链接 -> 「类型:token」，按它去飞书查真实标题；别的链接返回空。"""
     if out_cat(url) != "feishu":
@@ -669,12 +755,12 @@ def flush_media(conn, key, st):
         ctx = row[3] if len(row) > 3 else ""
         url = url[:1000]
         # 同一个会话里多次给出同一个链接：时间取最近一次，说明取最近一次非空的，原话取最近一次的
-        conn.execute("INSERT INTO links (session_key, url, label, ts, ctx, cat, doc, mr) VALUES (?, ?, ?, ?, ?, ?, ?, ?) "
+        conn.execute("INSERT INTO links (session_key, url, label, ts, ctx, cat, doc, mr, alt) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) "
                      "ON CONFLICT(session_key, url) DO UPDATE SET ts=MAX(links.ts, excluded.ts), "
                      "label=CASE WHEN excluded.label != '' THEN excluded.label ELSE links.label END, "
                      "ctx=CASE WHEN excluded.ctx != '' AND (links.ctx IS NULL OR links.ctx = '' OR excluded.ts >= links.ts) "
                      "THEN excluded.ctx ELSE links.ctx END",
-                     (key, url, label, ts or 0, ctx, out_cat(url), feishu_doc(url), mr_ref(url)))
+                     (key, url, label, ts or 0, ctx, out_cat(url), feishu_doc(url), mr_ref(url), worktree_twin(url)))
     for ts, sha, name, size in st.pop("new_images", []):
         conn.execute("INSERT OR IGNORE INTO images (session_key, sha, ts, file, bytes) VALUES (?, ?, ?, ?, ?)",
                      (key, sha, ts or 0, name, size))
@@ -1517,7 +1603,7 @@ def search_sessions(conn, q, limit=50, offset=0, tool="", cross=True):
     res = {"q": q, "total": total, "sessions": out, "all": first[1], "allSessions": first[2],
            "since": fmt_time(first[0], now) if first[0] else "", "outputHits": 0, "outputs": []}
     if cross and q.strip() and not offset:
-        got = search_outputs(conn, q, tool=tool, limit=3, cross=False)
+        got = search_outputs(conn, q, tool=tool, limit=3)
         res["outputHits"], res["outputs"] = got["total"], got["items"]
     return res
 
@@ -1591,7 +1677,7 @@ def session_briefs(conn, keys, now):
     return out
 
 
-def search_outputs(conn, q, cat="", key="", tool="", limit=100, offset=0, cross=True):
+def search_outputs(conn, q, cat="", key="", tool="", limit=100, offset=0):
     """AI 给过你的产出物（链接和本机文件），同一个链接只列一次，带上给过它的会话（最近的在前）和 AI 给出它时的原话。"""
     now = time.time()
     where, args = _out_where(q, cat, key, tool)
@@ -1606,7 +1692,7 @@ def search_outputs(conn, q, cat="", key="", tool="", limit=100, offset=0, cross=
     items, keys = [], []
     for r in rows:
         by_doc = "://" not in r["g"] and not r["g"].startswith("/")   # 「类型:token」按 doc 列查，别的按链接查，都走索引
-        occ = conn.execute("SELECT l.session_key, l.url, l.label, l.ctx, l.ts, COALESCE(d.title, m.title, '') AS title, m.state" + OUT_FROM + (" WHERE l.doc=?" if by_doc else " WHERE l.url=?") + by_tool[1] +
+        occ = conn.execute("SELECT l.session_key, l.url, l.label, l.ctx, l.ts, l.alt, COALESCE(d.title, m.title, '') AS title, m.state" + OUT_FROM + (" WHERE l.doc=?" if by_doc else " WHERE l.url=?") + by_tool[1] +
                            " ORDER BY l.ts DESC", [r["g"]] + by_tool[0]).fetchall()
         if not occ:
             continue
@@ -1623,6 +1709,11 @@ def search_outputs(conn, q, cat="", key="", tool="", limit=100, offset=0, cross=
         if it["cat"] == "file":
             it["path"] = home_rel(url)
             it["gone"] = not os.path.exists(url)
+            fb = file_fallback(url, head["alt"]) if it["gone"] else None
+            if fb:   # 所在的 worktree 被清理了：点开的是主工作区里的同名文件，或 GitLab 上默认分支的版本
+                it["gone"], it["twin"] = False, fb[0]
+                if fb[0] == "file":
+                    it["path"] = home_rel(fb[1])
         items.append(it)
         keys += [x["key"] for x in sess[:3]]
     briefs = session_briefs(conn, list(dict.fromkeys(keys)), now)
@@ -1631,7 +1722,7 @@ def search_outputs(conn, q, cat="", key="", tool="", limit=100, offset=0, cross=
             x.update(briefs.get(x["key"], {}))
     allc = conn.execute("SELECT COUNT(DISTINCT " + OUT_KEY + "), COUNT(DISTINCT l.session_key) FROM links l WHERE l.cat != 'mr'").fetchone()
     res = {"q": q, "cat": cat, "key": key, "total": total, "counts": counts, "items": items,
-           "all": allc[0], "allSessions": allc[1], "wider": 0, "promptHits": 0, "promptSessions": []}
+           "all": allc[0], "allSessions": allc[1], "wider": 0, "promptHits": 0}
     if q.strip():
         # 只看某个会话、某一类时没搜到：告诉你放开后有几个；你自己发过这个词的会话数，给「我说过的话」的入口
         if (key or cat) and not total:
@@ -1640,8 +1731,6 @@ def search_outputs(conn, q, cat="", key="", tool="", limit=100, offset=0, cross=
         if tool in ("claude", "codex"):
             pw, pargs = pw + ["tool=?"], pargs + [tool]
         res["promptHits"] = conn.execute("SELECT COUNT(DISTINCT session_key) FROM prompts WHERE " + " AND ".join(pw), pargs).fetchone()[0]
-        if cross and not offset and res["promptHits"]:
-            res["promptSessions"] = search_sessions(conn, q, 3, 0, tool, cross=False)["sessions"]
     return res
 
 
@@ -2097,8 +2186,12 @@ def make_item(st, now, cfg, ov, sched, titles, goals, ctx):
     if snoozed and group in ("need", "peer", "confirm", "backlog"):
         group, sort = "time", ov["until_ts"]
         headline = "推迟到 %s · %s" % (fmt_time(ov["until_ts"], now), headline)
+    done_ask = False
     if decisions and group != "hidden":
         badges.insert(0, "%d 件待你决定" % len(decisions))
+        if group == "confirm":
+            # 说做完了，又问了你要拍板的事：球在你这边，按「等你」排（红色），不按「待你确认完成」
+            group, kind, sort, done_ask = "need", "me", 2, True
     else:
         decisions = []
 
@@ -2130,7 +2223,7 @@ def make_item(st, now, cfg, ov, sched, titles, goals, ctx):
             "lastPrompt": (st.get("last_prompt") or "")[:300] if st.get("last_prompt") != st.get("first_prompt") else "",
             "lastReply": tail_text(st.get("last_text") or st.get("progress_text")),
             "status": ("📌 " + status["label"] + ("｜" + status["desc"] if status.get("desc") else "")) if status else "",
-            "decisions": decisions,
+            "decisions": decisions, "doneAsk": done_ask,
             "cwd": st.get("cwd") or "", "branch": st.get("branch") or "", "id": st["id"], "resume": resume,
             "projectDir": home_dir, "projectDirMine": home_mine,   # 按哪层文件夹分的项目；Mine = 你在「位置」那一行点的
         },
@@ -3083,16 +3176,24 @@ class Handler(BaseHTTPRequestHandler):
 def open_output_file(conn, lock, path, reveal):
     """打开 AI 给过的本机文件（或在访达里显示）。只开台账记过的；不认识的类型只在访达里显示，不直接运行。"""
     with lock:
-        known = path.startswith("/") and conn.execute("SELECT 1 FROM links WHERE url=? LIMIT 1", (path,)).fetchone()
+        known = path.startswith("/") and conn.execute("SELECT alt FROM links WHERE url=? ORDER BY alt DESC LIMIT 1", (path,)).fetchone()
     if not known:
         return False, "看板没记过这个文件"
+    note = ""
     if not os.path.exists(path):
-        return False, "文件已经不在了：" + home_rel(path)
+        fb = file_fallback(path, known["alt"])
+        if not fb:
+            return False, "文件已经不在了：" + home_rel(path)
+        if fb[0] == "web":
+            r = run(["open", fb[1]], timeout=15)
+            return (r.returncode == 0,
+                    "原来的 worktree 已清理，已在浏览器打开仓库默认分支上的这个文件" if r.returncode == 0 else "没打开：" + (r.stderr or "").strip()[-200:])
+        path, note = fb[1], "原来的 worktree 已清理，打开的是主工作区里的同名文件："
     reveal = reveal or (not os.path.isdir(path) and file_kind(path) in ("文件", "文件夹"))
     r = run(["open", "-R", path] if reveal else ["open", path], timeout=15)
     if r.returncode != 0:
         return False, "没打开：" + (r.stderr or r.stdout or "").strip()[-200:]
-    return True, ("已在访达里找到 " if reveal else "已打开 ") + os.path.basename(path.rstrip("/"))
+    return True, note + ("已在访达里找到 " if reveal else "已打开 ") + os.path.basename(path.rstrip("/"))
 
 
 def migrate_tz(conn):
