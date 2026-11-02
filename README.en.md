@@ -80,6 +80,9 @@ Use exactly one of these six status words, in Chinese:
 Write times as `YYYY-MM-DD HH:MM` in the same time zone as the dashboard. Do not use 📌 or 🎯 anywhere else in the reply.
 In the first reply of a task, and whenever the goal or the completion criteria change, add this line above the 📌 line:
 `🎯 目标：<one-line goal>｜完成标准：<what counts as done>`
+- Write the completion criteria as results that can be checked when you finish (e.g. "the page shows X", "all tests pass", "deployed to production and the endpoint responds"), not "work on it for 4 hours" or "optimize as much as you can".
+- Don't loosen the completion criteria or switch goals along the way. If you can't meet them, stop and say so; ask with a ❓ line before changing them.
+- If you are truly stuck (three different approaches to the same problem have failed), stop going in circles: write 等你 and say where you are stuck, what you tried and what you need from me.
 When you need me to decide things, put one line per decision above the 📌 line (not inside a code block):
 `❓ <what I need to decide>（<ID>）｜<option 1>｜<option 2>｜卡：<task blocked until this is decided, optional>`
 Put an ID in brackets at the end of the question, such as (Q-031); use the project's own question IDs if it has them, otherwise number from Q-1. When you ask the same thing again, keep the ID and the wording. The 卡： ("blocked:") part is not an option; leave it out when nothing is blocked.
