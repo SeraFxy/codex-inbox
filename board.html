@@ -180,8 +180,9 @@ kbd.k.lg { min-width: 22px; height: 22px; padding: 0 6px; border-radius: 6px; fo
   flex: none; display: inline-flex; align-items: center; justify-content: center; width: 22px; height: 32px; padding: 0; border: 0;
   border-radius: 8px; background: transparent; color: var(--bk-ink-3); cursor: pointer;
 }
-.rt .ra { position: absolute; right: 4px; top: 3px; display: none; }
-.rt:hover .ra, .rt:focus-within .ra, .rt .ra.on { display: inline-flex; }
+.rp .ra, .rt .ra { position: absolute; right: 4px; top: 3px; display: none; }
+.rp:hover .ra, .rp:focus-within .ra, .rp .ra.on, .rt:hover .ra, .rt:focus-within .ra, .rt .ra.on { display: inline-flex; }
+.rp:hover .ri .n, .rp:hover .ri .count, .rp:focus-within .ri .n, .rp:focus-within .ri .count,
 .rt:hover .ri .n, .rt:hover .ri .count, .rt:focus-within .ri .n, .rt:focus-within .ri .count { visibility: hidden; }
 .rfoot { margin: auto 0 0; padding: 12px 10px 0; font-size: 12px; line-height: 18px; color: var(--bk-ink-3); }
 .qtop { display: none; align-items: center; gap: 6px; margin-bottom: -4px; }
@@ -762,6 +763,12 @@ function fixScope(d) {
   const ok = scope.t === "t" ? !!topicById(scope.id) : scope.t === "p" || scope.t === "n" ? d.projects.some(p => p.key === scope.p) : scope.t === "all";
   if (!ok) { scope = { t: "all" }; store("ledger.scope", scope); }
 }
+function fillView() {
+  // 换了左栏范围或刚打开看板时，当前标签页是空的就跳到第一个有会话的，免得看到空的以为选错了
+  if (viewItems(view).length) return;
+  const v = TABS.find(id => viewItems(id).length);
+  if (v) view = v;
+}
 function manual(v) { return !!(state && state.order && (state.order[v] || []).length); }
 function needCount() { const g = state && state.groups.find(x => x.id === "need"); return g ? g.items.length : 0; }
 
@@ -776,7 +783,9 @@ async function load(refresh) {
       if (prevFace[it.key] === "run" && f === "review") hopNow.add(it.key);
       prevFace[it.key] = f;
     });
+    const first = !state;
     state = next;
+    if (first) { fixScope(railData()); fillView(); }
     if (selecting() || typing() || menu || drag) return renderTop();  // 正在选字、打字、开着菜单或拖动时先不重画列表，下次刷新再画
     render();
     hopNow.clear();
@@ -955,7 +964,10 @@ function renderRail() {
     const open = !railFold.has(p.key);
     html += '<div class="rgroup"><div class="rp">' + (p.topics.length ? '<button type="button" class="rfold" aria-label="' + (open ? "收起 " : "展开 ") + esc(p.label) +
       '" aria-expanded="' + open + '" data-p="' + esc(p.key) + '" onclick="foldProject(this)">' + ico(open ? "down" : "right", 14) + "</button>" : '<span class="rfold"></span>') +
-      railItem(p.label, { t: "p", p: p.key }, p.c, "proj") + "</div>";
+      railItem(p.label, { t: "p", p: p.key }, p.c, "proj") +
+      '<button type="button" class="ra" title="改名" aria-label="「' + esc(p.label) + '」改名" aria-haspopup="menu" aria-expanded="false" data-p="' + esc(p.key) +
+      '" data-l="' + esc(p.label) + '" data-c="' + esc((allItems(state).find(it => it.projectKey === p.key) || {}).color || "") +
+      '" onclick="event.stopPropagation();projectMore(this)">' + ico("more", 15) + "</button></div>";
     if (open) {
       html += p.topics.map(x => '<div class="rt">' + railItem(x.t.name, { t: "t", id: x.t.id }, x.c, "sub", x.t.id) +
         '<button type="button" class="ra" title="改名或删除" aria-label="「' + esc(x.t.name) + '」改名或删除" aria-haspopup="menu" aria-expanded="false" data-tid="' + x.t.id +
@@ -971,6 +983,7 @@ function setScope(el) {
   const p = scope.t === "t" ? (topicById(scope.id) || {}).project : scope.p;
   if (p && railFold.delete(p)) store("ledger.fold", [...railFold]);
   selKey = null; selIdx = 0; closeMenu();
+  fillView();
   render();
   document.getElementById("queue").scrollTop = 0;
 }
@@ -1043,6 +1056,13 @@ async function setTopic(key, id, nameId) {
 function topicMore(el) {
   const t = topicById(Number(el.dataset.tid));
   if (t) showMenu(el, "", mi("改名…", "renameTopic(" + t.id + ")") + mi("删除主题", "deleteTopic(" + t.id + ")"));
+}
+function projectMore(el) { showMenu(el, "", mi("改名…", "renameProject(" + clip(el.dataset.p) + ")")); }
+function renameProject(id) {
+  // 项目的名字就是详情里那个短码，改的是同一处
+  const el = [...document.querySelectorAll(".rp .ra")].find(b => b.dataset.p === clips[id]);
+  closeMenu();
+  if (el) editTag(el, el.closest(".rp"));
 }
 function newTopic(el) {
   const projects = state ? railData().projects : [];
@@ -1409,9 +1429,9 @@ function copyReply(key, open) {
 
 // ---------------- 改项目短码（只改名字；项目一律灰色，不再按项目上色）
 let tagEdit = null;
-function editTag(el) {
+function editTag(el, anchor) {
   tagEdit = { project: el.dataset.p, label: el.dataset.l, color: el.dataset.c };
-  const input = openPop(el, '<label for="tag-label">短码（「' + esc(tagEdit.project) + "」这个目录下的会话都用它）</label>" +
+  const input = openPop(anchor || el,'<label for="tag-label">短码（「' + esc(tagEdit.project) + "」这个目录下的会话都用它）</label>" +
     '<input id="tag-label" maxlength="24" value="' + esc(tagEdit.label) + '">' +
     '<div class="bar">' + btn("恢复默认", "saveTag(true)", "ghost xs") + btn("取消", "closeTag()", "sec xs") + btn("保存", "saveTag()", "pri xs") + "</div>", () => saveTag());
   input.addEventListener("input", () => { tagEdit.label = input.value; });
