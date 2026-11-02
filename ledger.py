@@ -2765,6 +2765,26 @@ def cmux_surfaces():
     return found
 
 
+def cmux_title_match(titles, taken):
+    """cmux 没记下会话 ID 的标签页（cmux 装好钩子之前就开着的会话，恢复记录是空的）：按标签页标题认。
+    Claude 会把终端标题设成会话标题；只认唯一一个、且没被别的会话认走的标签页，两个同名就不猜。"""
+    titles = {t.strip() for t in titles if t and t.strip()}
+    if not titles:
+        return None
+    try:
+        tree = json.loads(cmux("tree", "--all", "--json").stdout)
+    except ValueError:
+        return None
+    hits = []
+    for win in tree.get("windows") or []:
+        for w in win.get("workspaces") or []:
+            for pane in w.get("panes") or []:
+                for sf in pane.get("surfaces") or []:
+                    if sf.get("type") == "terminal" and (sf.get("title") or "").strip() in titles and sf.get("ref") not in taken:
+                        hits.append((w.get("ref"), sf.get("ref")))
+    return hits[0] if len(hits) == 1 and hits[0][0] else None
+
+
 def surface_checkpoint(ws, sf):
     r = cmux("surface", "resume", "show", "--json", "--workspace", ws, "--surface", sf)
     try:
@@ -2926,6 +2946,9 @@ def open_session(conn, key):
     if surfaces is None:
         return False, cmux_denied()
     loc = surfaces.get(st["id"])
+    if not loc and st["id"] in claude_live():
+        # 还开着，但 cmux 没记它的会话 ID：按标签页标题找
+        loc = cmux_title_match([name_map(conn).get(key), st.get("custom_title"), st.get("ai_title")], {v[1] for v in surfaces.values()})
     if loc:
         cmux("select-workspace", "--workspace", loc[0])
         run(["open", "-a", "cmux"])
