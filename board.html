@@ -304,9 +304,6 @@ kbd.k.lg { min-width: 22px; height: 22px; padding: 0 6px; border-radius: 6px; fo
 .menu .mlist > * { flex: none; }
 .menu .mnone { padding: 6px 10px 8px; font-size: 13px; line-height: 20px; color: var(--bk-ink-3); }
 .menu hr { height: 1px; margin: 4px 6px; border: 0; background: var(--bk-line); }
-.why { display: flex; gap: 10px; align-items: flex-start; padding: 12px 14px; border-radius: 12px; background: var(--bk-ground); font-size: 13px; line-height: 20px; color: var(--bk-ink-2); }
-.why svg { flex: none; margin-top: 2px; color: var(--bk-ink-3); }
-.why b { color: var(--bk-ink-1); font-weight: 600; }
 .part { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
 .part.tight { gap: 6px; }
 .sec-t { font-size: 15px; line-height: 22px; font-weight: 600; }
@@ -344,29 +341,65 @@ kbd.k.lg { min-width: 22px; height: 22px; padding: 0 6px; border-radius: 6px; fo
 .rfoot .rh { font-size: 12px; line-height: 18px; color: var(--bk-ink-3); }
 .rfoot .bs { display: flex; gap: 6px; }
 
-/* 对话 */
-.convo { display: flex; flex-direction: column; gap: 12px; }
-.msg { display: flex; flex-direction: column; gap: 4px; }
-.msg .ml { font-size: 12px; line-height: 16px; color: var(--bk-ink-3); }
-.bub { padding: 10px 14px; font-size: 14px; line-height: 22px; white-space: pre-wrap; word-break: break-word; text-wrap: pretty; }
-.bub .clamp { display: -webkit-box; -webkit-line-clamp: 5; -webkit-box-orient: vertical; overflow: hidden; }
-.bub.md .clamp { -webkit-line-clamp: 16; }
-.bub.md b { font-weight: 600; }
-.bub.md code { font: 12.5px/20px var(--bk-mono); }
-.msg.you { align-self: flex-end; align-items: flex-end; max-width: 84%; }
-.msg.you .bub { border-radius: 14px 14px 4px 14px; background: var(--bk-sunken); }
-.msg.it { align-self: flex-start; flex-direction: row; gap: 10px; max-width: 90%; }
-.msg.it > .face { margin-top: 20px; }
-.msg.it .col { min-width: 0; display: flex; flex-direction: column; align-items: flex-start; gap: 4px; }
-.msg.it .bub { border: 1px solid var(--bk-line); border-radius: 14px 14px 14px 4px; background: var(--bk-surface); }
+/* 详情顶上的概要：状态、下一步、目标放在一张卡里 */
+.sum { display: flex; flex-direction: column; gap: 14px; padding: 16px 20px; border: 1px solid var(--bk-line); border-radius: 14px; background: var(--bk-surface); box-shadow: var(--bk-e1); }
+.sum-now { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.sum-st { font-size: 12px; line-height: 16px; font-weight: 600; color: var(--bk-ink-3); }
+.sum-why { margin: 0; font-size: 13px; line-height: 20px; color: var(--bk-ink-2); text-wrap: pretty; }
+.sum-goal { display: flex; flex-direction: column; gap: 6px; margin: 0; padding-top: 12px; border-top: 1px solid var(--bk-sunken); }
+.sum-goal > div { display: grid; grid-template-columns: 72px minmax(0, 1fr); gap: 12px; font-size: 13px; line-height: 20px; }
+.sum-goal dt { color: var(--bk-ink-3); }
+.sum-goal dt .pill { margin: 0 0 0 4px; height: 18px; font-size: 11px; }
+.sum-goal dd { margin: 0; color: var(--bk-ink-1); word-break: break-word; text-wrap: pretty; }
+.sum-src { margin-left: 8px; font-size: 12px; color: var(--bk-ink-3); white-space: nowrap; }
+.sum-goal.nogoal { padding: 12px 0 0; border: 0; border-top: 1px dashed var(--bk-line-strong); border-radius: 0; flex-direction: row; }
+@media (max-width: 640px) { .sum { padding: 14px 16px; } .sum-goal > div { grid-template-columns: 1fr; gap: 0; } }
+/* 大段之间加一条细线，一眼分得清哪段是哪段 */
+.dsec { padding-top: 20px; border-top: 1px solid var(--bk-line); }
 
-/* 压缩时的交接：Claude 上下文满了压缩时写给自己接着干活的，原文照放，只把标题、粗体、代码标出来 */
-.handoff { padding: 12px 14px; border: 1px solid var(--bk-line); border-radius: 14px; background: var(--bk-surface); font-size: 13px; line-height: 20px; white-space: pre-wrap; word-break: break-word; }
-.handoff .clamp { display: -webkit-box; -webkit-line-clamp: 10; -webkit-box-orient: vertical; overflow: hidden; }
-.handoff b { font-weight: 600; }
-.handoff b.h { font-size: 14px; }
-.handoff code { font: 12px/20px var(--bk-mono); }
-.ho-acts { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+/* 对话：都靠左，一条一条往下读。你说的放浅灰底，它说的直接排在白底上 */
+.thread { display: flex; flex-direction: column; gap: 18px; }
+.tm { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.tm-h { display: flex; align-items: center; gap: 8px; font-size: 12px; line-height: 16px; color: var(--bk-ink-3); }
+.tm-h .who { font-weight: 600; color: var(--bk-ink-1); }
+.tm-h .who.you { display: inline-flex; align-items: center; justify-content: center; width: 20px; height: 20px; border-radius: 6px; background: var(--bk-sunken); font-size: 11px; }
+.tm-b.you { padding: 10px 14px; border-radius: 12px; background: var(--bk-subtle); box-shadow: inset 0 0 0 1px var(--bk-sunken); font-size: 14px; line-height: 22px; white-space: pre-wrap; word-break: break-word; text-wrap: pretty; }
+.tm-b.you.fold3 { display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+.tm-b.md { padding-left: 28px; }
+.tm-a { display: flex; gap: 6px; margin-left: -8px; }
+.tm-b.md + .tm-a { margin-left: 20px; }
+/* 长内容先露一段，下面渐隐 */
+.fold { max-height: 420px; overflow: hidden; -webkit-mask-image: linear-gradient(to bottom, #000 72%, transparent); mask-image: linear-gradient(to bottom, #000 72%, transparent); }
+.handoff.fold { max-height: 260px; }
+
+/* Markdown 排版：它的回复、压缩时的交接 */
+.md { min-width: 0; font-size: 14px; line-height: 22px; word-break: break-word; text-wrap: pretty; }
+.md > * { margin: 0 0 10px; }
+.md > :last-child { margin-bottom: 0; }
+.md .mh { margin-top: 16px; font-size: 15px; line-height: 22px; font-weight: 600; }
+.md > .mh:first-child { margin-top: 0; }
+.md ul, .md ol { padding-left: 22px; }
+.md li { margin: 3px 0; }
+.md li > ul, .md li > ol { margin: 3px 0 0; }
+.md li::marker { color: var(--bk-ink-3); }
+.md b { font-weight: 600; }
+.md a { text-decoration: none; word-break: break-all; }
+.md a:hover { text-decoration: underline; }
+.md code { padding: 1px 5px; border-radius: 5px; background: var(--bk-sunken); font: 12.5px/20px var(--bk-mono); }
+.md pre { padding: 10px 12px; border: 1px solid var(--bk-line); border-radius: 10px; background: var(--bk-subtle); font: 12.5px/20px var(--bk-mono); white-space: pre-wrap; overflow-x: auto; }
+.md blockquote { padding-left: 12px; border-left: 3px solid var(--bk-line-strong); color: var(--bk-ink-2); }
+.md hr { height: 0; border: 0; border-top: 1px solid var(--bk-line); }
+.md .mtable { overflow-x: auto; border: 1px solid var(--bk-line); border-radius: 10px; }
+.md table { width: 100%; border-collapse: collapse; font-size: 13px; line-height: 20px; }
+.md th, .md td { padding: 7px 12px; border-bottom: 1px solid var(--bk-line); text-align: left; vertical-align: top; }
+.md th { background: var(--bk-subtle); color: var(--bk-ink-2); font-weight: 600; white-space: nowrap; }
+.md tbody tr:last-child td { border-bottom: 0; }
+
+/* 压缩时的交接：它写给自己接着干活的，字小一号，放在浅底卡片里 */
+.handoff { padding: 14px 16px; border-radius: 12px; background: var(--bk-subtle); box-shadow: inset 0 0 0 1px var(--bk-line); font-size: 13px; line-height: 21px; }
+.handoff .mh { font-size: 14px; }
+.handoff code { font-size: 12px; }
+.ho-acts { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; }
 .goal { margin: 0; font-size: 14px; line-height: 22px; white-space: pre-wrap; word-break: break-word; }
 .goal-sub { font-size: 13px; line-height: 20px; color: var(--bk-ink-2); white-space: pre-wrap; word-break: break-word; }
 .pill { display: inline-flex; align-items: center; height: 20px; padding: 0 7px; margin-left: 8px; border-radius: 6px; background: var(--bk-sunken); color: var(--bk-ink-2); font-size: 12px; font-weight: 600; vertical-align: 1px; }
@@ -639,7 +672,7 @@ const VIEWS = {
            emptyTitle: "都整理完了", emptyText: "新会话没写状态行时会先放在这里。" },
   hidden: { label: "已完成", groups: [], hint: "",
             emptyTitle: "最近没有完成的", emptyText: "点了「完成」的会话会在这里留一阵，方便恢复。" },
-  fav: { label: "收藏", groups: [], hint: "你收藏的会话，完成了也留着。拖到左栏的主题上就归过去。",
+  fav: { label: "收藏", groups: [], hint: "收藏的会话，完成了也留着。",
          emptyTitle: "还没有收藏", emptyText: "详情右上角点星标，就收进这里。" }
 };
 const TABS = ["you", "ai", "wait", "inbox"];
@@ -1288,7 +1321,8 @@ function setScope(el, e) {
     return sc.t === "p" ? renameProject(sc.p) : renameTopic(sc.id);
   }
   scope = sc; store("ledger.scope", scope);
-  if (view === "fav") { view = "you"; store("ledger.view", view); }   // 从收藏回到项目、主题
+  // 换了项目或主题：里面有轮到你的事就先看「轮到你」；从收藏回来也一样
+  if (view === "fav" || viewItems("you").length) { view = "you"; store("ledger.view", view); }
   const p = scope.t === "t" ? (topicById(scope.id) || {}).project : scope.p;
   if (p && railFold.delete(p)) store("ledger.fold", [...railFold]);
   if (((p && archivedP(p)) || (scope.t === "t" && archivedT(scope.id))) && !archOpen) { archOpen = true; store("ledger.arch", true); }
@@ -1713,22 +1747,38 @@ function renderDetail() {
     '<div class="dtitle"><h2 title="双击改名" ondblclick="renameSession(\'' + k + "',this)\">" + esc(it.title) + '</h2><div class="dmeta">' + toolChip(it) + tagChip(it) + topicChip(it) +
     '<span>' + (it.auto ? esc(it.auto.paused ? "定时已暂停" : it.auto.when ? it.auto.when + " 跑" : "定时任务") + " · " : "") + "最后动静 " + esc(it.last ? when(it.last) : "—") + "</span></div></div>" +
     '<div class="dacts">' + acts + "</div></div>";
-  html += '<div class="why">' + ico("info", 16) + "<span><b>" + esc(badgeOf(it)) + "</b>　" + esc(whyOf(it)) + "</span></div>";
+  html += sumCard(it);
   const secs = [
     ["reply", decisionsOf(it).length ? "待你决定" : oldAsksOf(it).length ? "没答的" : "推它一下", replyBox(it)],
     ["convo", "对话", convo(it)],
     ["handoff", "交接", handoffSec(it)],
-    ["goal", "目标", d.goal || !hidden ? goalSec(it) : ""],
     ["out", "产出物", outSec(it)],
     ["mr", "MR", mrSec(it)],
     ["info", "会话信息", infoSec(it)],
   ].filter(s => s[2]);
   if (secs.length >= 3) html += dnav(secs);
-  if (!hidden) html += '<div class="part tight"><span class="sec-l">现状</span><p class="now">' + esc(it.headline) + "</p></div>";
   html += secs.map(s => s[2].replace("<div ", '<div id="ds-' + s[0] + '" ')).join("");
   el.innerHTML = '<div class="detail-in">' + html + "</div>";
   fitText(document.getElementById("rtext"));
   if (jumpTo && Date.now() < spyHold) goJump(); else spySec();   // 平滑滚动途中重画了（松开鼠标时补画、定时刷新）：接着滚过去
+}
+// 详情顶上的概要：它现在什么状态、下一步是什么、这个会话的目标，一眼看完。状态的解释放在悬停提示里，要你特别处理的才直接写出来
+const INK = { wait: "needs", stuck: "needs", alarm: "needs", run: "run", review: "review", timer: "timer", peer: "peer" };
+function sumCard(it) {
+  const d = it.details, f = faceOf(it), hidden = it.group === "hidden", ink = INK[f];
+  const loud = it.kind === "approval" || it.kind === "sched_failed" || f === "stuck" || (d.doneAsk && f === "wait");
+  let html = '<div class="sum"><div class="sum-now"><span class="sum-st"' + (ink ? ' style="color:var(--bk-' + ink + '-ink)"' : "") + ' title="' + esc(whyOf(it)) + '">' +
+    esc(badgeOf(it)) + "</span>" + (hidden ? '<p class="sum-why">' + esc(whyOf(it)) + "</p>"
+      : '<p class="now">' + esc(it.headline) + "</p>" + (loud ? '<p class="sum-why">' + esc(whyOf(it)) + "</p>" : "")) + "</div>";
+  if (d.goal) {
+    const src = d.goalFrom === "handoff" ? "取自 " + when(d.goalTs) + " 压缩时的交接" : d.goalTs ? "写于 " + when(d.goalTs) : "";
+    html += '<dl class="sum-goal"><div><dt>目标' + (d.goalStatus ? '<span class="pill">' + esc(d.goalStatus) + "</span>" : "") + "</dt><dd>" + esc(d.goal) +
+      (src ? '<span class="sum-src">' + esc(src) + "</span>" : "") + "</dd></div>" +
+      (d.criteria ? "<div><dt>完成标准</dt><dd>" + esc(d.criteria) + "</dd></div>" : "") + "</dl>";
+  } else if (!hidden)
+    html += '<div class="sum-goal nogoal"><span>还没写目标。有了一句目标，它跑偏的时候台账才能提醒你。</span>' +
+      btn("让它补一句", "copyOpen(GOAL_ASK,'" + esc(it.key) + "')", "sec sm", "复制一句提示并打开会话，你粘贴发出去") + "</div>";
+  return html + "</div>";
 }
 // 详情的页内导航：点一下滚到那一段；滚动时标出看到哪一段
 function dnav(secs) {
@@ -1775,7 +1825,7 @@ function outSec(it) {
   const d = it.details, k = esc(it.key), got = dOut[it.key];
   if (!d.linksTotal) return "";
   if (got && got.total !== d.linksTotal) expandOut(it.key, true);   // 又给了新的：悄悄重取
-  let html = '<div class="part dout"><div class="sec-hd"><span class="sec-t">AI 给的产出物</span><span class="mono">' + num(d.linksTotal) + " 个</span></div>";
+  let html = '<div class="part dsec dout"><div class="sec-hd"><span class="sec-t">AI 给的产出物</span><span class="mono">' + num(d.linksTotal) + " 个</span></div>";
   if (got && got.items.length > 12)
     html += '<input class="lfilter" type="search" autocomplete="off" placeholder="在这个会话的 ' + num(got.items.length) + ' 个产出物里找：名字、链接、AI 的原话" value="' +
       esc(dOutQ[it.key] || "") + '" oninput="dOutQ[\'' + k + '\']=this.value;document.getElementById(\'dout-list\').innerHTML=outRows(\'' + k + '\')">';
@@ -1803,7 +1853,7 @@ function mrSec(it) {
   const cnt = {};
   rest.forEach(l => { const t = MR_STATE[l.state] || (/^MR |^PR /.test(l.name) ? "其他 MR" : "流水线和提交"); cnt[t] = (cnt[t] || 0) + 1; });
   const sum = ["已合并", "已关闭", "其他 MR", "流水线和提交"].filter(t => cnt[t]).map(t => t + " " + num(cnt[t]) + " 个").join("、");
-  let html = '<div class="part dmr"><div class="sec-hd"><span class="sec-t">MR 和流水线</span><span class="mono">' + num(d.mrsTotal) + " 个</span></div>" +
+  let html = '<div class="part dsec dmr"><div class="sec-hd"><span class="sec-t">MR 和流水线</span><span class="mono">' + num(d.mrsTotal) + " 个</span></div>" +
     '<span class="sec-l">临时的，合并完就不用再管' + (live.length ? "；还开着的 " + num(live.length) + " 个" : "；都处理完了") + "</span>";
   const list = open ? all : live;
   if (list.length) html += linkList(list);
@@ -1862,16 +1912,19 @@ function replyOf(it) {
 }
 function convo(it) {
   const d = it.details, msgs = [];
-  if (d.firstPrompt) msgs.push({ you: true, label: "你 · 最初的要求", text: d.firstPrompt });
-  if (d.lastPrompt) msgs.push({ you: true, label: "你 · 最后说的", text: d.lastPrompt });
-  if (d.lastReply) msgs.push({ you: false, label: waitOf(it) ? "它 · 停下来前说的" : "它 · 最后说的", text: replyOf(it) });
+  if (d.firstPrompt) msgs.push({ you: true, label: "最初的要求", text: d.firstPrompt });
+  if (d.lastPrompt) msgs.push({ you: true, label: "最后说的", text: d.lastPrompt, ts: d.promptTs });
+  if (d.lastReply) msgs.push({ you: false, label: waitOf(it) ? "停下来前说的" : "最后说的", text: replyOf(it), ts: d.replyTs });
   if (!msgs.length) return "";
-  return '<div class="part"><span class="sec-t">对话</span><div class="convo">' + msgs.map((m, i) => {
-    if (m.you) return '<div class="msg you"><span class="ml">' + m.label + '</span><div class="bub">' + esc(m.text) + "</div></div>";
-    // 它说的比较要紧：20 行以内全文显示，更长的先露 16 行
-    const id = domId(it.key) + "_" + i, long = m.text.split("\n").length > 20 || m.text.length > 1400, open = bubOpen[id];
-    return '<div class="msg it">' + face("mark", 24) + '<div class="col"><span class="ml">' + m.label + '</span><div class="bub md">' +
-      (long && !open ? '<div class="clamp">' + hoMd(m.text) + "</div>" : hoMd(m.text)) + "</div>" + (long ? btn(open ? "收起" : "展开全文", "bubOpen['" + id + "']=!bubOpen['" + id + "'];renderDetail()", "ghost xs") : "") + "</div></div>";
+  return '<div class="part dsec"><span class="sec-t">对话</span><div class="thread">' + msgs.map((m, i) => {
+    const id = domId(it.key) + "_" + i, open = bubOpen[id];
+    const head = '<div class="tm-h">' + (m.you ? '<span class="who you">你</span>' : face("mark", 20) + '<span class="who">它</span>') +
+      "<span>" + m.label + (m.ts ? " · " + esc(when(m.ts)) : "") + "</span></div>";
+    // 你说的：最初的要求常常很长，先露 3 行；它说的比较要紧，30 行以内全文显示，更长的先露一屏
+    const long = m.you ? m.text.split("\n").length > 3 || m.text.length > 160 : m.text.split("\n").length > 30 || m.text.length > 1800;
+    const body = m.you ? '<div class="tm-b you' + (long && !open ? " fold3" : "") + '">' + esc(m.text) + "</div>"
+      : '<div class="tm-b md' + (long && !open ? " fold" : "") + '">' + mdHtml(m.text) + "</div>";
+    return '<div class="tm">' + head + body + (long ? '<div class="tm-a">' + btn(open ? "收起" + ico("up") : "展开全文" + ico("down"), "bubOpen['" + id + "']=!bubOpen['" + id + "'];renderDetail()", "ghost xs") + "</div>" : "") + "</div>";
   }).join("") + "</div></div>";
 }
 // 压缩时的交接：Claude 上下文满了压缩时写给自己接着干活的，只取最后一段。正文长，详情打开时再取
@@ -1888,8 +1941,73 @@ async function loadHandoff(key, ts) {
   dHo[key] = { ts, text, zh, showZh: !!zh };
   if (selKey === key) laterRender(renderDetail);
 }
-function hoMd(text) {
-  return esc(text).replace(/^#{1,4} +(.+)$/gm, '<b class="h">$1</b>').replace(/\*\*([^*\n]+)\*\*/g, "<b>$1</b>").replace(/`([^`\n]+)`/g, "<code>$1</code>");
+// AI 的回复和交接按 Markdown 排版：标题、段落、列表（可嵌套）、表格、代码块、引用、链接。一律先转义，不放原始 HTML
+function mdInline(t) {
+  return String(t).split(/(`[^`\n]+`)/).map((p, i) => i % 2 ? "<code>" + esc(p.slice(1, -1)) + "</code>" : esc(p)
+    .replace(/\[([^\]\n]+)\]\((https?:\/\/[^\s)]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>')
+    .replace(/(^|[^"=>\w])(https?:\/\/[^\s<>"'）)」，。；、]+)/g, '$1<a href="$2" target="_blank" rel="noopener">$2</a>')
+    .replace(/\*\*([^*\n]+)\*\*/g, "<b>$1</b>")).join("");
+}
+const MD_LI = /^(\s*)([-*•]|\d{1,3}[.)、])\s+(.*)$/, MD_SEP = /^\s*\|?\s*:?-{3,}:?\s*(\|\s*:?-{3,}:?\s*)*\|?\s*$/;
+function mdStart(ls, i) {
+  const l = ls[i];
+  return /^\s*(```|#{1,6}\s|>)/.test(l) || MD_LI.test(l) || /^\s*([-*_])(\s*\1){2,}\s*$/.test(l) || (l.includes("|") && i + 1 < ls.length && MD_SEP.test(ls[i + 1]));
+}
+function mdHtml(text) {
+  const ls = String(text || "").replace(/\r/g, "").split("\n"), cells = l => {   // 按 | 分格，反引号里的 | 不算
+    const out = [""]; let code = false;
+    for (const ch of l.trim().replace(/^\||\|$/g, "")) { if (ch === "`") code = !code; if (ch === "|" && !code) out.push(""); else out[out.length - 1] += ch; }
+    return out.map(c => c.trim());
+  };
+  let out = "", i = 0, m;
+  while (i < ls.length) {
+    const l = ls[i];
+    if (!l.trim()) { i++; continue; }
+    if (/^\s*```/.test(l)) {
+      const buf = [];
+      for (i++; i < ls.length && !/^\s*```/.test(ls[i]); i++) buf.push(ls[i]);
+      out += "<pre>" + esc(buf.join("\n")) + "</pre>"; i++; continue;
+    }
+    if ((m = l.match(/^\s*#{1,6}\s+(.+?)\s*#*\s*$/))) { out += '<div class="mh">' + mdInline(m[1]) + "</div>"; i++; continue; }
+    if (/^\s*([-*_])(\s*\1){2,}\s*$/.test(l)) { out += "<hr>"; i++; continue; }
+    if (l.includes("|") && i + 1 < ls.length && MD_SEP.test(ls[i + 1])) {
+      const head = cells(l), rows = [];
+      for (i += 2; i < ls.length && ls[i].includes("|") && ls[i].trim(); i++) rows.push(cells(ls[i]));
+      out += '<div class="mtable"><table><thead><tr>' + head.map(c => "<th>" + mdInline(c) + "</th>").join("") + "</tr></thead><tbody>" +
+        rows.map(r => "<tr>" + head.map((_, k) => "<td>" + mdInline(r[k] || "") + "</td>").join("") + "</tr>").join("") + "</tbody></table></div>";
+      continue;
+    }
+    if (/^\s*>/.test(l)) {
+      const buf = [];
+      for (; i < ls.length && /^\s*>/.test(ls[i]); i++) buf.push(ls[i].replace(/^\s*>\s?/, ""));
+      out += "<blockquote>" + mdHtml(buf.join("\n")) + "</blockquote>"; continue;
+    }
+    if (MD_LI.test(l)) {
+      const items = [];
+      for (; i < ls.length; i++) {
+        const x = ls[i].match(MD_LI);
+        if (x) items.push({ ind: x[1].replace(/\t/g, "    ").length, ol: /\d/.test(x[2]), n: parseInt(x[2], 10), text: x[3] });
+        else if (ls[i].trim() && /^\s{2,}/.test(ls[i]) && !mdStart(ls, i)) items[items.length - 1].text += "\n" + ls[i].trim();   // 列表项折行
+        else break;
+      }
+      const stack = [];
+      items.forEach(x => {
+        while (stack.length && x.ind < stack[stack.length - 1].ind) out += "</li></" + stack.pop().tag + ">";
+        const top = stack[stack.length - 1];
+        if (!top || x.ind > top.ind) {
+          const tag = x.ol ? "ol" : "ul";
+          out += "<" + tag + (x.ol && x.n > 1 ? ' start="' + x.n + '"' : "") + ">"; stack.push({ ind: x.ind, tag });
+        } else out += "</li>";
+        out += "<li>" + x.text.split("\n").map(mdInline).join("<br>");
+      });
+      while (stack.length) out += "</li></" + stack.pop().tag + ">";
+      continue;
+    }
+    const buf = [l];
+    for (i++; i < ls.length && ls[i].trim() && !mdStart(ls, i); i++) buf.push(ls[i]);
+    out += "<p>" + buf.map(x => mdInline(x.trim())).join("<br>") + "</p>";
+  }
+  return out;
 }
 const HO_KEEP = /(`[^`\n]*`|"[^"\n]*[\u4e00-\u9fff][^"\n]*"|“[^”\n]*”|「[^」\n]*」|[\u4e00-\u9fff\u3000-\u303f\uff01-\uff5e][\u4e00-\u9fff\u3000-\u303f\uff01-\uff5e\d\s]*)/;
 function hoEnglish(text) { return (text.match(/[\u4e00-\u9fff]/g) || []).length < text.length * 0.05; }
@@ -1931,25 +2049,18 @@ function handoffSec(it) {
   const d = it.details, g = dHo[it.key], id = "ho" + domId(it.key);
   if (!d.handoffTs) return "";
   if (!g || g.ts !== d.handoffTs) loadHandoff(it.key, d.handoffTs);
-  let body;
+  let body, acts = "";
   if (!g || g.ts !== d.handoffTs || g.loading) body = '<span class="lmore">读取中…</span>';
   else if (!g.text) body = '<span class="lmore">没读到这段交接。</span>';
   else {
     const text = g.showZh && g.zh ? g.zh : g.text, open = bubOpen[id];
-    body = '<div class="handoff">' + (open ? hoMd(text) : '<div class="clamp">' + hoMd(text) + "</div>") + "</div>" +
-      '<div class="ho-acts">' + btn(open ? "收起" : "展开全文", "bubOpen['" + id + "']=!bubOpen['" + id + "'];renderDetail()", "ghost xs") +
-      btn("复制", "copyClip(" + clip(text) + ")", "ghost xs") + hoTr(it.key, g) + "</div>";
+    acts = btn(ico("copy", 13) + "复制", "copyClip(" + clip(text) + ")", "ghost xs") + hoTr(it.key, g);
+    body = '<div class="handoff md' + (open ? "" : " fold") + '">' + mdHtml(text) + "</div>" +
+      '<div class="tm-a">' + btn(open ? "收起" + ico("up") : "展开全文" + ico("down"), "bubOpen['" + id + "']=!bubOpen['" + id + "'];renderDetail()", "ghost xs") + "</div>";
   }
-  return '<div class="part"><span class="sec-t">压缩时的交接<span class="pill mono">' + esc(when(d.handoffTs)) + "</span></span>" +
-    '<span class="goal-sub">上下文满了压缩时，它写给自己接着干活用的，只写到那一刻；之后的进展看上面「最后说的」。</span>' + body + "</div>";
-}
-function goalSec(it) {
-  const d = it.details;
-  if (!d.goal)
-    return '<div class="part"><span class="sec-t">目标</span><div class="nogoal"><span>还没写目标。有了一句目标，它跑偏的时候台账才能提醒你。</span>' +
-      btn("让它补一句", "copyOpen(GOAL_ASK,'" + esc(it.key) + "')", "sec sm", "复制一句提示并打开会话，你粘贴发出去") + "</div></div>";
-  return '<div class="part tight"><span class="sec-t">目标' + (d.goalStatus ? '<span class="pill">' + esc(d.goalStatus) + "</span>" : "") + "</span>" +
-    '<p class="goal">' + esc(d.goal) + "</p>" + (d.criteria ? '<span class="goal-sub">完成标准：' + esc(d.criteria) + "</span>" : "") + "</div>";
+  return '<div class="part dsec"><div class="sec-hd"><span class="sec-t">压缩时的交接<span class="pill mono">' + esc(when(d.handoffTs)) + "</span></span>" +
+    '<span class="ho-acts">' + acts + "</span></div>" +
+    '<span class="sec-l">上下文满了时它写给自己的，只写到那一刻；之后的进展看上面的对话。</span>' + body + "</div>";
 }
 function infoSec(it) {
   const d = it.details, k = esc(it.key);
@@ -1961,7 +2072,7 @@ function infoSec(it) {
   let foot = "";
   if (it.scheduleId) foot += btn("取消定时唤醒", "act('" + k + "','cancel_schedule')", "ghost sm");
   if (it.group !== "hidden") foot += btn("不再跟踪这个会话", "act('" + k + "','untrack')", "ghost sm");
-  return '<div class="part"><span class="sec-t">会话信息</span><div class="info">' + rows.map(r =>
+  return '<div class="part dsec"><span class="sec-t">会话信息</span><div class="info">' + rows.map(r =>
     '<div><span class="k">' + r[0] + '</span><span class="v ' + (r[2] || "") + '" title="' + esc(r[1]) + '">' + (r[2] === "path" ? pathSegs(it) : esc(r[1])) + "</span>" + (r[3] || "<span></span>") + "</div>").join("") +
     "</div>" + (foot ? '<div class="dfoot">' + foot + "</div>" : "") + "</div>";
 }

@@ -1009,6 +1009,17 @@ def flush_handoff(conn, key, st):
                      "ts=excluded.ts, text=excluded.text WHERE excluded.ts >= handoffs.ts", (key, got[0] or 0, got[1]))
 
 
+def handoff_goal(text):
+    """压缩时的交接开头的「### 目标」那段 -> (目标, 完成标准)；没写这段返回 None"""
+    m = re.search(r"^#{1,4}\s*目标\s*\n(.*?)(?=^#{1,4}\s|\Z)", text or "", re.M | re.S)
+    if not m:
+        return None
+    body = " ".join(re.sub(r"^\s*[-*]\s*", "", l).strip() for l in m.group(1).splitlines() if l.strip())
+    goal, _, crit = body.partition("完成标准")
+    goal, crit = goal.strip().rstrip("，,；;（(").strip(), re.sub(r"^[：:]\s*", "", crit).strip().rstrip("）)")
+    return (goal[:300], crit[:300]) if goal else None
+
+
 def save_goal(conn, key, goal, criteria="", status=""):
     if not goal:
         return
@@ -1071,6 +1082,7 @@ def on_final(st, text, ts):
     g = parse_goal(text)
     if g:
         st["goal"] = g
+        st["goal_ts"] = ts or time.time()
 
 
 CLAUDE_KEYS = ('"type":"assistant"', '"type":"user"', '"type":"system"', '"type":"ai-title"',
@@ -2368,6 +2380,13 @@ def make_item(st, now, cfg, ov, sched, titles, goals, ctx):
     project = ctx["moved"].get(key) or home
     project_label, project_color = tag_of(ctx["tags"], project)
     saved = ctx["goals"].get(key) or {}
+    # 目标取最新的一份：压缩时的交接比 🎯 那行新，就用交接里「### 目标」写的（🎯 多半是压缩前某个小任务的）
+    goal_text = goal_obj.get("goal") or codex_goal.get("objective") or saved.get("goal") or ""
+    goal_crit = goal_obj.get("criteria") or saved.get("criteria") or ""
+    goal_ts, goal_from = st.get("goal_ts") or saved.get("at") or 0, ""
+    ho_ts, ho_goal = ctx["handoffs"].get(key) or 0, ctx["ho_goals"].get(key)
+    if ho_goal and (not goal_text or ho_ts > goal_ts + 60):
+        goal_text, goal_crit, goal_ts, goal_from = ho_goal[0], ho_goal[1], ho_ts, "handoff"
     reply_hint = excerpt(st.get("last_text")) or excerpt(st.get("progress_text"))
     badges = []
     group, kind, headline, sort, wait = "need", "me", "", 0, ""
@@ -2516,8 +2535,7 @@ def make_item(st, now, cfg, ov, sched, titles, goals, ctx):
         "since": (st.get("last_user_ts") or 0) if group == "ai" else 0, "snoozed": bool(snoozed and group == "time"),
         "statusKey": "%s|%s" % ((status or {}).get("ts"), (status or {}).get("at")),
         "details": {
-            "goal": goal_obj.get("goal") or codex_goal.get("objective") or saved.get("goal") or "",
-            "criteria": goal_obj.get("criteria") or saved.get("criteria") or "",
+            "goal": goal_text, "criteria": goal_crit, "goalTs": goal_ts, "goalFrom": goal_from,
             "goalStatus": GOAL_STATUS.get(codex_goal.get("status") or saved.get("status") or "", ""),
             "originalTitle": (st.get("custom_title") or titles.get(st["id"]) or st.get("ai_title") or "")
                              if ctx["names"].get(key) else "",
@@ -2528,6 +2546,7 @@ def make_item(st, now, cfg, ov, sched, titles, goals, ctx):
             "mrsTotal": sum(1 for l in ctx["links"].get(key, []) if l["cat"] == "mr"),
             "firstPrompt": (st.get("first_prompt") or "")[:300],
             "lastPrompt": (st.get("last_prompt") or "")[:300] if st.get("last_prompt") != st.get("first_prompt") else "",
+            "promptTs": st.get("last_user_ts") or 0,
             "lastReply": head_text(reply_text(st.get("last_text") or st.get("progress_text"))),
             "replyLen": len(reply_text(st.get("last_text") or st.get("progress_text"))),
             "replyTs": st.get("final_ts") or last,
@@ -2652,6 +2671,7 @@ def build_board(conn, cfg, now=None):
     ctx = {"names": name_map(conn), "tags": tag_map(conn), "moved": load_moved(conn), "links": {}, "live": claude_live(),
            "goals": {r["session_key"]: dict(r) for r in conn.execute("SELECT * FROM goals")},
            "handoffs": {r["session_key"]: r["ts"] for r in conn.execute("SELECT session_key, ts FROM handoffs")},
+           "ho_goals": {r["session_key"]: handoff_goal(r["head"]) for r in conn.execute("SELECT session_key, substr(text, 1, 3000) AS head FROM handoffs")},
            "ask_dismiss": load_ask_dismiss(conn)}
     seen_out = set()
     for r in conn.execute("SELECT l.session_key, l.url, l.label, l.ts, l.doc, COALESCE(d.title, m.title, '') AS title, m.state" + OUT_FROM +
