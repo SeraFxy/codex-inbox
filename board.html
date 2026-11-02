@@ -1031,6 +1031,8 @@ function showMenu(el, key, html, opts) {
   const first = pop.querySelector("input, button");
   if (first) first.focus({ preventScroll: true });
 }
+let popInit = "";   // 浮层打开时输入框里的字：改过了，点外面就不关，免得改到一半的丢了
+function popDirty() { const i = document.querySelector("#tagpop input"); return !!(tagEdit && i && i.value !== popInit); }
 function openPop(anchor, html, onEnter) {
   // 小浮层：改项目短码、新建主题、给主题改名共用；调用前先设好 tagEdit
   const pop = document.getElementById("tagpop"), r = anchor.getBoundingClientRect();
@@ -1038,6 +1040,7 @@ function openPop(anchor, html, onEnter) {
   pop.style.left = Math.min(Math.max(8, r.left), window.innerWidth - pop.offsetWidth - 8) + "px";
   pop.style.top = (r.bottom + 8 + pop.offsetHeight > window.innerHeight ? Math.max(8, r.top - pop.offsetHeight - 8) : r.bottom + 8) + "px";
   const input = pop.querySelector("input");
+  popInit = input.value;
   input.addEventListener("keydown", e => {
     if (ime(e)) return;
     if (e.key === "Enter") onEnter();
@@ -2163,9 +2166,15 @@ document.getElementById("q").addEventListener("input", e => {
   sq = e.target.value.trim();
   hTimer = setTimeout(() => tab === "outputs" ? searchOut(sq) : search(sq), 250);
 });
+// 点外面关掉菜单和浮层。在里面按下、拖到外面才松手的不算（比如在输入框里往外拖着选字，click 会落在外面）；
+// 浮层里的字改过了也不关，要按「保存」/ 回车或「取消」/ Esc
+let downIn = null;
+document.addEventListener("pointerdown", e => { downIn = e.target; }, true);
 document.addEventListener("click", e => {
-  if (menu && !e.target.closest("#menu")) closeMenu();
-  if (tagEdit && !e.target.closest("#tagpop") && !e.target.closest(".chip")) closeTag();
+  const from = sel => e.target.closest(sel) || (downIn && downIn.isConnected && downIn.closest(sel));
+  if (menu && !from("#menu")) closeMenu();
+  if (tagEdit && !from("#tagpop") && !e.target.closest(".chip") && !popDirty()) closeTag();
+  downIn = null;
 });
 document.addEventListener("keydown", e => {
   if (ime(e)) return;
