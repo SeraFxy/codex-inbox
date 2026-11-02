@@ -167,6 +167,7 @@ def open_db():
     conn.row_factory = sqlite3.Row
     conn.executescript(SCHEMA)
     migrate_links(conn)
+    load_user_dirs(conn)
     return conn
 
 
@@ -1029,7 +1030,8 @@ _autos_cache = {"at": 0, "map": {}}
 
 
 def rrule_text(rule):
-    """Codex 定时任务的 rrule 写成「每天 10:00」「每周一 09:00」「每 5 分钟」，看不懂的返回空。DTSTART 是 UTC 的，钟点换成看板的时区。"""
+    """Codex 定时任务的 rrule 写成（全称, 左栏的短写）：「每天 10:00」「每周一 09:00」「每 5 分钟」，一天几次的短写成「每天 4 次」。
+    看不懂的返回空。DTSTART 是 UTC 的，钟点换成看板的时区。"""
     lines = (rule or "").split("\n")
     body = next((x for x in lines if "FREQ=" in x), "")
     kv = dict(x.split("=", 1) for x in body.replace("RRULE:", "").split(";") if "=" in x)
@@ -1037,22 +1039,23 @@ def rrule_text(rule):
     off = int(dt.datetime.now().astimezone(WORK_TZ).utcoffset().total_seconds() // 60) if utc else 0
     freq, n = kv.get("FREQ"), kv.get("INTERVAL", "1")
     if freq == "MINUTELY":
-        return "每 %s 分钟" % n
+        return ("每 %s 分钟" % n,) * 2
     if freq == "HOURLY":
-        return "每小时" if n == "1" else "每 %s 小时" % n
+        return ("每小时" if n == "1" else "每 %s 小时" % n,) * 2
     try:
         mins = sorted(((int(h) * 60 + int(kv.get("BYMINUTE", "0").split(",")[0]) + off) % 1440) for h in kv.get("BYHOUR", "").split(","))
     except ValueError:
-        return ""
+        return "", ""
     at = "、".join("%02d:%02d" % divmod(m, 60) for m in mins)
     if kv.get("COUNT") == "1":
-        return "%s 跑一次" % at
+        return "%s 跑一次" % at, "只跑一次"
     if freq == "DAILY":
-        return "每天 " + at
+        return "每天 " + at, "每天 " + at if len(mins) == 1 else "每天 %d 次" % len(mins)
     if freq == "WEEKLY":
         days = [WEEK["MO TU WE TH FR SA SU".split().index(d)] for d in kv.get("BYDAY", "").split(",") if d in "MO TU WE TH FR SA SU".split()]
-        return ("每周" + "、".join(days) + " " + at) if days else ""
-    return ""
+        if days:
+            return "每周" + "、".join(days) + " " + at, ("周%s %s" % (days[0], at)) if len(days) == 1 and len(mins) == 1 else "每周%s" % "、".join(days)
+    return "", ""
 
 
 def codex_automations():
@@ -1076,11 +1079,14 @@ def codex_automations():
             if not tid:
                 continue
             paused = got.get("status", "ACTIVE") != "ACTIVE"
-            found.setdefault(tid, []).append((paused, got.get("name") or "", rrule_text(got.get("rrule"))))
-        _autos_cache.update(at=time.time(), map={
-            tid: {"name": "、".join(x[1] for x in sorted(xs) if x[1]), "when": "；".join(x[2] for x in sorted(xs) if x[2] and not x[0]),
-                  "paused": all(x[0] for x in xs)}
-            for tid, xs in found.items()})
+            found.setdefault(tid, []).append((paused, got.get("name") or "") + rrule_text(got.get("rrule")))
+        out = {}
+        for tid, xs in found.items():
+            xs.sort()
+            on = [x for x in xs if not x[0] and x[2]]
+            out[tid] = {"name": "、".join(x[1] for x in xs if x[1]), "when": "；".join(x[2] for x in on),
+                        "short": (on[0][3] + (" 等" if len(on) > 1 else "")) if on else "", "paused": all(x[0] for x in xs)}
+        _autos_cache.update(at=time.time(), map=out)
     return _autos_cache["map"]
 
 
@@ -1758,26 +1764,58 @@ def project_name(name):
     return "其他" if not name or name.startswith(".") or re.fullmatch(r"\d{4}-\d{2}-\d{2}", name) else name
 
 
-def project_of(cwd):
+USER_DIRS = []   # 你在看板「位置」那一行点过的文件夹：每个就是一个项目，里面开的会话都归它，比上面两种都优先。存在 meta 的 project_dirs
+
+
+def set_user_dirs(dirs):
+    global USER_DIRS
+    USER_DIRS = sorted({d for d in dirs if isinstance(d, str) and d.startswith("/")}, key=len, reverse=True)
+    return USER_DIRS
+
+
+def load_user_dirs(conn):
+    try:
+        got = json.loads(meta_get(conn, "project_dirs", "[]"))
+    except ValueError:
+        got = []
+    return set_user_dirs(got if isinstance(got, list) else [])
+
+
+def save_user_dirs(conn, dirs):
+    meta_set(conn, "project_dirs", json.dumps(set_user_dirs(dirs), ensure_ascii=False))
+
+
+def project_info(cwd):
+    """会话目录 → (项目名, 当项目的那层文件夹, 是不是你点出来的)。"""
     p = (cwd or "").rstrip("/")
-    if p.startswith(CODEX_WORKTREES + "/"):
+    for _ in range(2):   # 先按原目录认你点过的；Codex 工作树再按主仓库认一遍
+        mine = next((d for d in USER_DIRS if p == d or p.startswith(d + "/")), None)
+        if mine:
+            return re.sub(r"(-wt-.*|-worktrees)$", "", os.path.basename(mine)) or os.path.basename(mine), mine, True
+        if not p.startswith(CODEX_WORKTREES + "/"):
+            break
         parts = p[len(CODEX_WORKTREES) + 1:].split("/")
         if len(parts) < 2:
-            return "其他"
+            return "其他", p, False
         wt = os.path.join(CODEX_WORKTREES, parts[0], parts[1])
         main = codex_worktree_main(wt, parts[1])
         if not main:
-            return project_name(parts[1])
+            return project_name(parts[1]), wt, False
         p = main + p[len(wt):]
     for parent in ALL_PARENTS:
         if p.startswith(parent + "/"):
-            return project_name(p[len(parent) + 1:].split("/")[0])
+            child = p[len(parent) + 1:].split("/")[0]
+            return project_name(child), parent + "/" + child, False
     if p == os.path.join(HOME, "Desktop"):
-        return "桌面"
+        return "桌面", p, False
     if not p.startswith(HOME):
-        return os.path.basename(p) or "其他"
+        return os.path.basename(p) or "其他", p, False
     parts = [x for x in p[len(HOME):].split("/") if x]
-    return project_name(parts[0]) if parts else "主目录"
+    return (project_name(parts[0]), os.path.join(HOME, parts[0]), False) if parts else ("主目录", HOME, False)
+
+
+def project_of(cwd):
+    return project_info(cwd)[0]
 
 
 def color_of(name):
@@ -1935,7 +1973,7 @@ def make_item(st, now, cfg, ov, sched, titles, goals, ctx):
     title = (ctx["names"].get(key) or st.get("custom_title") or readable(titles.get(st["id"])) or readable(st.get("ai_title")) or goal_obj.get("goal")
              or prompt_title(st.get("first_prompt"))
              or "（无标题）")
-    home = project_of(st.get("cwd"))
+    home, home_dir, home_mine = project_info(st.get("cwd"))
     project = ctx["moved"].get(key) or home
     project_label, project_color = tag_of(ctx["tags"], project)
     saved = ctx["goals"].get(key) or {}
@@ -2094,6 +2132,7 @@ def make_item(st, now, cfg, ov, sched, titles, goals, ctx):
             "status": ("📌 " + status["label"] + ("｜" + status["desc"] if status.get("desc") else "")) if status else "",
             "decisions": decisions,
             "cwd": st.get("cwd") or "", "branch": st.get("branch") or "", "id": st["id"], "resume": resume,
+            "projectDir": home_dir, "projectDirMine": home_mine,   # 按哪层文件夹分的项目；Mine = 你在「位置」那一行点的
         },
     }
 
@@ -2154,9 +2193,25 @@ def load_pins(conn):
 
 
 def board_favs(conn, items, now):
-    """收藏的会话，新收藏的在前。完成了、过了 30 天不在看板上的也留着：标题和项目从「我说过的话」里取。"""
+    """收藏的会话，新收藏的在前。完成了、过了 30 天不在看板上的也留着。"""
+    return board_refs(conn, meta_keys(conn, "favs"), items, now)
+
+
+def board_autos(conn, items, now):
+    """左栏「定时任务」：Codex 定时任务在跑的会话，在跑的在前、新动静的在前。会话不在看板上、也没记过你说的话的，用定时任务的名字。"""
+    autos = codex_automations()
+    keys = ["codex:" + tid for tid in autos]
+    got = {x["key"]: x for x in board_refs(conn, keys, items, now)}
+    out = [got.get(k) or {"key": k, "title": autos[k[6:]]["name"] or "（未命名定时任务）", "tool": "codex", "project": "",
+                          "last": 0, "onBoard": False, "auto": autos[k[6:]]} for k in keys]
+    out.sort(key=lambda x: (x["auto"]["paused"], -(x["last"] or 0)))
+    return out
+
+
+def board_refs(conn, keys, items, now):
+    """左栏列的会话（收藏、定时任务）：在看板上的直接取；完成了、过了 30 天不在看板上的，标题和项目从「我说过的话」里取。"""
     by_key, out = {it["key"]: it for it in items}, []
-    for k in meta_keys(conn, "favs"):
+    for k in keys:
         it = by_key.get(k)
         if it:
             out.append({"key": k, "title": it["title"], "tool": it["tool"], "project": it["project"], "last": it["last"], "onBoard": True, "auto": it["auto"]})
@@ -2255,7 +2310,7 @@ def build_board(conn, cfg, now=None):
         "tzOffsetMin": int(clock(now).astimezone(WORK_TZ).utcoffset().total_seconds() // 60),
         "staleHours": cfg["stale_hours"], "interruptedMin": cfg["interrupted_min"], "windowDays": cfg["window_days"],
         "scanMs": int(meta_get(conn, "last_scan_ms", 0) or 0), "scanIntervalMin": cfg["scan_interval_min"],
-        "groups": groups, "hidden": hidden, "order": load_order(conn), "pins": pins, "archived": archived, "archivedTopics": archived_topics, "favs": board_favs(conn, items + hidden, now), "digestTime": cfg["digest_time"], "tzText": tz_text(cfg),
+        "groups": groups, "hidden": hidden, "order": load_order(conn), "pins": pins, "archived": archived, "archivedTopics": archived_topics, "favs": board_favs(conn, items + hidden, now), "autos": board_autos(conn, items + hidden, now), "digestTime": cfg["digest_time"], "tzText": tz_text(cfg), "home": HOME, "projectDirs": USER_DIRS,
         "topics": [{"id": t["id"], "name": t["name"], "project": t["project"], "projectLabel": tag_of(ctx["tags"], t["project"])[0]}
                    for t in topics if not t["deleted"]],
     }
@@ -2668,6 +2723,41 @@ class App:
                     c.execute("INSERT OR REPLACE INTO session_topics (session_key, topic_id, at) VALUES (?, ?, ?)", (key, tid, now))
                 c.commit()
                 return True, ("已归到「%s」" % row["name"] if key else "已新建主题「%s」" % row["name"]) if row else "已移出主题"
+            if action == "project_dir" and key and isinstance(arg, dict):
+                # 「位置」那一行点了一段：{path} 这层文件夹算一个项目，以后在它里面开的会话都归它；{path, remove: true} 去掉这条，回到默认的取法
+                got = c.execute("SELECT data FROM sessions WHERE key=?", (key,)).fetchone()
+                if not got:
+                    return False, "找不到这个会话"
+                cwd = (json.loads(got["data"]).get("cwd") or "").rstrip("/")
+                path = os.path.normpath(str(arg.get("path") or "/")).rstrip("/")
+                dirs = list(USER_DIRS)
+                if arg.get("remove"):
+                    save_user_dirs(c, [d for d in dirs if d != path])
+                else:
+                    if not (path.startswith(HOME + "/") and (cwd == path or cwd.startswith(path + "/"))):
+                        return False, "只能点这个会话所在路径里、主目录下面的文件夹"
+                    # 这个会话路径上更深的、你以前点过的会挡住这一层，去掉
+                    save_user_dirs(c, [d for d in dirs if not (d.startswith(path + "/") and (cwd == d or cwd.startswith(d + "/")))] + [path])
+                    moved = load_moved(c)
+                    if moved.pop(key, None) is not None:   # 手动移过项目的，改回按文件夹算
+                        meta_set(c, "moved", json.dumps(moved, ensure_ascii=False))
+                name = project_of(cwd)
+                row = c.execute("SELECT t.project FROM session_topics s JOIN topics t ON t.id = s.topic_id"
+                                " WHERE s.session_key=? AND t.deleted=0", (key,)).fetchone()
+                if row and row["project"] != name:   # 原来归的主题不在新项目里，改回按 #主题 自动归
+                    c.execute("DELETE FROM session_topics WHERE session_key=?", (key,))
+                refresh_prompt_projects(c)
+                c.commit()
+                label = tag_of(tag_map(c), name)[0]
+                if arg.get("remove"):
+                    return True, "已恢复默认，这个会话归到「%s」" % label
+                return True, "以后「%s」里的会话都归到项目「%s」" % (os.path.basename(path), label)
+            if action == "project_dirs" and isinstance(arg, dict) and isinstance(arg.get("dirs"), list):
+                # 撤销用：把你点过的文件夹整个换回原来那份
+                save_user_dirs(c, [os.path.normpath(d).rstrip("/") for d in arg["dirs"] if isinstance(d, str) and d.startswith(HOME + "/")])
+                refresh_prompt_projects(c)
+                c.commit()
+                return True, "已撤销"
             if action == "move" and key and isinstance(arg, dict):
                 # 移到项目：{project} 移过去，可以写个新名字（左栏就多一个项目）；空着或写回会话所在文件夹的项目 = 移回去
                 got = c.execute("SELECT data FROM sessions WHERE key=?", (key,)).fetchone()
@@ -3052,12 +3142,17 @@ def migrate_project_parents(conn):
     cur = json.dumps({"rules": 2, "parents": sorted(PROJECT_PARENTS)}, ensure_ascii=False)
     if meta_get(conn, "project_parents") == cur:
         return
+    refresh_prompt_projects(conn)
+    meta_set(conn, "project_parents", cur)
+    conn.commit()
+
+
+def refresh_prompt_projects(conn):
+    """「我说过的话」里存的项目按现在的规则重算（改了 project_parents，或在「位置」那一行点了一层之后）。不提交。"""
     for r in conn.execute("SELECT DISTINCT cwd, project FROM prompts").fetchall():
         p = project_of(r["cwd"])
         if r["cwd"] and p != r["project"]:
             conn.execute("UPDATE prompts SET project=? WHERE cwd=?", (p, r["cwd"]))
-    meta_set(conn, "project_parents", cur)
-    conn.commit()
 
 
 def migrate_codex_source(conn):

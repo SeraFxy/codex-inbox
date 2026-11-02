@@ -194,6 +194,7 @@ kbd.k.lg { min-width: 22px; height: 22px; padding: 0 6px; border-radius: 6px; fo
 .rsec:focus-visible { outline: 2px solid var(--bk-ink-1); outline-offset: 1px; }
 .rsec .n { margin-left: auto; font: 500 12px/1 var(--bk-mono); }
 .ri.fav { padding-left: 26px; gap: 6px; }
+.ri.off .nm { color: var(--bk-ink-3); }   /* 暂停了的定时任务，和「已暂停的 N 个」那一行 */
 .rfoot { margin: auto 0 0; padding: 12px 10px 0; font-size: 12px; line-height: 18px; color: var(--bk-ink-3); }
 .qtop { display: none; align-items: center; gap: 6px; margin-bottom: -4px; }
 .split.railx .qtop { display: flex; }
@@ -640,6 +641,8 @@ const railFold = new Set(store("ledger.fold") || []);   // 收起的项目
 let archOpen = store("ledger.arch") === true;            // 左栏「归档」展开着
 let src = store("ledger.src") || "all";                  // 只看哪个工具的会话：all / claude / codex
 let favOpen = store("ledger.favx") !== true;             // 左栏「收藏」展开着（默认展开）
+let autoOpen = store("ledger.autox") !== true;           // 左栏「定时任务」展开着（默认展开）
+let autoOff = false;                                     // 「定时任务」里暂停了的那几个展开着
 let picker = null;      // 「归到主题」「移到项目」菜单：{ key, q, list }
 const prevFace = {};    // 会话 key -> 上次的表情，用来发现「AI 在做 → 待你确认完成」，跳一下
 const bubOpen = {};     // 展开全文的气泡
@@ -1106,6 +1109,7 @@ function renderRail() {
       '<button type="button" class="ra" title="打开或取消收藏" aria-label="「' + esc(x.title) + '」打开或取消收藏" aria-haspopup="menu" aria-expanded="false"' +
       ' data-key="' + esc(x.key) + '" onclick="event.stopPropagation();favMore(this,this.dataset.key)">' + ico("more", 15) + "</button></div>").join("");
   }
+  html += autoSec();
   if (arch.length || d.archTopics.length) {
     html += '<button type="button" class="rsec" aria-expanded="' + archOpen + '" onclick="toggleArch()">' + ico(archOpen ? "down" : "right", 14) +
       "<span>归档</span><span class=\"n\">" + (arch.length + d.archTopics.length) + "</span></button>";
@@ -1130,6 +1134,25 @@ function railGroup(p) {
     if (p.topics.length && p.none.n) html += railItem("未归类", { t: "n", p: p.key }, p.none, "sub none", "none");
   }
   return html + "</div>";
+}
+// 左栏「定时任务」：Codex 定时任务在跑的会话都自动列在这里，不管在哪个项目。暂停了的收在最后一行里
+function autoSec() {
+  const all = (state.autos || []).filter(srcOk), on = all.filter(x => !x.auto.paused), off = all.filter(x => x.auto.paused);
+  if (!all.length) return "";
+  const row = x => '<div class="rt"><button type="button" class="ri fav' + (x.auto.paused ? " off" : "") + '" data-key="' + esc(x.key) + '" aria-current="' + (x.key === selKey) +
+    '" title="' + esc(x.title + "\n定时任务「" + x.auto.name + "」，" + (x.auto.paused ? "已暂停" : (x.auto.when || "定时") + " 跑") + (x.onBoard ? "" : "\n不在看板上，点一下打开会话")) +
+    '" onclick="goFav(this.dataset.key)"><span class="nm">' + esc(x.title) + '</span><span class="n">' + esc(x.auto.paused ? "已暂停" : x.auto.short) + "</span></button></div>";
+  let html = '<button type="button" class="rsec" aria-expanded="' + autoOpen + '" onclick="toggleAutos()" title="Codex 定时任务在跑的会话，自动列在这里">' +
+    ico(autoOpen ? "down" : "right", 14) + "<span>定时任务</span><span class=\"n\">" + on.length + "</span></button>";
+  if (!autoOpen) return html;
+  html += on.map(row).join("");
+  if (off.length) html += '<div class="rt"><button type="button" class="ri fav off" aria-expanded="' + autoOff + '" onclick="autoOff=!autoOff;renderRail()">' +
+    '<span class="nm">' + (autoOff ? "收起" : "已暂停的 " + off.length + " 个") + "</span>" + ico(autoOff ? "down" : "right", 14) + "</button></div>" + (autoOff ? off.map(row).join("") : "");
+  return html;
+}
+function toggleAutos() {
+  autoOpen = !autoOpen; store("ledger.autox", !autoOpen);
+  renderRail();
 }
 function toggleFavs() {
   favOpen = !favOpen; store("ledger.favx", !favOpen);
