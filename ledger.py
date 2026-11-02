@@ -178,6 +178,7 @@ def migrate_links(conn):
                 pass   # 命令行和服务同时打开，另一边已经加上了
     conn.execute("CREATE INDEX IF NOT EXISTS links_ts ON links(ts)")
     conn.execute("CREATE INDEX IF NOT EXISTS links_url ON links(url)")
+    conn.execute("CREATE INDEX IF NOT EXISTS links_doc ON links(doc)")
     rows = conn.execute("SELECT DISTINCT url FROM links WHERE cat IS NULL OR cat = ''").fetchall()
     for (url,) in rows:
         conn.execute("UPDATE links SET cat=?, doc=? WHERE url=?", (out_cat(url), feishu_doc(url), url))
@@ -1318,7 +1319,7 @@ def merge_batches(items, gap=3):
 
 def session_extras(conn, key):
     g = conn.execute("SELECT goal, criteria, status FROM goals WHERE session_key=?", (key,)).fetchone()
-    n = conn.execute("SELECT COUNT(*) FROM links WHERE session_key=?", (key,)).fetchone()[0]
+    n = conn.execute("SELECT COUNT(DISTINCT " + OUT_KEY.replace("l.", "") + ") FROM links WHERE session_key=?", (key,)).fetchone()[0]
     return {
         "goal": g["goal"] if g else "", "criteria": g["criteria"] if g else "",
         "goalStatus": GOAL_STATUS.get(g["status"], g["status"]) if g and g["status"] else "",
@@ -1452,12 +1453,14 @@ def _out_where(q, cat="", key="", tool=""):
 
 
 OUT_FROM = " FROM links l LEFT JOIN doc_titles d ON l.doc != '' AND d.token = l.doc"
+# 同一篇飞书文档算一个产出物：带 #块锚点、?from= 的各种写法都归到「类型:token」；别的按链接本身
+OUT_KEY = "(CASE WHEN l.doc != '' THEN l.doc ELSE l.url END)"
 OUT_CATS = ("feishu", "code", "file", "web")
 
 
 def count_outputs(conn, q, tool=""):
     where, args = _out_where(q, tool=tool)
-    return conn.execute("SELECT COUNT(DISTINCT l.url)" + OUT_FROM + where, args).fetchone()[0]
+    return conn.execute("SELECT COUNT(DISTINCT " + OUT_KEY + ")" + OUT_FROM + where, args).fetchone()[0]
 
 
 def session_briefs(conn, keys, now):
@@ -1487,22 +1490,26 @@ def search_outputs(conn, q, cat="", key="", tool="", limit=100, offset=0):
     """AI 给过你的产出物（链接和本机文件），同一个链接只列一次，带上给过它的会话（最近的在前）和 AI 给出它时的原话。"""
     now = time.time()
     where, args = _out_where(q, cat, key, tool)
-    total = conn.execute("SELECT COUNT(DISTINCT l.url)" + OUT_FROM + where, args).fetchone()[0]
-    rows = conn.execute("SELECT l.url, MAX(l.ts) AS ts" + OUT_FROM + where +
-                        " GROUP BY l.url ORDER BY ts DESC LIMIT ? OFFSET ?", args + [limit, offset]).fetchall()
+    total = conn.execute("SELECT COUNT(DISTINCT " + OUT_KEY + ")" + OUT_FROM + where, args).fetchone()[0]
+    rows = conn.execute("SELECT " + OUT_KEY + " AS g, MAX(l.ts) AS ts" + OUT_FROM + where +
+                        " GROUP BY g ORDER BY ts DESC LIMIT ? OFFSET ?", args + [limit, offset]).fetchall()
     cw, cargs = _out_where(q, "", key, tool)
-    counts = {r[0] or "web": r[1] for r in conn.execute("SELECT l.cat, COUNT(DISTINCT l.url)" + OUT_FROM + cw + " GROUP BY l.cat", cargs)}
+    counts = {r[0] or "web": r[1] for r in conn.execute("SELECT l.cat, COUNT(DISTINCT " + OUT_KEY + ")" + OUT_FROM + cw + " GROUP BY l.cat", cargs)}
     by_tool = ([key], " AND l.session_key=?") if key else (([tool + ":%"], " AND l.session_key LIKE ?") if tool in ("claude", "codex") else ([], ""))
     items, keys = [], []
     for r in rows:
-        occ = conn.execute("SELECT l.session_key, l.label, l.ctx, l.ts, d.title" + OUT_FROM + " WHERE l.url=?" + by_tool[1] +
-                           " ORDER BY l.ts DESC", [r["url"]] + by_tool[0]).fetchall()
+        by_doc = "://" not in r["g"] and not r["g"].startswith("/")   # 「类型:token」按 doc 列查，别的按链接查，都走索引
+        occ = conn.execute("SELECT l.session_key, l.url, l.label, l.ctx, l.ts, d.title" + OUT_FROM + (" WHERE l.doc=?" if by_doc else " WHERE l.url=?") + by_tool[1] +
+                           " ORDER BY l.ts DESC", [r["g"]] + by_tool[0]).fetchall()
         if not occ:
             continue
-        sess = [{"key": o["session_key"], "ts": o["ts"]} for o in occ]
+        sess = []
+        for o in occ:
+            if all(x["key"] != o["session_key"] for x in sess):
+                sess.append({"key": o["session_key"], "ts": o["ts"]})
         head = occ[0]
         label = next((o["label"] for o in occ if o["label"]), "")
-        url = r["url"]
+        url = next((o["url"] for o in occ if "#" not in o["url"]), head["url"])   # 有不带锚点的就用它，打开是文档开头
         it = {"url": url, "cat": out_cat(url), "name": link_name(url), "title": head["title"] or "", "label": label,
               "text": out_text(url, label, head["title"]), "ctx": head["ctx"] or "", "ts": r["ts"], "timeText": fmt_time(r["ts"], now),
               "nSessions": len(sess), "sessions": sess[:3]}
@@ -1515,9 +1522,18 @@ def search_outputs(conn, q, cat="", key="", tool="", limit=100, offset=0):
     for it in items:
         for x in it["sessions"]:
             x.update(briefs.get(x["key"], {}))
-    allc = conn.execute("SELECT COUNT(DISTINCT url), COUNT(DISTINCT session_key) FROM links").fetchone()
-    return {"q": q, "cat": cat, "key": key, "total": total, "counts": counts, "items": items,
-            "all": allc[0], "allSessions": allc[1]}
+    allc = conn.execute("SELECT COUNT(DISTINCT " + OUT_KEY + "), COUNT(DISTINCT l.session_key) FROM links l").fetchone()
+    res = {"q": q, "cat": cat, "key": key, "total": total, "counts": counts, "items": items,
+           "all": allc[0], "allSessions": allc[1], "wider": 0, "promptHits": 0}
+    if q.strip():
+        # 只看某个会话、某一类时没搜到：告诉你放开后有几个；你自己发过这个词的会话数，给「我说过的话」的入口
+        if (key or cat) and not total:
+            res["wider"] = count_outputs(conn, q, tool)
+        pw, pargs = _like_where(q)
+        if tool in ("claude", "codex"):
+            pw, pargs = pw + ["tool=?"], pargs + [tool]
+        res["promptHits"] = conn.execute("SELECT COUNT(DISTINCT session_key) FROM prompts WHERE " + " AND ".join(pw), pargs).fetchone()[0]
+    return res
 
 
 def out_brief(url, label, title, ts, now):
@@ -1990,8 +2006,12 @@ def build_board(conn, cfg, now=None):
     items, hidden, hashtags = [], [], {}
     ctx = {"names": name_map(conn), "tags": tag_map(conn), "moved": load_moved(conn), "links": {}, "live": claude_live(),
            "goals": {r["session_key"]: dict(r) for r in conn.execute("SELECT * FROM goals")}}
-    for r in conn.execute("SELECT l.session_key, l.url, l.label, l.ts, d.title" + OUT_FROM +
+    seen_out = set()
+    for r in conn.execute("SELECT l.session_key, l.url, l.label, l.ts, l.doc, d.title" + OUT_FROM +
                           " WHERE l.session_key IN (SELECT key FROM sessions WHERE last_activity >= ?) ORDER BY l.ts DESC", (now - 30 * 86400,)):
+        if (r["session_key"], r["doc"] or r["url"]) in seen_out:
+            continue   # 同一篇飞书文档的别的写法（带锚点等），只留最近一次
+        seen_out.add((r["session_key"], r["doc"] or r["url"]))
         ctx["links"].setdefault(r["session_key"], []).append(out_brief(r["url"], r["label"], r["title"], r["ts"], now))
     for r in conn.execute("SELECT data FROM sessions WHERE last_activity >= ?", (now - 30 * 86400,)):
         st = json.loads(r["data"])

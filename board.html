@@ -1931,7 +1931,7 @@ function renderHistory() {
 
 // ---------------- 产出物：AI 在回复里给你的链接和本机文件，能搜，能跳回给出它的会话
 const CATS = [["all", "全部"], ["feishu", "飞书"], ["code", "代码"], ["file", "文件"], ["web", "网页"]];
-let oq = "", oCat = "all", oKey = "", oItems = [], oTotal = 0, oCounts = {}, oAll = 0, oAllSessions = 0, oLoaded = false, oReady = false, oSig = "";
+let oq = "", oCat = "all", oKey = "", oItems = [], oTotal = 0, oCounts = {}, oAll = 0, oAllSessions = 0, oWider = 0, oPromptHits = 0, oLoaded = false, oReady = false, oSig = "";
 function goOutputs(q, key) {
   // 从看板详情、我说过的话跳过来：key = 只看这个会话的
   oq = q || ""; oKey = key || ""; oCat = "all"; oLoaded = false;
@@ -1949,13 +1949,19 @@ async function searchOut(q, more) {
     const res = await r.json();
     if (sig !== oSig) return;  // 打字快时旧结果晚到，丢掉
     oItems = more ? oItems.concat(res.items) : res.items;
-    oTotal = res.total; oCounts = res.counts || {}; oAll = res.all; oAllSessions = res.allSessions;
+    oTotal = res.total; oCounts = res.counts || {}; oAll = res.all; oAllSessions = res.allSessions; oWider = res.wider || 0; oPromptHits = res.promptHits || 0;
   } catch (e) { if (sig === oSig) toast("没取到产出物：本机服务没响应"); return; }
   oReady = true;
   if (tab === "outputs") renderOutputs();
 }
 function setCat(c) { oCat = c; searchOut(oq); }
 function clearOutKey() { oKey = ""; searchOut(oq); }
+function widenOut() { oKey = ""; oCat = "all"; searchOut(oq); }
+function goHistory(q) {
+  hq = q || ""; hLoaded = false;
+  setTab("history");
+  window.scrollTo(0, 0);
+}
 function oKeyTitle() {
   const it = findItem(oKey), x = oItems.length && oItems[0].sessions.find(s => s.key === oKey);
   return it ? it.title : x ? x.title : "这个会话";
@@ -1984,17 +1990,25 @@ function orow(o) {
 }
 function renderOutputs() {
   const n = c => c === "all" ? Object.values(oCounts).reduce((a, b) => a + b, 0) : oCounts[c] || 0;
-  document.getElementById("hsum").innerHTML = (oq || oKey || oCat !== "all"
+  document.getElementById("hsum").innerHTML = '<span class="hl1">' + (oq || oKey || oCat !== "all"
     ? '<span class="mono hit">找到 ' + num(oTotal) + " 个产出物</span>"
     : '<span class="mono">共 ' + num(oAll) + " 个产出物 · 来自 " + num(oAllSessions) + " 个会话</span>") +
+    (oq && oPromptHits ? btn("你自己在 " + num(oPromptHits) + " 个会话里说过" + ico("right", 12), "goHistory(oq)", "ghost xs", "到「我说过的话」里看") : "") + "</span>" +
     '<span class="note">' + ico("info", 13) + "AI 在回复里给你的链接和本机文件，同一个链接只列一次；飞书文档显示真实标题</span>";
   let html = '<div class="ocats"><div class="seg src" role="group" aria-label="只看哪类产出物">' + CATS.map(([c, label]) =>
     '<button type="button" aria-pressed="' + (oCat === c) + '" onclick="setCat(\'' + c + "')\">" + label + '<span class="n">' + num(n(c)) + "</span></button>").join("") + "</div>" +
     (oKey ? '<span class="chip" title="只看这个会话给的">只看「' + esc(oKeyTitle()) + "」</span>" + btn("看全部会话的", "clearOutKey()", "ghost xs") : "") + "</div>";
   if (!oItems.length) {
-    html += '<div class="dash" style="margin: 0; padding: 20px; gap: 14px">' + face("search", 36) + '<span class="tx">' + (oq
-      ? "<b>翻遍了，没找到「" + esc(oq) + "」</b><span>" + (oCat !== "all" || oKey ? "现在只看了一部分，换成全部试试。" : "换个说法，或者少打几个词试试。") + "</span>"
-      : "<b>这里还空着</b><span>AI 在回复里给你链接或文件后，会自动收在这里。</span>") + "</span></div>";
+    // 只看某个会话或某一类时没搜到：直接说放开后有几个，一键放开
+    const part = oKey ? "只看「" + oKeyTitle() + "」" + (oCat !== "all" ? "里的" + CAT_NAME[oCat] : "") : oCat !== "all" ? "只看" + CAT_NAME[oCat] : "";
+    const tip = !oq ? "AI 在回复里给你链接或文件后，会自动收在这里。"
+      : oWider ? "放开到全部会话、全部类型，有 " + num(oWider) + " 个。"
+      : oPromptHits ? "AI 没给过，但你自己在 " + num(oPromptHits) + " 个会话里说过。"
+      : part ? "放开到全部也没有。换个说法，或者少打几个词试试。" : "换个说法，或者少打几个词试试。";
+    html += '<div class="dash" style="margin: 0; padding: 20px; gap: 14px">' + face("search", 36) + '<span class="tx">' +
+      (oq ? "<b>" + (part ? part + "时" : "") + "没找到「" + esc(oq) + "」</b>" : "<b>这里还空着</b>") + "<span>" + esc(tip) + "</span></span>" +
+      (oq && oWider ? btn("看全部 " + num(oWider) + " 个", "widenOut()", "sec sm", "", 'style="margin-left: auto"')
+        : oq && oPromptHits ? btn("去我说过的话里看", "goHistory(oq)", "sec sm", "", 'style="margin-left: auto"') : "") + "</div>";
     document.getElementById("hlist").innerHTML = html;
     return;
   }
