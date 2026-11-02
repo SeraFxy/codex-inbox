@@ -187,11 +187,12 @@ kbd.k.lg { min-width: 22px; height: 22px; padding: 0 6px; border-radius: 6px; fo
 .rp:hover .ra, .rp:focus-within .ra, .rp .ra.on, .rt:hover .ra, .rt:focus-within .ra, .rt .ra.on { display: inline-flex; }
 .rp:hover .ri .n, .rp:hover .ri .count, .rp:focus-within .ri .n, .rp:focus-within .ri .count,
 .rt:hover .ri .n, .rt:hover .ri .count, .rt:focus-within .ri .n, .rt:focus-within .ri .count { visibility: hidden; }
-.rarch { display: flex; align-items: center; gap: 4px; width: 100%; height: 28px; margin-top: 16px; padding: 0 10px 0 4px; border: 0; border-radius: 8px;
+.rsec { display: flex; align-items: center; gap: 4px; width: 100%; height: 28px; margin-top: 16px; padding: 0 10px 0 4px; border: 0; border-radius: 8px;
   background: transparent; color: var(--bk-ink-3); font-size: 12px; line-height: 16px; font-weight: 600; text-align: left; cursor: pointer; }
-.rarch:hover { color: var(--bk-ink-1); }
-.rarch:focus-visible { outline: 2px solid var(--bk-ink-1); outline-offset: 1px; }
-.rarch .n { margin-left: auto; font: 500 12px/1 var(--bk-mono); }
+.rsec:hover { color: var(--bk-ink-1); }
+.rsec:focus-visible { outline: 2px solid var(--bk-ink-1); outline-offset: 1px; }
+.rsec .n { margin-left: auto; font: 500 12px/1 var(--bk-mono); }
+.ri.fav { padding-left: 26px; gap: 6px; }
 .rfoot { margin: auto 0 0; padding: 12px 10px 0; font-size: 12px; line-height: 18px; color: var(--bk-ink-3); }
 .qtop { display: none; align-items: center; gap: 6px; margin-bottom: -4px; }
 .split.railx .qtop { display: flex; }
@@ -581,6 +582,7 @@ let railOpen = store("ledger.rail") !== false;
 const railFold = new Set(store("ledger.fold") || []);   // 收起的项目
 let archOpen = store("ledger.arch") === true;            // 左栏「归档」展开着
 let src = store("ledger.src") || "all";                  // 只看哪个工具的会话：all / claude / codex
+let favOpen = store("ledger.favx") !== true;             // 左栏「收藏」展开着（默认展开）
 let picker = null;      // 「归到主题」菜单：{ key, q }
 const prevFace = {};    // 会话 key -> 上次的表情，用来发现「AI 在做 → 待你确认完成」，跳一下
 const bubOpen = {};     // 展开全文的气泡
@@ -638,6 +640,8 @@ const ICONS = {
   warn: '<circle cx="12" cy="12" r="9"/><path d="M12 7.5v5.5M12 16.5v.5"/>', send: '<path d="M5 12h13"/><path d="m13 6 6 6-6 6"/>',
   copy: '<rect x="8.5" y="8.5" width="12" height="12" rx="2.5"/><path d="M15.5 8.5V6a2.5 2.5 0 0 0-2.5-2.5H6A2.5 2.5 0 0 0 3.5 6v7A2.5 2.5 0 0 0 6 15.5h2.5"/>',
   right: '<path d="m9 18 6-6-6-6"/>', plus: '<path d="M12 5v14M5 12h14"/>',
+  star: '<path d="M12 3.8l2.5 5.1 5.6.8-4 3.9.9 5.6-5-2.6-5 2.6.9-5.6-4-3.9 5.6-.8z"/>',
+  starOn: '<path fill="currentColor" d="M12 3.8l2.5 5.1 5.6.8-4 3.9.9 5.6-5-2.6-5 2.6.9-5.6-4-3.9 5.6-.8z"/>',
   railL: '<rect x="3.5" y="4.5" width="17" height="15" rx="2.5"/><path d="M9.5 4.5v15"/><path d="m16 10-2 2 2 2"/>'
 };
 function ico(name, size, sw) {
@@ -815,7 +819,7 @@ async function load(refresh) {
   try {
     const r = await fetch("/api/state" + (refresh ? "?refresh=" + refresh : ""), { cache: "no-store" });
     const next = await r.json();
-    if (state && localAt >= t0) { next.order = state.order; next.pins = state.pins; next.archived = state.archived; }   // 拉取途中你刚调过顺序、置顶：先用本地的，免得被旧数据盖回去
+    if (state && localAt >= t0) { next.order = state.order; next.pins = state.pins; next.archived = state.archived; next.favs = state.favs; }   // 拉取途中你刚调过顺序、置顶：先用本地的，免得被旧数据盖回去
     failed = false;
     hopNow = new Set();
     allItems(next).forEach(it => {
@@ -1007,8 +1011,18 @@ function renderRail() {
     railItem("全部", { t: "all" }, d.all, "all");
   const live = d.projects.filter(p => !p.archived), arch = d.projects.filter(p => p.archived);
   live.forEach(p => { html += railGroup(p); });
+  const favs = (state.favs || []).filter(srcOk);
+  if (favs.length) {
+    html += '<button type="button" class="rsec" aria-expanded="' + favOpen + '" onclick="toggleFavs()">' + ico(favOpen ? "down" : "right", 14) +
+      "<span>收藏</span><span class=\"n\">" + favs.length + "</span></button>";
+    if (favOpen) html += favs.map(x => '<div class="rt">' +
+      '<button type="button" class="ri fav" data-key="' + esc(x.key) + '" aria-current="' + (x.key === selKey) + '" title="' + esc(x.title) + (x.onBoard ? "" : "（点一下打开会话）") +
+      '" onclick="goFav(this.dataset.key)">' + toolChip(x) + '<span class="nm">' + esc(x.title) + "</span></button>" +
+      '<button type="button" class="ra" title="打开或取消收藏" aria-label="「' + esc(x.title) + '」打开或取消收藏" aria-haspopup="menu" aria-expanded="false"' +
+      ' data-key="' + esc(x.key) + '" onclick="event.stopPropagation();favMore(this,this.dataset.key)">' + ico("more", 15) + "</button></div>").join("");
+  }
   if (arch.length) {
-    html += '<button type="button" class="rarch" aria-expanded="' + archOpen + '" onclick="toggleArch()">' + ico(archOpen ? "down" : "right", 14) +
+    html += '<button type="button" class="rsec" aria-expanded="' + archOpen + '" onclick="toggleArch()">' + ico(archOpen ? "down" : "right", 14) +
       "<span>归档</span><span class=\"n\">" + arch.length + "</span></button>";
     if (archOpen) arch.forEach(p => { html += railGroup(p); });
   }
@@ -1030,6 +1044,36 @@ function railGroup(p) {
     if (p.topics.length && p.none.n) html += railItem("未归类", { t: "n", p: p.key }, p.none, "sub none", "none");
   }
   return html + "</div>";
+}
+function toggleFavs() {
+  favOpen = !favOpen; store("ledger.favx", !favOpen);
+  renderRail();
+}
+// 收藏：存在服务端；完成了、过了 30 天也留着，点一下找到它，不在看板上的直接打开会话
+function favOn(key) { return !!(state && (state.favs || []).some(x => x.key === key)); }
+function toggleFav(key) {
+  closeMenu();
+  const it = findItem(key), on = !favOn(key);
+  if (on && !it) return;
+  setLocal({ favs: on ? [{ key, title: it.title, tool: it.tool, project: it.project, last: it.last, onBoard: true }].concat(state.favs || [])
+    : (state.favs || []).filter(x => x.key !== key) });
+  if (on && !favOpen) { favOpen = true; store("ledger.favx", false); }
+  render();
+  post("fav", key, { on }).then(res => toast(res.message || (res.ok ? "好了" : "没成功"), res.ok && !on ? () => post("fav", key, { on: true }).then(() => load()) : null),
+    () => toast("操作失败：本机服务没响应"));
+}
+function favMore(el, key) {
+  showMenu(el, key, mi(ico("open", 14) + "打开会话", "closeMenu();openSession(clips[" + clip(key) + "])") + mi("取消收藏", "toggleFav(clips[" + clip(key) + "])"));
+}
+function goFav(key) {
+  const it = findItem(key);
+  if (!it) return openSession(key);   // 不在看板上了（完成很久、超过 30 天）：直接打开
+  if (!srcOk(it)) { src = "all"; store("ledger.src", src); }
+  if (!inScope(it)) { scope = archivedP(railProject(it)) ? { t: "p", p: railProject(it) } : { t: "all" }; store("ledger.scope", scope); }
+  view = it.group === "hidden" ? "hidden" : TABS.find(v => VIEWS[v].groups.includes(it.group)) || view; store("ledger.view", view);
+  pick(key);
+  const r = document.getElementById("row-" + domId(key));
+  if (r) r.scrollIntoView({ block: "nearest" });
 }
 function toggleArch() {
   archOpen = !archOpen; store("ledger.arch", archOpen);
@@ -1373,6 +1417,8 @@ function renderDetail() {
       'id="snooze-btn" aria-haspopup="menu" aria-expanded="false" style="padding: 0 8px 0 12px"');
     acts += btn(ico("check", 14, 2.2) + (f === "review" ? "确认完成" : "完成"), "act('" + k + "','done')", "ghost", "挪到「已完成」；你再和这个会话说话，它会自动回到看板");
   }
+  acts += btn(ico(favOn(it.key) ? "starOn" : "star", 16), "toggleFav('" + k + "')", "ghost icon", favOn(it.key) ? "取消收藏" : "收藏：放进左栏「收藏」，完成了也留着",
+    'aria-pressed="' + favOn(it.key) + '" aria-label="收藏"');
   let html = '<div class="dhead"><span class="fc' + (hopNow.has(it.key) ? " bk-hop" : "") + '">' + face(f, 44, 0, REASON[f]) + "</span>" +
     '<div class="dtitle"><h2>' + esc(it.title) + '</h2><div class="dmeta">' + toolChip(it) + tagChip(it) + topicChip(it) +
     '<span>最后动静 ' + esc(it.last ? when(it.last) : "—") + "</span></div></div>" +
@@ -1407,6 +1453,7 @@ function openMenu(el, key, more) {
   let html = faceOf(it) === "run" ? "" : '<span class="ml">推迟到…</span>' +
     SNOOZE.map(o => mi(o[1], "act('" + k + "','snooze','" + o[0] + "')", esc(snoozeAt(o[0])))).join("");
   if (more) html += (html ? "<hr>" : "") + mi(pinned(it) ? "取消置顶" : "置顶", "togglePin('" + k + "')", "P") +
+    mi(favOn(key) ? "取消收藏" : "收藏", "toggleFav('" + k + "')", "", favOn(key) ? "" : ' title="放进左栏「收藏」，完成了也留着，方便以后找到再打开"') +
     mi("归到主题…", "openTopics(menu.el,'" + k + "')", it.topic ? esc(it.topic.name) : "") +
     mi("不再跟踪这个会话", "act('" + k + "','untrack')");
   showMenu(el, key, html);

@@ -1205,12 +1205,12 @@ def prompt_rows_to_items(conn, rows, now):
         if names.get(r["session_key"]):
             pass
         elif tool == "codex":
-            title = titles.get(sid) or threads.get(sid, ("", "", ""))[2] or title
+            title = readable(titles.get(sid)) or readable(threads.get(sid, ("", "", ""))[2]) or title
         elif not title:
             got = conn.execute("SELECT data FROM sessions WHERE key=?", (r["session_key"],)).fetchone()
             if got:
                 st = json.loads(got["data"])
-                title = st.get("custom_title") or st.get("ai_title") or ""
+                title = st.get("custom_title") or readable(st.get("ai_title"))
         if not title:
             fp = conn.execute("SELECT text FROM prompts WHERE session_key=? ORDER BY ts LIMIT 1", (r["session_key"],)).fetchone()
             if fp:
@@ -1330,6 +1330,12 @@ def color_of(name):
     if name in fixed:
         return fixed[name]
     return PALETTE[sum(ord(c) for c in name) % len(PALETTE)]
+
+
+def readable(t):
+    """工具或 AI 自动起的名字：去掉链接；去完只剩一两个字（比如「这…」）的不算，换下一个来源。"""
+    t = re.sub(r"\s+", " ", re.sub(r"https?://\S+", "", t or "")).strip()
+    return t if len(re.sub(r"\W", "", t)) >= 2 else ""
 
 
 def prompt_title(text, n=40):
@@ -1459,7 +1465,7 @@ def make_item(st, now, cfg, ov, sched, titles, goals, ctx):
         decisions = parse_decisions(st.get("last_text"))
     goal_obj = st.get("goal") or {}
     codex_goal = goals.get(st["id"], {}) if st["tool"] == "codex" else {}
-    title = (ctx["names"].get(key) or st.get("custom_title") or titles.get(st["id"]) or st.get("ai_title") or goal_obj.get("goal")
+    title = (ctx["names"].get(key) or st.get("custom_title") or readable(titles.get(st["id"])) or readable(st.get("ai_title")) or goal_obj.get("goal")
              or prompt_title(st.get("first_prompt"))
              or "（无标题）")
     project = project_of(st.get("cwd"))
@@ -1642,13 +1648,32 @@ def load_archived(conn):
     return {k: v for k, v in got.items() if isinstance(v, (int, float))} if isinstance(got, dict) else {}
 
 
-def load_pins(conn):
-    """置顶的会话 key，新钉的在前。看板上置顶的排在每个标签页最上面，其余按更新时间。"""
+def meta_keys(conn, k):
     try:
-        pins = json.loads(meta_get(conn, "pins", "[]"))
+        keys = json.loads(meta_get(conn, k, "[]"))
     except ValueError:
         return []
-    return [k for k in pins if isinstance(k, str)] if isinstance(pins, list) else []
+    return [x for x in keys if isinstance(x, str)] if isinstance(keys, list) else []
+
+
+def load_pins(conn):
+    """置顶的会话 key，新钉的在前。看板上置顶的排在每个标签页最上面，其余按更新时间。"""
+    return meta_keys(conn, "pins")
+
+
+def board_favs(conn, items, now):
+    """收藏的会话，新收藏的在前。完成了、过了 30 天不在看板上的也留着：标题和项目从「我说过的话」里取。"""
+    by_key, out = {it["key"]: it for it in items}, []
+    for k in meta_keys(conn, "favs"):
+        it = by_key.get(k)
+        if it:
+            out.append({"key": k, "title": it["title"], "tool": it["tool"], "project": it["project"], "last": it["last"], "onBoard": True})
+            continue
+        row = conn.execute("SELECT * FROM prompts WHERE session_key=? ORDER BY ts DESC LIMIT 1", (k,)).fetchone()
+        if row:
+            x = prompt_rows_to_items(conn, [row], now)[0]
+            out.append({"key": k, "title": x["title"], "tool": x["tool"], "project": x["project"], "last": x["ts"], "onBoard": False})
+    return out
 
 
 def build_board(conn, cfg, now=None):
@@ -1728,7 +1753,7 @@ def build_board(conn, cfg, now=None):
         "tzOffsetMin": int(clock(now).astimezone(WORK_TZ).utcoffset().total_seconds() // 60),
         "staleHours": cfg["stale_hours"], "interruptedMin": cfg["interrupted_min"], "windowDays": cfg["window_days"],
         "scanMs": int(meta_get(conn, "last_scan_ms", 0) or 0), "scanIntervalMin": cfg["scan_interval_min"],
-        "groups": groups, "hidden": hidden, "order": load_order(conn), "pins": pins, "archived": archived, "digestTime": cfg["digest_time"], "tzText": tz_text(cfg),
+        "groups": groups, "hidden": hidden, "order": load_order(conn), "pins": pins, "archived": archived, "favs": board_favs(conn, items + hidden, now), "digestTime": cfg["digest_time"], "tzText": tz_text(cfg),
         "topics": [{"id": t["id"], "name": t["name"], "project": t["project"], "projectLabel": tag_of(ctx["tags"], t["project"])[0]}
                    for t in topics if not t["deleted"]],
     }
@@ -2014,6 +2039,13 @@ class App:
                 meta_set(c, "archived", json.dumps(archived, ensure_ascii=False))
                 c.commit()
                 return True, "已归档" if arg.get("on") else "已取消归档"
+            if action == "fav" and key and isinstance(arg, dict):
+                favs = [k for k in meta_keys(c, "favs") if k != key]
+                if arg.get("on"):
+                    favs.insert(0, key)
+                meta_set(c, "favs", json.dumps(favs, ensure_ascii=False))
+                c.commit()
+                return True, "已收藏，在左栏「收藏」里" if arg.get("on") else "已取消收藏"
             if action == "pin" and key and isinstance(arg, dict):
                 pins = [k for k in load_pins(c) if k != key]
                 if arg.get("on"):
