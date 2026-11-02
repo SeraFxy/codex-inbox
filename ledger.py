@@ -31,7 +31,7 @@ import threading
 import time
 import traceback
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, unquote as unquote_url, urlparse
 from urllib.request import Request, urlopen
 
 HOME = os.path.expanduser("~")
@@ -72,6 +72,7 @@ DEFAULTS = {
     "wake_expire_hours": 3,    # 定时唤醒晚了多久就放弃（如 Mac 一直在睡）
     "utc_offset_hours": None,  # 看板按哪个时区算时间；空 = 本机时区。Mac 时区和工作时区不一样时填，如北京时间填 8
     "project_parents": [],     # 这些目录下的每个子目录算一个项目，如 ["~/code"]；其余按 ~/Desktop/<项目>、~/<项目> 推断
+    "feishu_doc_titles": True, # 产出物里的飞书文档用 lark-cli 以你的身份查真实标题；false 就只用 AI 写的说明
 }
 
 HEAD_BYTES = 512 * 1024
@@ -99,6 +100,7 @@ CREATE TABLE IF NOT EXISTS cmux_open (session_key TEXT PRIMARY KEY);
 CREATE TABLE IF NOT EXISTS tags (project TEXT PRIMARY KEY, label TEXT, color TEXT);
 CREATE TABLE IF NOT EXISTS goals (session_key TEXT PRIMARY KEY, goal TEXT, criteria TEXT, status TEXT, at REAL);
 CREATE TABLE IF NOT EXISTS links (session_key TEXT, url TEXT, label TEXT, ts REAL, PRIMARY KEY (session_key, url));
+CREATE TABLE IF NOT EXISTS doc_titles (token TEXT PRIMARY KEY, title TEXT, at REAL);
 CREATE TABLE IF NOT EXISTS images (session_key TEXT, sha TEXT, ts REAL, file TEXT, bytes INTEGER, PRIMARY KEY (session_key, sha));
 CREATE INDEX IF NOT EXISTS images_session ON images(session_key, ts);
 CREATE TABLE IF NOT EXISTS topics (id INTEGER PRIMARY KEY AUTOINCREMENT, project TEXT, name TEXT, aliases TEXT DEFAULT '[]',
@@ -161,7 +163,26 @@ def open_db():
     os.chmod(DB_PATH, 0o600)
     conn.row_factory = sqlite3.Row
     conn.executescript(SCHEMA)
+    migrate_links(conn)
     return conn
+
+
+def migrate_links(conn):
+    """产出物表后加的三列：ctx = AI 给出它的那句话，cat = 飞书 / 代码 / 文件 / 网页，doc = 飞书文档的「类型:token」，用来取真实标题。"""
+    cols = {r[1] for r in conn.execute("PRAGMA table_info(links)")}
+    for col in ("ctx", "cat", "doc"):
+        if col not in cols:
+            try:
+                conn.execute("ALTER TABLE links ADD COLUMN %s TEXT DEFAULT ''" % col)
+            except sqlite3.OperationalError:
+                pass   # 命令行和服务同时打开，另一边已经加上了
+    conn.execute("CREATE INDEX IF NOT EXISTS links_ts ON links(ts)")
+    conn.execute("CREATE INDEX IF NOT EXISTS links_url ON links(url)")
+    rows = conn.execute("SELECT DISTINCT url FROM links WHERE cat IS NULL OR cat = ''").fetchall()
+    for (url,) in rows:
+        conn.execute("UPDATE links SET cat=?, doc=? WHERE url=?", (out_cat(url), feishu_doc(url), url))
+    if rows:
+        conn.commit()
 
 
 def meta_get(conn, k, default=None):
@@ -369,10 +390,33 @@ IMG_EXT = {"image/png": "png", "image/jpeg": "jpg", "image/webp": "webp", "image
 
 CODEISH_RE = re.compile(r"""^\s*([$!>#]|curl\b|wget\b|open\b|"[\w.-]+"\s*:|[\w.-]+=)""")
 LINK_KINDS = {"docx": "飞书文档", "docs": "飞书文档", "doc": "飞书文档", "wiki": "飞书知识库", "base": "飞书多维表格",
-              "sheets": "飞书表格", "minutes": "飞书妙记", "drive": "飞书云盘", "mindnotes": "飞书思维笔记"}
+              "sheets": "飞书表格", "minutes": "飞书妙记", "drive": "飞书云盘", "mindnotes": "飞书思维笔记", "slides": "飞书幻灯片"}
+# AI 提到的本机文件也算产出物。光写路径的只认这些后缀；写成 [名字](路径) 链接的再加 json 和文件夹
+FILE_KINDS = {"md": "Markdown", "markdown": "Markdown", "html": "网页文件", "htm": "网页文件", "pdf": "PDF", "docx": "Word", "doc": "Word",
+              "xlsx": "Excel", "xls": "Excel", "csv": "表格", "tsv": "表格", "pptx": "PPT", "ppt": "PPT", "key": "Keynote",
+              "png": "图片", "jpg": "图片", "jpeg": "图片", "gif": "图片", "svg": "图片", "webp": "图片",
+              "mp4": "视频", "mov": "视频", "mp3": "音频", "wav": "音频", "txt": "文本", "zip": "压缩包", "json": "JSON"}
+BARE_EXTS = sorted((set(FILE_KINDS) - {"json"}), key=len, reverse=True)
+FILE_TAIL_RE = re.compile(r"(.+\.(?:%s))(?![A-Za-z0-9])" % "|".join(BARE_EXTS), re.I)
+MD_FILE_RE = re.compile(r"\[([^\]\n]{1,80})\]\(((?:file://)?(?:~|/)[^)\s]+)\)")
+PATH_RE = re.compile(r"(?<![\w.:/~@-])((?:~|/Users|/private/tmp|/tmp|/Volumes)/[^\s`'\"<>()\[\]{}，。；、）」』|*]+"
+                     r"|[\w.-]+(?:/[^\s`'\"<>()\[\]{}，。；、）」』|*:]+)+)")
+SKIP_FILE_RE = re.compile(r"/(\.claude|\.agents|\.git|node_modules|\.codex/(skills|sessions|memories|rules))(/|$)|^/var/folders/|\.app(/|$)")
+SKIP_FILE_NAMES = {"SKILL.md", "AGENTS.md", "CLAUDE.md", "MEMORY.md"}
+FEISHU_DOC_RE = re.compile(r"^/(docx|docs|doc|wiki|base|sheets|mindnotes|slides|file|drive/folder)/([A-Za-z0-9]{16,})")
+FEISHU_TYPES = {"docx": "docx", "docs": "doc", "doc": "doc", "wiki": "wiki", "base": "bitable", "sheets": "sheet",
+                "mindnotes": "mindnote", "slides": "slides", "file": "file", "drive/folder": "folder"}
+
+
+def file_kind(path):
+    base = os.path.basename(path.rstrip("/"))
+    ext = base.rsplit(".", 1)[1].lower() if "." in base.strip(".") else ""
+    return FILE_KINDS.get(ext) or ("文件" if ext else "文件夹")
 
 
 def link_name(url):
+    if url.startswith("/"):
+        return file_kind(url)
     u = urlparse(url)
     host, path = u.netloc.lower(), u.path
     m = re.search(r"/([^/]+)/-/merge_requests/(\d+)", path)
@@ -392,6 +436,38 @@ def link_name(url):
     return host[4:] if host.startswith("www.") else host
 
 
+def out_cat(url):
+    """产出物分四类：飞书（本租户的文档表格）、代码（MR、流水线、仓库）、文件（本机）、网页（其余）。"""
+    if url.startswith("/"):
+        return "file"
+    u = urlparse(url)
+    host, path = u.netloc.lower(), u.path
+    if (host.endswith(".feishu.cn") or host.endswith(".larksuite.com")) and host.split(".")[0] not in ("open", "www"):
+        return "feishu"
+    if "/-/" in path or host.startswith(("git.", "gitlab.")) or host == "github.com":
+        return "code"
+    return "web"
+
+
+def feishu_doc(url):
+    """飞书文档链接 -> 「类型:token」，按它去飞书查真实标题；别的链接返回空。"""
+    if out_cat(url) != "feishu":
+        return ""
+    m = FEISHU_DOC_RE.match(urlparse(url).path)
+    return "%s:%s" % (FEISHU_TYPES[m.group(1)], m.group(2)) if m else ""
+
+
+def out_text(url, label, title):
+    """产出物显示的名字：飞书文档用真实标题，其次是 AI 写的说明，文件用文件名。"""
+    if title:
+        return title
+    name = link_name(url)
+    core = re.sub(r"^(MR|PR|CI|流水线|任务)\s*", "", label or "").strip()
+    if label and not (core and core in name):   # 说明只是「!1496」「CI 91196」这种编号，用「MR !1496 · chatdam」更好认
+        return label
+    return os.path.basename(url.rstrip("/")) if url.startswith("/") else name
+
+
 def link_label(before):
     """链接前面那句话里最后一小句，去掉「请到」「见」这类引导词，当作链接说明。"""
     t = clean_line(re.split(r"[，。；;！？!?]|[,.](?=\s)", before)[-1])
@@ -403,32 +479,87 @@ def link_label(before):
     return t[-30:] if len(t) >= 2 else ""
 
 
-def extract_links(text):
-    """AI 回复里出现的链接（飞书文档、MR、产物地址等），带上一小段说明文字；代码块和命令行里的不算。"""
+def link_ctx(lines, i, at):
+    """AI 给出这个产出物的那句话：Markdown 链接只留名字，网址换成「（链接）」，家目录写成 ~；只剩链接时带上前一行，太长截命中附近。"""
+    def tidy(t):
+        return URL_RE.sub("（链接）", re.sub(r"\[([^\]\n]*)\]\([^)\s]*\)", r"\1", t)).replace(HOME + "/", "~/")
+    before, after = tidy(lines[i][:at]), tidy(lines[i][at:])
+    t = clean_line(("…" + before[-60:] if len(before) > 60 else before) + (after[:120] + "…" if len(after) > 120 else after))
+    if len(re.sub(r"[（链接）\s:：-]", "", t)) < 4:
+        prev = next((clean_line(tidy(x)) for x in reversed(lines[:i]) if x.strip()), "")
+        if prev:
+            t = (prev[-100:] + " " + t).strip()
+    return t[:200]
+
+
+def local_file(raw, cwd, linked=False):
+    """AI 回复里的一个路径 -> 本机存在的绝对路径；不像产出物（规则文件、依赖、缓存）或已经不在的返回空。"""
+    p = raw[7:] if raw.startswith("file://") else raw
+    if "%" in p:
+        p = unquote_url(p)
+    p = re.sub(r"(#L\d+(-L?\d+)?|:\d+(:\d+)?(-\d+)?)$", "", p.rstrip(".,;:!?)"))
+    if not linked:
+        m = FILE_TAIL_RE.match(p)
+        if not m:
+            return ""
+        p = m.group(1)
+    if p.startswith("~/"):
+        p = HOME + p[1:]
+    elif not p.startswith("/"):
+        if not cwd or "/" not in p:
+            return ""
+        p = os.path.join(cwd, p)
+    p = os.path.normpath(p)
+    if os.path.basename(p) in SKIP_FILE_NAMES or SKIP_FILE_RE.search(p):
+        return ""
+    try:
+        is_dir = os.path.isdir(p)
+        if not (is_dir or os.path.isfile(p)):
+            return ""
+    except (OSError, ValueError):
+        return ""
+    if not is_dir and file_kind(p) in ("文件", "文件夹"):
+        return ""
+    return p
+
+
+def extract_links(text, cwd=""):
+    """AI 回复里给你的产出物：链接（飞书文档、MR、产物地址等）和本机文件，带一小段说明和原话；代码块和命令行里的不算。"""
     text = re.sub(r"```.*?(```|$)", "", text or "", flags=re.S)
+    lines = text.splitlines()
     out, seen = [], set()
-    for m in MD_LINK_RE.finditer(text or ""):
-        url = m.group(2).rstrip(".,;:!?")
-        if url not in seen:
+
+    def add(url, label, i, at):
+        if url and url not in seen and not SKIP_LINK_RE.match(url):
             seen.add(url)
-            out.append((url, clean_line(m.group(1))[:60]))
-    for ln in text.splitlines():
+            out.append((url, label, link_ctx(lines, i, at)))
+
+    for i, ln in enumerate(lines):
         if CODEISH_RE.match(ln):
             continue
+        for m in MD_LINK_RE.finditer(ln):
+            add(m.group(2).rstrip(".,;:!?"), clean_line(m.group(1))[:60], i, m.start())
+        if "/" in ln:
+            for m in MD_FILE_RE.finditer(ln):
+                p = local_file(m.group(2), cwd, linked=True)
+                name = clean_line(m.group(1))[:60]
+                add(p, "" if not p or name in (os.path.basename(p), m.group(2)) else name, i, m.start())
         for m in URL_RE.finditer(ln):
             url = m.group(0).rstrip(".,;:!?*_")
-            if url in seen or len(url) < 12:
-                continue
-            seen.add(url)
-            out.append((url, link_label(ln[:m.start()])))
-    return [(u, l) for u, l in out if not SKIP_LINK_RE.match(u)]
+            if len(url) >= 12 and url not in seen:
+                add(url, link_label(ln[:m.start()]), i, m.start())
+        if "/" in ln:
+            bare = MD_FILE_RE.sub(lambda m: " " * len(m.group(0)), URL_RE.sub(lambda m: " " * len(m.group(0)), ln))
+            for m in PATH_RE.finditer(bare):
+                add(local_file(m.group(1), cwd), "", i, m.start())
+    return out
 
 
 def note_links(st, ts, text):
-    if text and "http" in text:
-        found = extract_links(text)
+    if text and ("http" in text or "/" in text):
+        found = extract_links(text, st.get("cwd") or "")
         if found:
-            st.setdefault("new_links", []).extend([ts, u, l] for u, l in found)
+            st.setdefault("new_links", []).extend([ts, u, l, c] for u, l, c in found)
 
 
 # 你在消息里写「#主题」，会话就归到这个主题。# 前面紧跟字母数字或网址符号的不算（C#、网址锚点），纯数字（[Image #9]）和色值也不算
@@ -508,11 +639,17 @@ def data_url_pairs(blocks):
 
 
 def flush_media(conn, key, st):
-    for ts, url, label in st.pop("new_links", []):
-        conn.execute("INSERT INTO links (session_key, url, label, ts) VALUES (?, ?, ?, ?) "
+    for row in st.pop("new_links", []):
+        ts, url, label = row[:3]
+        ctx = row[3] if len(row) > 3 else ""
+        url = url[:1000]
+        # 同一个会话里多次给出同一个链接：时间取最近一次，说明取最近一次非空的，原话取最近一次的
+        conn.execute("INSERT INTO links (session_key, url, label, ts, ctx, cat, doc) VALUES (?, ?, ?, ?, ?, ?, ?) "
                      "ON CONFLICT(session_key, url) DO UPDATE SET ts=MAX(links.ts, excluded.ts), "
-                     "label=CASE WHEN excluded.label != '' THEN excluded.label ELSE links.label END",
-                     (key, url[:1000], label, ts or 0))
+                     "label=CASE WHEN excluded.label != '' THEN excluded.label ELSE links.label END, "
+                     "ctx=CASE WHEN excluded.ctx != '' AND (links.ctx IS NULL OR links.ctx = '' OR excluded.ts >= links.ts) "
+                     "THEN excluded.ctx ELSE links.ctx END",
+                     (key, url, label, ts or 0, ctx, out_cat(url), feishu_doc(url)))
     for ts, sha, name, size in st.pop("new_images", []):
         conn.execute("INSERT OR IGNORE INTO images (session_key, sha, ts, file, bytes) VALUES (?, ?, ?, ?, ?)",
                      (key, sha, ts or 0, name, size))
@@ -727,7 +864,8 @@ def codex_line(st, line):
             note_hashtag(st, ts, text)
         elif p.get("role") == "assistant" and text.strip():
             st["progress_text"] = text[-1500:]
-            note_links(st, ts, text)
+            if st.get("thread_source") != "subagent":   # 子代理的回复是给主会话的，不是给你的（Claude 的 isSidechain 同理）
+                note_links(st, ts, text)
 
 
 def parse_file(tool, path, st, offset, size):
@@ -1178,15 +1316,12 @@ def merge_batches(items, gap=3):
     return out
 
 
-def session_extras(conn, key, limit=50):
+def session_extras(conn, key):
     g = conn.execute("SELECT goal, criteria, status FROM goals WHERE session_key=?", (key,)).fetchone()
-    links = conn.execute("SELECT url, label, ts FROM links WHERE session_key=? ORDER BY ts DESC LIMIT ?", (key, limit)).fetchall()
     n = conn.execute("SELECT COUNT(*) FROM links WHERE session_key=?", (key,)).fetchone()[0]
     return {
         "goal": g["goal"] if g else "", "criteria": g["criteria"] if g else "",
         "goalStatus": GOAL_STATUS.get(g["status"], g["status"]) if g and g["status"] else "",
-        "links": [{"url": r["url"], "label": r["label"], "name": link_name(r["url"]),
-                   "timeText": fmt_time(r["ts"], time.time()) if r["ts"] else ""} for r in links],
         "linksTotal": n,
     }
 
@@ -1273,7 +1408,7 @@ def search_sessions(conn, q, limit=50, offset=0, tool=""):
                             [key] + args + [8 if conds else 4]).fetchall()
         items = prompt_rows_to_items(conn, prev, now)[:3 if conds else 1]
         head = items[0]
-        ex = session_extras(conn, key, limit=0)
+        ex = session_extras(conn, key)
         out.append({"key": key, "title": head["title"], "project": head["project"], "projectKey": head["projectKey"],
                     "color": head["color"], "tool": head["tool"], "toolLabel": head["toolLabel"], "count": n,
                     "hits": r["hits"], "lastTs": r["last_ts"], "lastText": fmt_time(r["last_ts"], now), "resume": head["resume"],
@@ -1282,14 +1417,145 @@ def search_sessions(conn, q, limit=50, offset=0, tool=""):
                                 for it in items]})
     first = conn.execute("SELECT MIN(ts), COUNT(*), COUNT(DISTINCT session_key) FROM prompts" + by_tool[0], by_tool[1]).fetchone()
     return {"q": q, "total": total, "sessions": out, "all": first[1], "allSessions": first[2],
-            "since": fmt_time(first[0], now) if first[0] else ""}
+            "since": fmt_time(first[0], now) if first[0] else "",
+            "outputHits": count_outputs(conn, q, tool) if q.strip() else 0}
 
 
 def session_prompts(conn, key):
     rows = conn.execute("SELECT * FROM prompts WHERE session_key=? ORDER BY ts", (key,)).fetchall()
     res = {"key": key, "items": prompt_rows_to_items(conn, rows, time.time())}
-    res.update(session_extras(conn, key, limit=200))
+    res.update(session_extras(conn, key))
     return res
+
+
+def _out_where(q, cat="", key="", tool=""):
+    """产出物的搜索条件：每个词都要在链接 / 文件路径、真实标题、AI 写的说明和原话、会话名或项目里出现。"""
+    conds, args = [], []
+    for w in [w for w in (q or "").split() if w][:6]:
+        like = "%" + w.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
+        conds.append("(l.url LIKE ? ESCAPE '\\' OR l.label LIKE ? ESCAPE '\\' OR l.ctx LIKE ? ESCAPE '\\' OR d.title LIKE ? ESCAPE '\\' "
+                     "OR l.session_key IN (SELECT session_key FROM names WHERE title LIKE ? ESCAPE '\\') "
+                     "OR l.session_key IN (SELECT session_key FROM prompts WHERE title LIKE ? ESCAPE '\\' OR project LIKE ? ESCAPE '\\' "
+                     "OR project IN (SELECT project FROM tags WHERE label LIKE ? ESCAPE '\\')))")
+        args += [like] * 8
+    if key:
+        conds.append("l.session_key=?")
+        args.append(key)
+    if tool in ("claude", "codex"):
+        conds.append("l.session_key LIKE ?")
+        args.append(tool + ":%")
+    if cat in OUT_CATS:
+        conds.append("l.cat=?")
+        args.append(cat)
+    return (" WHERE " + " AND ".join(conds)) if conds else "", args
+
+
+OUT_FROM = " FROM links l LEFT JOIN doc_titles d ON l.doc != '' AND d.token = l.doc"
+OUT_CATS = ("feishu", "code", "file", "web")
+
+
+def count_outputs(conn, q, tool=""):
+    where, args = _out_where(q, tool=tool)
+    return conn.execute("SELECT COUNT(DISTINCT l.url)" + OUT_FROM + where, args).fetchone()[0]
+
+
+def session_briefs(conn, keys, now):
+    """会话 key -> 标题、项目、工具，给产出物标出处用。标题和「我说过的话」同一套取法。"""
+    rows = []
+    for k in keys:
+        r = conn.execute("SELECT * FROM prompts WHERE session_key=? ORDER BY ts DESC LIMIT 1", (k,)).fetchone()
+        if r:
+            rows.append(r)
+    out = {}
+    for x in prompt_rows_to_items(conn, rows, now) if rows else []:
+        out[x["key"]] = {k: x[k] for k in ("key", "title", "project", "projectKey", "color", "tool", "toolLabel")}
+    for k in keys:
+        if k not in out:
+            tool = k.split(":", 1)[0]
+            got = conn.execute("SELECT data FROM sessions WHERE key=?", (k,)).fetchone()
+            st = json.loads(got["data"]) if got else {}
+            project = project_of(st.get("cwd") or "")
+            label, color = tag_of(tag_map(conn), project)
+            out[k] = {"key": k, "title": name_map(conn).get(k) or st.get("custom_title") or readable(st.get("ai_title")) or "（未命名会话）",
+                      "project": label, "projectKey": project, "color": color, "tool": tool,
+                      "toolLabel": "Claude" if tool == "claude" else "Codex"}
+    return out
+
+
+def search_outputs(conn, q, cat="", key="", tool="", limit=100, offset=0):
+    """AI 给过你的产出物（链接和本机文件），同一个链接只列一次，带上给过它的会话（最近的在前）和 AI 给出它时的原话。"""
+    now = time.time()
+    where, args = _out_where(q, cat, key, tool)
+    total = conn.execute("SELECT COUNT(DISTINCT l.url)" + OUT_FROM + where, args).fetchone()[0]
+    rows = conn.execute("SELECT l.url, MAX(l.ts) AS ts" + OUT_FROM + where +
+                        " GROUP BY l.url ORDER BY ts DESC LIMIT ? OFFSET ?", args + [limit, offset]).fetchall()
+    cw, cargs = _out_where(q, "", key, tool)
+    counts = {r[0] or "web": r[1] for r in conn.execute("SELECT l.cat, COUNT(DISTINCT l.url)" + OUT_FROM + cw + " GROUP BY l.cat", cargs)}
+    by_tool = ([key], " AND l.session_key=?") if key else (([tool + ":%"], " AND l.session_key LIKE ?") if tool in ("claude", "codex") else ([], ""))
+    items, keys = [], []
+    for r in rows:
+        occ = conn.execute("SELECT l.session_key, l.label, l.ctx, l.ts, d.title" + OUT_FROM + " WHERE l.url=?" + by_tool[1] +
+                           " ORDER BY l.ts DESC", [r["url"]] + by_tool[0]).fetchall()
+        if not occ:
+            continue
+        sess = [{"key": o["session_key"], "ts": o["ts"]} for o in occ]
+        head = occ[0]
+        label = next((o["label"] for o in occ if o["label"]), "")
+        url = r["url"]
+        it = {"url": url, "cat": out_cat(url), "name": link_name(url), "title": head["title"] or "", "label": label,
+              "text": out_text(url, label, head["title"]), "ctx": head["ctx"] or "", "ts": r["ts"], "timeText": fmt_time(r["ts"], now),
+              "nSessions": len(sess), "sessions": sess[:3]}
+        if it["cat"] == "file":
+            it["path"] = home_rel(url)
+            it["gone"] = not os.path.exists(url)
+        items.append(it)
+        keys += [x["key"] for x in sess[:3]]
+    briefs = session_briefs(conn, list(dict.fromkeys(keys)), now)
+    for it in items:
+        for x in it["sessions"]:
+            x.update(briefs.get(x["key"], {}))
+    allc = conn.execute("SELECT COUNT(DISTINCT url), COUNT(DISTINCT session_key) FROM links").fetchone()
+    return {"q": q, "cat": cat, "key": key, "total": total, "counts": counts, "items": items,
+            "all": allc[0], "allSessions": allc[1]}
+
+
+def out_brief(url, label, title, ts, now):
+    """详情里一行产出物要的字段。"""
+    it = {"url": url, "cat": out_cat(url), "name": link_name(url), "text": out_text(url, label, title),
+          "timeText": fmt_time(ts, now) if ts else ""}
+    if it["cat"] == "file":
+        it["path"] = home_rel(url)
+    return it
+
+
+def pending_docs(conn, now, limit=200):
+    """还没取过真实标题的飞书文档（新给的排前面）；上次没取到的（没权限、删了）一周后再试。"""
+    return [r[0] for r in conn.execute(
+        "SELECT l.doc FROM links l LEFT JOIN doc_titles d ON d.token = l.doc WHERE l.doc != '' "
+        "AND (d.token IS NULL OR (d.title = '' AND d.at < ?)) GROUP BY l.doc ORDER BY MAX(l.ts) DESC LIMIT ?",
+        (now - 7 * 86400, limit))]
+
+
+def fetch_doc_titles(docs):
+    """用 lark-cli 以你的身份批量查飞书文档的标题（一次最多 200 篇，不调 AI）。返回 {「类型:token」: 标题}，查不了返回 None。"""
+    if not (os.path.isabs(LARK) and os.access(LARK, os.X_OK)):
+        return None
+    req = [{"doc_token": d.split(":", 1)[1], "doc_type": d.split(":", 1)[0]} for d in docs]
+    r = run([LARK, "api", "POST", "/open-apis/drive/v1/metas/batch_query", "--as", "user",
+             "--data", json.dumps({"request_docs": req})], timeout=40)
+    try:
+        res = json.loads(r.stdout or "")
+    except ValueError:
+        return None
+    if not isinstance(res, dict) or not res.get("ok"):
+        return None
+    got = {}
+    for m in (res.get("data") or {}).get("metas") or []:
+        info = m.get("request_doc_info") or {}
+        tok, typ = info.get("doc_token") or m.get("doc_token"), info.get("doc_type") or m.get("doc_type")
+        if tok and typ:
+            got["%s:%s" % (typ, tok)] = (m.get("title") or "").strip()[:200]
+    return got
 
 
 # ---------------------------------------------------------------- 看板
@@ -1627,7 +1893,7 @@ def make_item(st, now, cfg, ov, sched, titles, goals, ctx):
             "goalStatus": GOAL_STATUS.get(codex_goal.get("status") or saved.get("status") or "", ""),
             "originalTitle": (st.get("custom_title") or titles.get(st["id"]) or st.get("ai_title") or "")
                              if ctx["names"].get(key) else "",
-            "links": ctx["links"].get(key, [])[:8], "linksTotal": len(ctx["links"].get(key, [])),
+            "links": ctx["links"].get(key, [])[:8], "linksTotal": len(ctx["links"].get(key, [])),   # 详情里先列 8 个，展开再按会话取全部
             "firstPrompt": (st.get("first_prompt") or "")[:300],
             "lastPrompt": (st.get("last_prompt") or "")[:300] if st.get("last_prompt") != st.get("first_prompt") else "",
             "lastReply": tail_text(st.get("last_text") or st.get("progress_text")),
@@ -1712,9 +1978,9 @@ def build_board(conn, cfg, now=None):
     items, hidden, hashtags = [], [], {}
     ctx = {"names": name_map(conn), "tags": tag_map(conn), "links": {}, "live": claude_live(),
            "goals": {r["session_key"]: dict(r) for r in conn.execute("SELECT * FROM goals")}}
-    for r in conn.execute("SELECT session_key, url, label, ts FROM links WHERE ts >= ? ORDER BY ts DESC", (now - 30 * 86400,)):
-        ctx["links"].setdefault(r["session_key"], []).append({"url": r["url"], "label": r["label"], "name": link_name(r["url"]),
-                                                             "timeText": fmt_time(r["ts"], now)})
+    for r in conn.execute("SELECT l.session_key, l.url, l.label, l.ts, d.title" + OUT_FROM +
+                          " WHERE l.session_key IN (SELECT key FROM sessions WHERE last_activity >= ?) ORDER BY l.ts DESC", (now - 30 * 86400,)):
+        ctx["links"].setdefault(r["session_key"], []).append(out_brief(r["url"], r["label"], r["title"], r["ts"], now))
     for r in conn.execute("SELECT data FROM sessions WHERE last_activity >= ?", (now - 30 * 86400,)):
         st = json.loads(r["data"])
         if not include_session(st):
@@ -2251,6 +2517,8 @@ class App:
         if action == "open":
             with self.lock:
                 return open_session(self.conn, key)
+        if action == "openfile" and isinstance(arg, dict):
+            return open_output_file(self.conn, self.lock, str(arg.get("path") or ""), bool(arg.get("reveal")))
         if action == "rename" and isinstance(arg, dict):
             title = re.sub(r"\s+", " ", str(arg.get("title") or "")).strip()[:80]
             if not title:
@@ -2265,6 +2533,27 @@ class App:
         self.run_schedules(now)
         self.notify_due(now)
         self.maybe_digest(now)
+        self.sync_doc_titles(now)
+
+    def sync_doc_titles(self, now):
+        """飞书文档换成真实标题：每分钟最多查一批（200 篇），lark-cli 没装、没登录就隔 6 小时再试。"""
+        if not self.cfg.get("feishu_doc_titles", True):
+            return
+        with self.lock:
+            if now < float(meta_get(self.conn, "doc_titles_retry", 0) or 0):
+                return
+            docs = pending_docs(self.conn, now)
+        if not docs:
+            return
+        got = fetch_doc_titles(docs)   # 网络请求不占锁
+        with self.lock:
+            if got is None:
+                meta_set(self.conn, "doc_titles_retry", now + 6 * 3600)
+                log("取飞书文档标题失败（lark-cli 没装或没以用户身份登录），6 小时后再试")
+            else:
+                for d in docs:
+                    self.conn.execute("INSERT OR REPLACE INTO doc_titles (token, title, at) VALUES (?, ?, ?)", (d, got.get(d, ""), now))
+            self.conn.commit()
 
     def run_schedules(self, now):
         with self.lock:
@@ -2403,6 +2692,13 @@ class Handler(BaseHTTPRequestHandler):
             with APP.lock:
                 res = search_sessions(APP.conn, (q.get("q") or [""])[0], 50, int((q.get("offset") or ["0"])[0]), (q.get("tool") or [""])[0])
             return self._send(200, json.dumps(res, ensure_ascii=False))
+        if u.path == "/api/outputs":
+            q = parse_qs(u.query)
+            arg = lambda k, d="": (q.get(k) or [d])[0]
+            with APP.lock:
+                res = search_outputs(APP.conn, arg("q"), arg("cat"), arg("key"), arg("tool"),
+                                     min(int(arg("limit", "100")), 500), int(arg("offset", "0")))
+            return self._send(200, json.dumps(res, ensure_ascii=False))
         if u.path == "/api/session":
             q = parse_qs(u.query)
             with APP.lock:
@@ -2436,6 +2732,21 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(200, json.dumps({"lark": r.returncode == 0, "cmux": c.returncode == 0,
                                                "python": sys.version.split()[0]}, ensure_ascii=False))
         return self._send(404, '{"error":"not found"}')
+
+
+def open_output_file(conn, lock, path, reveal):
+    """打开 AI 给过的本机文件（或在访达里显示）。只开台账记过的；不认识的类型只在访达里显示，不直接运行。"""
+    with lock:
+        known = path.startswith("/") and conn.execute("SELECT 1 FROM links WHERE url=? LIMIT 1", (path,)).fetchone()
+    if not known:
+        return False, "看板没记过这个文件"
+    if not os.path.exists(path):
+        return False, "文件已经不在了：" + home_rel(path)
+    reveal = reveal or (not os.path.isdir(path) and file_kind(path) in ("文件", "文件夹"))
+    r = run(["open", "-R", path] if reveal else ["open", path], timeout=15)
+    if r.returncode != 0:
+        return False, "没打开：" + (r.stderr or r.stdout or "").strip()[-200:]
+    return True, ("已在访达里找到 " if reveal else "已打开 ") + os.path.basename(path.rstrip("/"))
 
 
 def migrate_tz(conn):
@@ -2617,6 +2928,66 @@ def backfill_media():
     log("回填完成：%d 个文件，图片 %d 张（约 %d MB），用时 %d 秒" % (n_files, n_img, size // 1048576, time.time() - t0))
 
 
+def backfill_outputs():
+    """产出物加了「原话」和本机文件后补一遍：重读还在的 Claude 对话记录和 Codex 的全部回复，只跑一次。"""
+    conn = open_db()
+    if meta_get(conn, "outputs_backfill_v1"):
+        return
+    threads = codex_threads()
+    subs = ["codex:" + tid for tid, th in threads.items() if th[0].startswith('{"subagent"')]
+    for i in range(0, len(subs), 500):   # 以前从 Codex 子代理记下的，子代理的回复不是给你的
+        conn.execute("DELETE FROM links WHERE session_key IN (%s)" % ",".join("?" * len(subs[i:i + 500])), subs[i:i + 500])
+    conn.commit()
+    t0, before = time.time(), conn.execute("SELECT COUNT(*) FROM links").fetchone()[0]
+    for path in glob.glob(os.path.join(CLAUDE_PROJECTS, "*", "*.jsonl")):
+        key = "claude:" + session_id_from_path("claude", path)
+        st = {}
+        try:
+            with open(path, encoding="utf-8", errors="replace") as f:
+                for line in f:
+                    if '"type":"assistant"' not in line or '"type":"text"' not in line:
+                        continue
+                    try:
+                        rec = json.loads(line)
+                    except ValueError:
+                        continue
+                    if rec.get("isSidechain") or rec.get("type") != "assistant":
+                        continue
+                    st["cwd"] = rec.get("cwd") or st.get("cwd") or ""
+                    note_links(st, parse_iso(rec.get("timestamp")) or 0, take_text((rec.get("message") or {}).get("content")))
+        except OSError:
+            continue
+        flush_media(conn, key, st)
+        conn.commit()
+    try:
+        c = sqlite3.connect("file:%s?mode=ro" % os.path.join(CODEX_HOME, "thread_history_1.sqlite"), uri=True, timeout=5)
+        cur = c.execute("SELECT thread_id, created_at_ms, item_json FROM thread_items WHERE item_type='agentMessage' ORDER BY rowid")
+        while True:
+            rows = cur.fetchmany(500)
+            if not rows:
+                break
+            for tid, cms, item_json in rows:
+                th = threads.get(tid, ("", "", ""))
+                if th[0] not in ("vscode", "cli"):
+                    continue
+                try:
+                    text = json.loads(item_json).get("text") or ""
+                except ValueError:
+                    continue
+                st = {"cwd": th[1]}
+                note_links(st, (cms or 0) / 1000.0, text)
+                flush_media(conn, "codex:" + tid, st)
+            conn.commit()
+        c.close()
+    except sqlite3.Error as e:
+        log("补产出物时读 Codex 回复失败：%s" % e)
+        return
+    meta_set(conn, "outputs_backfill_v1", time.time())
+    conn.commit()
+    after = conn.execute("SELECT COUNT(*) FROM links").fetchone()[0]
+    log("产出物回填完成：新增 %d 条（链接和文件），用时 %d 秒" % (after - before, time.time() - t0))
+
+
 def cmd_serve(args):
     global APP
     os.umask(0o077)   # 服务新建的数据、图片、日志都只给自己的账号读
@@ -2631,7 +3002,7 @@ def cmd_serve(args):
     srv = ThreadingHTTPServer(("127.0.0.1", cfg["port"]), Handler)
     APP.maybe_scan(0)
     threading.Thread(target=APP.loop, daemon=True).start()
-    threading.Thread(target=lambda: _guard(backfill_media), daemon=True).start()
+    threading.Thread(target=lambda: (_guard(backfill_media), _guard(backfill_outputs)), daemon=True).start()
     log("服务启动，端口 %s" % cfg["port"])
     srv.serve_forever()
 

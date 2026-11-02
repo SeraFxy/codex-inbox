@@ -2,7 +2,7 @@
 
 中文说明：[README.md](README.md)
 
-When you run many Codex and Claude Code sessions at once, it is easy to lose track of which one is waiting for your reply, which one is waiting on a colleague, and which one has a release scheduled tonight. codex-inbox is a local dashboard on your Mac. It reads the transcripts both tools already keep on disk, groups sessions by who they are waiting on, notifies you when something is due, and keeps its own copy of what you asked, the links the AI gave you, and the images you sent.
+When you run many Codex and Claude Code sessions at once, it is easy to lose track of which one is waiting for your reply, which one is waiting on a colleague, and which one has a release scheduled tonight. codex-inbox is a local dashboard on your Mac. It reads the transcripts both tools already keep on disk, groups sessions by who they are waiting on, notifies you when something is due, and keeps its own copy of what you asked, the links and files the AI gave you, and the images you sent.
 
 The name only says Codex to keep it short. **Both Codex (desktop app and CLI) and Claude Code are supported.**
 
@@ -26,7 +26,8 @@ INSTALL.md is written in Chinese; coding agents follow it fine. To install by ha
 - **Reminders**: if the status line carries a future time, the session waits under "waiting for a time"; when it is due it moves to "needs you" and a Mac notification pops up. Clicking the notification opens the dashboard. Every card can be snoozed for 15 minutes, 1 hour, 3 hours, until tonight, until tomorrow morning or until next Monday.
 - **Decisions waiting on you**: when the AI lists what it needs you to decide as `❓ question｜option｜option` lines, the expanded card shows each one with option buttons and builds a single reply from your picks (unpicked ones are written as 「待定」, "undecided", and you can add a note). The 「复制并打开会话」 (copy and open) button copies the reply and opens the session; you paste it with ⌘V and press Enter yourself. The dashboard never sends for you: every message makes the AI re-read the whole conversation, so you decide when to send.
 - **"What I said"**: every message you sent to Codex or Claude, grouped by session, with multi-keyword search and per-message copy. Claude Code deletes transcripts after 30 days by default; this keeps a plain-text copy (about 20 MB a year).
-- **Keeps goals, links and images**: Codex goals, the 🎯 goal lines, links the AI gave you in its replies (Feishu docs, merge requests, GitHub and so on; links inside code blocks and command lines are skipped), and images you sent to the AI (deduplicated by content). They stay even if the original session is deleted.
+- **Outputs**: links the AI gave you in its replies (Feishu docs, merge requests, GitHub and so on) and local files (Markdown, web pages, PDFs, spreadsheets, images and the like, written as a path or a `[name](path)` link; the file has to exist). Anything inside code blocks and command lines is skipped. "Outputs" in the header filters them by Feishu / code / files / web and searches titles, links, the sentence the AI wrote and session names; each link is listed once. Every entry shows what the AI said when it gave it and which sessions gave it; click a session name to jump back to its details on the board (sessions no longer on the board open directly). Local files open in their default app. A session's details list the latest 8, with "show all" and a filter. With `lark-cli` installed and signed in as you, Feishu docs show their real titles (one Feishu API call per 200 docs, no AI; set `feishu_doc_titles` to `false` to turn it off).
+- **Keeps goals and images**: Codex goals, the 🎯 goal lines, and images you sent to the AI (deduplicated by content). They stay even if the original session is deleted. Sessions found in "What I said" have a "show on board" button that takes you back to their status, goal and outputs.
 - **"Done" is not lost**: a session you mark done moves to the bottom and comes back by itself when you talk to it again.
 - **Closing a cmux tab marks the session done**: no need to mark it done in both places; the dashboard moves it to "Done" on its next refresh. Sessions that are scheduled, waiting on a colleague, or waiting for a time that has not come yet are left alone (you probably closed them to free memory, and they still need to remind you). Reopen the session in cmux and it comes back.
 - **Session names and tags**: a session's name comes from the name you gave it in the cmux terminal sidebar, if any. Project tags can be renamed and given an emoji (they stay gray: color is reserved for status).
@@ -34,7 +35,7 @@ INSTALL.md is written in Chinese; coding agents follow it fine. To install by ha
   - Scheduled wake-ups: a Claude session running in the cmux terminal can use `ledger schedule` to resume itself at a set time (for example, a release tonight). Needs cmux, with cmux set to allow background programs to control it (`ledger cmux-setup`, see "Known limitations").
   - Daily Feishu digest: with the Feishu CLI `lark-cli` installed and `feishu_open_id` set in the config, a summary is sent to you as a Feishu direct message every morning. `ledger feishu-setup` fills it in and sends a test.
 
-Everything is read from local files. **It makes no AI calls and spends no tokens.** The server only listens on `127.0.0.1`; the only network request is the optional Feishu digest.
+Everything is read from local files. **It makes no AI calls and spends no tokens.** The server only listens on `127.0.0.1`; the only network requests are the optional Feishu digest and Feishu doc titles.
 
 ## Install
 
@@ -105,6 +106,7 @@ The first install copies `config.example.json` to `config.json`. Run `install.sh
 | `wake_expire_hours` | `3` | A scheduled wake-up that is late by more than this is dropped (for example, the Mac was asleep) |
 | `utc_offset_hours` | empty | Time zone the dashboard works in; empty means the Mac's own time zone. Set it when your Mac's time zone differs from the one you schedule work in, e.g. `8` if you are abroad but work on Beijing time. Times in status lines and `ledger schedule` are read in this zone too |
 | `project_parents` | `[]` | Every subfolder of these folders counts as a project, e.g. `["~/code", "~/work/repos"]`. When empty, projects are guessed from `~/Desktop/<project>` and `~/<project>` |
+| `feishu_doc_titles` | `true` | Look up the real titles of Feishu docs in Outputs with `lark-cli`, as you; `false` keeps the AI's own wording |
 
 ## Commands
 
@@ -130,7 +132,7 @@ The first install copies `config.example.json` to `config.json`. Run `install.sh
 | `~/.codex/sessions/`, `~/.codex/*.sqlite`, `~/.codex/session_index.jsonl` | Codex sessions, titles, goals, your messages and images |
 | `~/Library/Application Support/cmux/session-*.json` | Session names you set in the cmux sidebar (read only) |
 
-Stored in the install directory (none of it goes into git; `data/` and `logs/` are readable only by your own account): `data/ledger.db` (session status, your actions, topics, your messages, goals, links), `data/images/` (images, a few hundred take one or two hundred MB), `logs/`, `config.json`.
+Stored in the install directory (none of it goes into git; `data/` and `logs/` are readable only by your own account): `data/ledger.db` (session status, your actions, topics, your messages, goals, outputs), `data/images/` (images, a few hundred take one or two hundred MB), `logs/`, `config.json`.
 
 ## Tested versions
 

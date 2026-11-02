@@ -352,6 +352,13 @@ kbd.k.lg { min-width: 22px; height: 22px; padding: 0 6px; border-radius: 6px; fo
 .links a:hover { color: var(--bk-run-ink); text-decoration: underline; }
 .links .lt { flex: none; margin-left: auto; font: 11px var(--bk-mono); color: var(--bk-ink-3); }
 .lmore { font-size: 12px; line-height: 18px; color: var(--bk-ink-3); }
+.dout .lbar { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; margin-left: -8px; }
+.lfilter {
+  width: 100%; height: 36px; padding: 0 12px; border: 1px solid var(--bk-line-strong); border-radius: 12px; background: var(--bk-surface);
+  font-size: 13px; outline: none; transition: border-color .12s, box-shadow .12s;
+}
+.lfilter:focus { border-color: var(--bk-ink-1); box-shadow: 0 0 0 4px var(--bk-ring); }
+.lfilter::placeholder { color: var(--bk-ink-3); }
 .info { display: flex; flex-direction: column; border-top: 1px solid var(--bk-sunken); }
 .info > div { display: grid; grid-template-columns: 80px minmax(0, 1fr) auto; gap: 12px; align-items: center; min-height: 40px; padding: 4px 0; border-bottom: 1px solid var(--bk-sunken); }
 .info .k { font-size: 13px; line-height: 20px; color: var(--bk-ink-3); }
@@ -426,6 +433,33 @@ kbd.k.lg { min-width: 22px; height: 22px; padding: 0 6px; border-radius: 6px; fo
 .thumbs { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
 .thumbs a { display: block; border: 1px solid var(--bk-line); border-radius: 8px; overflow: hidden; background: var(--bk-sunken); }
 .thumbs img { display: block; height: 76px; max-width: 220px; object-fit: cover; }
+/* 产出物：AI 给你的链接和文件，同一个链接只列一次 */
+.olist { display: flex; flex-direction: column; border: 1px solid var(--bk-line); border-radius: 14px; background: var(--bk-surface); box-shadow: var(--bk-e1); }
+.orow { display: grid; grid-template-columns: 88px minmax(0, 1fr) auto; gap: 4px 16px; padding: 12px 16px; border-top: 1px solid var(--bk-sunken); }
+.orow:first-child { border-top: 0; }
+.orow .ok { font-size: 12px; line-height: 22px; color: var(--bk-ink-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.orow .om { min-width: 0; display: flex; flex-direction: column; gap: 4px; }
+.orow .ot { font-size: 14px; line-height: 22px; font-weight: 600; color: var(--bk-ink-1); text-decoration: none; word-break: break-word; }
+.orow .ot:hover { color: var(--bk-run-ink); text-decoration: underline; }
+.orow .ot.gone { color: var(--bk-ink-3); text-decoration: line-through; }
+.orow .op { font: 12px/18px var(--bk-mono); color: var(--bk-ink-3); word-break: break-all; }
+.orow .oc { margin: 0; font-size: 13px; line-height: 20px; color: var(--bk-ink-2); word-break: break-word;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.orow .os { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 16px; font-size: 12px; line-height: 18px; color: var(--bk-ink-3); }
+.orow .sl { min-width: 0; max-width: 100%; padding: 0; border: 0; background: none; color: var(--bk-ink-2); font-size: 12px; line-height: 18px; text-align: left; cursor: pointer;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.orow .sl:hover { color: var(--bk-ink-1); text-decoration: underline; }
+.orow .oa { display: flex; flex-direction: column; align-items: flex-end; gap: 4px; }
+.orow .otm { font: 12px/22px var(--bk-mono); color: var(--bk-ink-3); white-space: nowrap; }
+.orow .oacts { display: flex; gap: 2px; opacity: 0; transition: opacity .12s; }
+.orow:hover .oacts, .orow:focus-within .oacts { opacity: 1; }
+@media (hover: none) { .orow .oacts { opacity: 1; } }
+.hsum .hl1 { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; }
+.hsum .btn.xs { height: 24px; margin: -3px 0; }
+.ocats { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; }
+.ocats .seg.src { align-self: flex-start; max-width: 100%; overflow-x: auto; scrollbar-width: none; }
+.ocats .seg.src button { flex: none; white-space: nowrap; }
+.orow .os1 { display: inline-flex; align-items: center; gap: 6px; min-width: 0; max-width: 100%; }
 mark { background: var(--bk-lime-mark); color: #1B2026; border-radius: 3px; box-shadow: 0 0 0 2px var(--bk-lime-mark); }
 
 /* 改项目短码、新建或改名主题 */
@@ -462,6 +496,8 @@ mark { background: var(--bk-lime-mark); color: #1B2026; border-radius: 3px; box-
   .hline { flex-wrap: wrap; }
   .hfoot { margin-left: -8px; }
   .htop .hm { margin-left: 0; width: 100%; }
+  .orow { grid-template-columns: minmax(0, 1fr); padding: 12px; }
+  .orow .oa { flex-direction: row; flex-wrap: wrap; align-items: center; justify-content: space-between; }
 }
 </style>
 </head>
@@ -477,6 +513,7 @@ mark { background: var(--bk-lime-mark); color: #1B2026; border-radius: 3px; box-
       <div class="seg src" id="srcseg" role="group" aria-label="只看哪个工具的会话"></div>
       <button type="button" class="btn sec searchbtn" onclick="goSearch()"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg><span>搜会话和说过的话</span><kbd class="k md">⌘K</kbd></button>
       <a class="btn ghost" href="#history" onclick="event.preventDefault();setTab('history')"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 5.5h14a1.5 1.5 0 0 1 1.5 1.5v8a1.5 1.5 0 0 1-1.5 1.5h-8l-4.5 3.5V16.5H5A1.5 1.5 0 0 1 3.5 15V7A1.5 1.5 0 0 1 5 5.5Z"/></svg>我说过的话</a>
+      <a class="btn ghost" href="#outputs" title="AI 给你的链接和文件，能搜、能跳回会话" onclick="event.preventDefault();goOutputs()"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 3.5H7A2.5 2.5 0 0 0 4.5 6v12A2.5 2.5 0 0 0 7 20.5h10a2.5 2.5 0 0 0 2.5-2.5V9L14 3.5Z"/><path d="M14 3.5V9h5.5"/><path d="M8.5 13.5h7M8.5 17h4"/></svg>产出物</a>
     </div>
   </header>
   <main class="split" id="split">
@@ -523,11 +560,12 @@ mark { background: var(--bk-lime-mark); color: #1B2026; border-radius: 3px; box-
     </header>
     <nav class="seg" aria-label="视图">
       <a href="#" onclick="event.preventDefault();setTab('board')">看板</a>
-      <a href="#history" aria-current="page" onclick="event.preventDefault()">我说过的话</a>
+      <a href="#history" id="seg-history" aria-current="page" onclick="event.preventDefault();setTab('history')">我说过的话</a>
+      <a href="#outputs" id="seg-outputs" onclick="event.preventDefault();setTab('outputs')">产出物</a>
     </nav>
   </div>
   <div class="hsearch">
-    <label for="q" class="sr-only">搜索我说过的话</label>
+    <label for="q" class="sr-only" id="q-label">搜索我说过的话</label>
     <div class="search">
       <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
       <input id="q" type="search" autocomplete="off" placeholder="搜你发给 Claude / Codex 的话、会话名或标签，多个词用空格隔开">
@@ -609,7 +647,7 @@ function esc(s) {
 function clip(text) { clips[++clipN] = text; return clipN; }
 function domId(key) { return String(key).replace(/[^a-zA-Z0-9]/g, ""); }
 function selecting() { return !!String(window.getSelection()); }
-function typing() { const el = document.activeElement; return !!(el && el.matches(".reply textarea, .tagpop input, .tagpop select, .menu input")); }
+function typing() { const el = document.activeElement; return !!(el && el.matches(".reply textarea, .tagpop input, .tagpop select, .menu input, .lfilter")); }
 function ime(e) { return e.isComposing || e.keyCode === 229; }   // 中文输入法还在选字：回车是上屏、Esc 是取消，不算提交
 function num(n) { return Number(n || 0).toLocaleString("en-US"); }
 
@@ -823,6 +861,7 @@ function setSrc(t) {
   fillView();
   render();
   if (hLoaded) search(hq);
+  if (oLoaded) searchOut(oq);
 }
 
 let localAt = 0;   // 本地最近一次改顺序、置顶的时间
@@ -856,6 +895,7 @@ async function refresh() {
   await load("force");
   busy = false; renderTop();
   if (tab === "history") search(hq);
+  if (tab === "outputs") searchOut(oq);
 }
 async function post(action, key, arg) {
   const r = await fetch("/api/action", {
@@ -917,10 +957,22 @@ function tagChip(x) {
   return '<button type="button" class="chip" title="点一下改这个项目的短码" data-p="' + esc(x.projectKey) + '" data-l="' + esc(x.project) +
     '" data-c="' + esc(x.color) + '" onclick="event.stopPropagation();editTag(this)">' + esc(x.project) + "</button>";
 }
+function outLink(l, cls, inner) {
+  // 产出物的名字：链接新标签页打开；本机文件让服务用默认应用打开（浏览器开不了本机文件）
+  const c = cls ? ' class="' + cls + '"' : "", t = inner || esc(l.text);
+  if (l.cat === "file") return '<a href="#"' + c + ' title="' + esc(l.path || l.url) + (l.gone ? "（已经不在了）" : "") +
+    '" onclick="event.preventDefault();event.stopPropagation();openFile(clips[' + clip(l.url) + '])">' + t + "</a>";
+  return '<a href="' + esc(l.url) + '"' + c + ' target="_blank" rel="noopener" title="' + esc(l.url) + '">' + t + "</a>";
+}
 function linkList(links) {
   return '<ul class="links">' + links.map(l =>
-    '<li><span class="lk">' + esc(l.label ? l.name : "") + '</span><a href="' + esc(l.url) + '" target="_blank" rel="noopener" title="' + esc(l.url) + '">' +
-    esc(l.label || l.name) + '</a><span class="lt">' + esc(l.timeText) + "</span></li>").join("") + "</ul>";
+    '<li><span class="lk">' + esc(l.text !== l.name ? l.name : "") + "</span>" + outLink(l) + '<span class="lt">' + esc(l.timeText) + "</span></li>").join("") + "</ul>";
+}
+async function openFile(path, reveal) {
+  try {
+    const res = await post("openfile", "", { path, reveal: !!reveal });
+    toast(res.message || (res.ok ? "已打开" : "没打开"));
+  } catch (e) { toast("打开失败：本机服务没响应"); }
 }
 function topicChip(it) {
   const t = it.topic, name = !t ? "+ 主题" : t.project === it.projectKey ? t.name : plabel(t.project) + " · " + t.name;
@@ -997,6 +1049,7 @@ function render() {
   renderQueue();
   renderDetail();
   if (tab === "history" && hReady) renderHistory();
+  if (tab === "outputs" && oReady) renderOutputs();
 }
 function setView(v) {
   view = v; store("ledger.view", v);
@@ -1080,14 +1133,23 @@ function favMore(el, key) {
   showMenu(el, key, mi(ico("open", 14) + "打开会话", "closeMenu();openSession(clips[" + clip(key) + "])") + mi("取消收藏", "toggleFav(clips[" + clip(key) + "])"));
 }
 function goFav(key) {
+  if (!locate(key)) openSession(key);   // 不在看板上了（完成很久、超过 30 天）：直接打开
+}
+function locate(key) {
+  // 在看板上找到这个会话并打开它的详情：来源筛选、左栏范围、标签页不对就切过去。不在看板上返回 false
   const it = findItem(key);
-  if (!it) return openSession(key);   // 不在看板上了（完成很久、超过 30 天）：直接打开
+  if (!it) return false;
+  if (tab !== "board") setTab("board");
   if (!srcOk(it)) { src = "all"; store("ledger.src", src); }
-  if (!inScope(it)) { scope = archivedP(railProject(it)) ? { t: "p", p: railProject(it) } : { t: "all" }; store("ledger.scope", scope); }
+  if (!inScope(it)) {   // 归档的主题、项目里的会话，「全部」里不列，切到它所在的那一格
+    scope = it.topic && archivedT(it.topic.id) ? { t: "t", id: it.topic.id } : archivedP(railProject(it)) ? { t: "p", p: railProject(it) } : { t: "all" };
+    store("ledger.scope", scope);
+  }
   view = it.group === "hidden" ? "hidden" : TABS.find(v => VIEWS[v].groups.includes(it.group)) || view; store("ledger.view", view);
   pick(key);
   const r = document.getElementById("row-" + domId(key));
   if (r) r.scrollIntoView({ block: "nearest" });
+  return true;
 }
 function topicRow(x, label) {
   return '<div class="rt">' + railItem(label, { t: "t", id: x.t.id }, x.c, "sub", x.t.id) +
@@ -1483,12 +1545,47 @@ function renderDetail() {
   html += replyBox(it);
   html += convo(it);
   if (d.goal || !hidden) html += goalSec(it);
-  if (d.links && d.links.length)
-    html += '<div class="part"><div class="sec-hd"><span class="sec-t">AI 给过的链接</span><span class="mono">' + d.linksTotal + " 个</span></div>" + linkList(d.links) +
-      (d.linksTotal > d.links.length ? '<span class="lmore">这里只列最近 ' + d.links.length + " 个，全部在「我说过的话」里展开这个会话查看</span>" : "") + "</div>";
+  html += outSec(it);
   html += infoSec(it);
   el.innerHTML = '<div class="detail-in">' + html + "</div>";
 }
+// 详情里的「AI 给的产出物」：先列最近 8 个，展开后按会话取全部；多于 12 个时可以在里面找
+const dOut = {};    // 会话 key -> { total, items }
+const dOutQ = {};   // 会话 key -> 详情里筛产出物的词
+function outMatch(l, q) {
+  const hay = (l.text + " " + l.name + " " + l.url + " " + (l.ctx || "")).toLowerCase();
+  return q.toLowerCase().split(/\s+/).filter(Boolean).every(w => hay.includes(w));
+}
+function outRows(key) {
+  const it = findItem(key), got = dOut[key], q = dOutQ[key] || "";
+  if (!it) return "";
+  const list = got ? got.items.filter(l => !q || outMatch(l, q)) : it.details.links;
+  return list.length ? linkList(list) : '<span class="lmore">这个会话的产出物里没有「' + esc(q) + "」</span>";
+}
+function outSec(it) {
+  const d = it.details, k = esc(it.key), got = dOut[it.key];
+  if (!d.linksTotal) return "";
+  if (got && got.total !== d.linksTotal) expandOut(it.key, true);   // 又给了新的：悄悄重取
+  let html = '<div class="part dout"><div class="sec-hd"><span class="sec-t">AI 给的产出物</span><span class="mono">' + num(d.linksTotal) + " 个</span></div>";
+  if (got && got.items.length > 12)
+    html += '<input class="lfilter" type="search" autocomplete="off" placeholder="在这个会话的 ' + num(got.items.length) + ' 个产出物里找：名字、链接、AI 的原话" value="' +
+      esc(dOutQ[it.key] || "") + '" oninput="dOutQ[\'' + k + '\']=this.value;document.getElementById(\'dout-list\').innerHTML=outRows(\'' + k + '\')">';
+  html += '<div id="dout-list">' + outRows(it.key) + "</div>";
+  if (d.linksTotal > d.links.length || got)
+    html += '<div class="lbar">' + (got ? btn("收起，只看最近 " + d.links.length + " 个" + ico("up"), "foldOut('" + k + "')", "ghost sm")
+      : btn("展开全部 " + num(d.linksTotal) + " 个" + ico("down"), "expandOut('" + k + "')", "ghost sm")) +
+      btn("到「产出物」里搜", "goOutputs('', '" + k + "')", "ghost sm", "在产出物页里只看这个会话的，能和别的会话一起搜") + "</div>";
+  return html + "</div>";
+}
+async function expandOut(key, quiet) {
+  try {
+    const r = await fetch("/api/outputs?limit=500&key=" + encodeURIComponent(key), { cache: "no-store" });
+    const res = await r.json();
+    dOut[key] = { total: (findItem(key) || { details: {} }).details.linksTotal, items: res.items };
+  } catch (e) { if (!quiet) toast("没取到：本机服务没响应"); return; }
+  if (selKey === key && tab === "board" && !typing()) renderDetail();
+}
+function foldOut(key) { delete dOut[key]; delete dOutQ[key]; renderDetail(); }
 function snoozeAt(opt) {
   // 和服务端 snooze_until 同一套算法，按工作时区算出几点，不让人心算
   const n = nowTs(), d = wd(n), base = n - (d.getUTCHours() * 3600 + d.getUTCMinutes() * 60 + d.getUTCSeconds());
@@ -1654,37 +1751,49 @@ async function saveTag(reset) {
 }
 
 // ---------------- 我说过的话（按会话）
-let tab = location.hash === "#history" ? "history" : (store("ledger.tab") || "board");
-let hq = "", hSessions = [], hTotal = 0, hAll = 0, hAllSessions = 0, hSince = "", hTimer = null, hLoaded = false, hReady = false;
-const hFull = {};      // 会话 key -> 这个会话里你说过的全部话、目标、链接
+const TAB_HASH = { history: "#history", outputs: "#outputs" };
+let tab = location.hash === "#history" ? "history" : location.hash === "#outputs" ? "outputs" : (store("ledger.tab") || "board");
+let hq = "", hSessions = [], hTotal = 0, hAll = 0, hAllSessions = 0, hSince = "", hOutHits = 0, hTimer = null, hLoaded = false, hReady = false;
+const hFull = {};      // 会话 key -> 这个会话里你说过的全部话、目标
 const hOpen = {};      // 展开的会话
 const hLong = {};      // 展开全文的单条
 function setTab(t) {
+  const prev = tab;
   tab = t; store("ledger.tab", t);
   document.getElementById("view-board").hidden = t !== "board";
-  document.getElementById("view-history").hidden = t !== "history";
-  history.replaceState(null, "", t === "history" ? "#history" : "#");
-  if (t === "history") { if (!hLoaded) search(hq); else if (hReady) renderHistory(); }
+  document.getElementById("view-history").hidden = t === "board";
+  history.replaceState(null, "", TAB_HASH[t] || "#");
+  if (t === "board") return;
+  // 「我说过的话」和「产出物」共用一个搜索框，各记各的词
+  const q = document.getElementById("q"), out = t === "outputs";
+  document.getElementById("seg-history").setAttribute("aria-current", out ? "false" : "page");
+  document.getElementById("seg-outputs").setAttribute("aria-current", out ? "page" : "false");
+  q.placeholder = out ? "搜 AI 给你的链接和文件：标题、链接、AI 的原话、会话名或项目" : "搜你发给 Claude / Codex 的话、会话名或标签，多个词用空格隔开";
+  document.getElementById("q-label").textContent = out ? "搜索产出物" : "搜索我说过的话";
+  if (prev !== t || q.value !== (out ? oq : hq)) q.value = out ? oq : hq;
+  document.getElementById("q-clear").hidden = !q.value;
+  if (out) { if (!oLoaded) searchOut(oq); else if (oReady) renderOutputs(); }
+  else { if (!hLoaded) search(hq); else if (hReady) renderHistory(); }
 }
 function goSearch() {
-  setTab("history");
+  if (tab !== "outputs") setTab("history");
   const q = document.getElementById("q");
   q.focus(); q.select();
 }
 function clearSearch() {
   const q = document.getElementById("q");
   q.value = ""; q.focus();
-  search("");
+  if (tab === "outputs") searchOut(""); else search("");
 }
 async function search(q, more) {
   hq = q; hLoaded = true;
-  document.getElementById("q-clear").hidden = !q;
+  if (tab === "history") document.getElementById("q-clear").hidden = !q;
   const off = more ? hSessions.length : 0;
   const r = await fetch("/api/sessions?q=" + encodeURIComponent(q) + "&offset=" + off + (src === "all" ? "" : "&tool=" + src), { cache: "no-store" });
   const res = await r.json();
   if (q !== hq) return;  // 打字快时旧结果晚到，丢掉
   hSessions = more ? hSessions.concat(res.sessions) : res.sessions;
-  hTotal = res.total; hAll = res.all; hAllSessions = res.allSessions; hSince = res.since;
+  hTotal = res.total; hAll = res.all; hAllSessions = res.allSessions; hSince = res.since; hOutHits = res.outputHits || 0;
   hReady = true;
   renderHistory();
 }
@@ -1703,9 +1812,9 @@ async function toggleSession(key) {
   hOpen[key] = true;
   renderHistory();
 }
-function hl(text) {
+function hl(text, q) {
   let out = esc(text);
-  const words = hq.split(/\s+/).filter(Boolean).map(w => esc(w).replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
+  const words = (q == null ? hq : q).split(/\s+/).filter(Boolean).map(w => esc(w).replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
   if (words.length) out = out.replace(new RegExp("(" + words.join("|") + ")", "gi"), "<mark>$1</mark>");
   return out;
 }
@@ -1728,24 +1837,24 @@ function line(it, id) {
     btn("复制", "copyClip(" + clip(text) + ")", "ghost xs") + "</span></div>";
 }
 function sessExtra(full) {
-  if (!full || (!full.goal && !(full.links || []).length)) return "";
-  let out = '<div class="sess-extra">';
-  if (full.goal) out += '<span class="sec-l">目标' + (full.goalStatus ? '<span class="pill">' + esc(full.goalStatus) + "</span>" : "") +
-    '</span><span class="goal-sub">' + esc(full.goal) + (full.criteria ? "\n完成标准：" + esc(full.criteria) : "") + "</span>";
-  if ((full.links || []).length) out += '<span class="sec-l">AI 给过的链接 · ' + full.linksTotal + "，最近的在前</span>" + linkList(full.links);
-  return out + "</div>";
+  if (!full || !full.goal) return "";
+  return '<div class="sess-extra"><span class="sec-l">目标' + (full.goalStatus ? '<span class="pill">' + esc(full.goalStatus) + "</span>" : "") +
+    '</span><span class="goal-sub">' + esc(full.goal) + (full.criteria ? "\n完成标准：" + esc(full.criteria) : "") + "</span></div>";
 }
 function scard(s, si, faces) {
   const k = esc(s.key), open = hOpen[s.key], full = hFull[s.key];
   const items = open ? (full ? full.items : []) : s.preview;
   const fk = faces[s.key];
-  const meta = [hq ? "命中 " + s.hits : "", s.count + " 句", s.linksTotal ? s.linksTotal + " 个链接" : "", s.lastTs ? when(s.lastTs) : s.lastText].filter(Boolean).join(" · ");
-  const more = open ? "收起" + ico("up") : (s.count > 1 ? "展开全部 " + s.count + " 句" : "展开") + (s.goal || s.linksTotal ? "、目标和链接" : "") + ico("down");
+  const meta = [hq ? "命中 " + s.hits : "", s.count + " 句", s.lastTs ? when(s.lastTs) : s.lastText].filter(Boolean).join(" · ");
+  const more = open ? "收起" + ico("up") : (s.count > 1 ? "展开全部 " + s.count + " 句" : "展开") + (s.goal ? "和目标" : "") + ico("down");
   return '<article class="hcard" id="hs-' + domId(s.key) + '"><div class="fc">' + (fk ? face(fk, 24, si, REASON[fk]) : "") + "</div>" +
     '<div class="hbody"><div class="htop">' + tagChip(s) + "<h3>" + hl(s.title) + '</h3>' + toolChip(s) + '<span class="hm">' + esc(meta) + "</span></div>" +
     (open ? sessExtra(full) : "") +
     '<div class="hlines">' + items.map((it, i) => line(it, (open ? "f" : "p") + si + "_" + i)).join("") + "</div>" +
-    '<div class="hfoot">' + btn(more, "toggleSession('" + k + "')", "ghost sm") + btn("打开会话" + ico("open"), "openSession('" + k + "',this)", "ghost sm") + "</div></div></article>";
+    '<div class="hfoot">' + btn(more, "toggleSession('" + k + "')", "ghost sm") +
+    (findItem(s.key) ? btn("在看板里看", "locate('" + k + "')", "ghost sm", "回到看板，打开这个会话的详情：现状、目标、产出物、会话信息") : "") +
+    btn("打开会话" + ico("open"), "openSession('" + k + "',this)", "ghost sm") +
+    (s.linksTotal ? btn("AI 给的产出物 " + num(s.linksTotal) + " 个", "goOutputs('', '" + k + "')", "ghost sm", "到「产出物」里只看这个会话的") : "") + "</div></div></article>";
 }
 function dayHead(ts) {
   const diff = dayNo(ts) - dayNo(nowTs());
@@ -1754,14 +1863,16 @@ function dayHead(ts) {
   return '<div class="dayh"><b>' + label + "</b><span>" + (diff >= -1 ? md(ts) + " " : "") + week(ts) + "</span></div>";
 }
 function renderHistory() {
-  document.getElementById("hsum").innerHTML = (hq
+  document.getElementById("hsum").innerHTML = '<span class="hl1">' + (hq
     ? '<span class="mono hit">找到 ' + num(hTotal) + " 个会话</span>"
     : '<span class="mono">共 ' + num(hAllSessions) + " 个会话 · " + num(hAll) + " 句 · 最早到 " + esc(hSince) + "</span>") +
+    (hq && hOutHits ? btn("AI 给的产出物里有 " + num(hOutHits) + " 个对得上" + ico("right", 12), "goOutputs(hq)", "ghost xs") : "") + "</span>" +
     '<span class="note">' + ico("info", 13) + "Claude Code 默认只保留最近 30 天的对话记录，更早的只剩台账另存的你说过的话</span>";
   const list = document.getElementById("hlist");
   if (hq && !hSessions.length) {
     list.innerHTML = '<div class="dash" style="margin: 0; padding: 20px; gap: 14px">' + face("search", 36) + '<span class="tx"><b>翻遍了，没找到「' + esc(hq) +
-      "」</b><span>换个说法，或者少打几个词试试。</span></span></div>";
+      "」</b><span>" + (hOutHits ? "你没说过这句，但 AI 给你的产出物里有 " + num(hOutHits) + " 个对得上。" : "换个说法，或者少打几个词试试。") + "</span></span>" +
+      (hOutHits ? btn("去产出物里看", "goOutputs(hq)", "sec sm", "", 'style="margin-left: auto"') : "") + "</div>";
     return;
   }
   const faces = {};
@@ -1778,13 +1889,94 @@ function renderHistory() {
   list.innerHTML = html;
 }
 
+// ---------------- 产出物：AI 在回复里给你的链接和本机文件，能搜，能跳回给出它的会话
+const CATS = [["all", "全部"], ["feishu", "飞书"], ["code", "代码"], ["file", "文件"], ["web", "网页"]];
+let oq = "", oCat = "all", oKey = "", oItems = [], oTotal = 0, oCounts = {}, oAll = 0, oAllSessions = 0, oLoaded = false, oReady = false, oSig = "";
+function goOutputs(q, key) {
+  // 从看板详情、我说过的话跳过来：key = 只看这个会话的
+  oq = q || ""; oKey = key || ""; oCat = "all"; oLoaded = false;
+  setTab("outputs");
+  window.scrollTo(0, 0);
+}
+async function searchOut(q, more) {
+  oq = q; oLoaded = true;
+  if (tab === "outputs") document.getElementById("q-clear").hidden = !q;
+  const off = more ? oItems.length : 0, sig = [q, oCat, oKey, src].join("|");
+  oSig = sig;
+  try {
+    const r = await fetch("/api/outputs?q=" + encodeURIComponent(q) + "&offset=" + off + (oCat === "all" ? "" : "&cat=" + oCat) +
+      (oKey ? "&key=" + encodeURIComponent(oKey) : src === "all" ? "" : "&tool=" + src), { cache: "no-store" });
+    const res = await r.json();
+    if (sig !== oSig) return;  // 打字快时旧结果晚到，丢掉
+    oItems = more ? oItems.concat(res.items) : res.items;
+    oTotal = res.total; oCounts = res.counts || {}; oAll = res.all; oAllSessions = res.allSessions;
+  } catch (e) { if (sig === oSig) toast("没取到产出物：本机服务没响应"); return; }
+  oReady = true;
+  if (tab === "outputs") renderOutputs();
+}
+function setCat(c) { oCat = c; searchOut(oq); }
+function clearOutKey() { oKey = ""; searchOut(oq); }
+function oKeyTitle() {
+  const it = findItem(oKey), x = oItems.length && oItems[0].sessions.find(s => s.key === oKey);
+  return it ? it.title : x ? x.title : "这个会话";
+}
+function sessLink(x) {
+  // 给出它的会话：在看板上的点一下回到看板打开详情，不在了的直接打开会话
+  const on = !!findItem(x.key);
+  return '<span class="os1">' + toolChip(x) + '<span class="chip sm">' + esc(x.project || "") + '</span><button type="button" class="sl" title="' +
+    (on ? "回到看板，打开这个会话的详情" : "已不在看板上，点一下直接打开会话") + '" onclick="' + (on ? "locate" : "openSession") + "(clips[" + clip(x.key) + '])">' +
+    hl(x.title || "（未命名会话）", oq) + "</button></span>";
+}
+const CAT_NAME = { feishu: "飞书", code: "代码", file: "文件", web: "网页" };
+function orow(o) {
+  const s0 = o.sessions[0], k0 = s0 ? clip(s0.key) : 0;
+  const acts = (s0 && findItem(s0.key) ? btn("在看板里看", "locate(clips[" + k0 + "])", "ghost xs", "回到看板，打开给出它的会话的详情") : "") +
+    (s0 ? btn("打开会话" + ico("open", 12), "openSession(clips[" + k0 + "],this)", "ghost xs") : "") +
+    (o.cat === "file" && !o.gone ? btn("在访达里显示", "openFile(clips[" + clip(o.url) + "],true)", "ghost xs") : "") +
+    btn(o.cat === "file" ? "复制路径" : "复制链接", "copyClip(" + clip(o.url) + ")", "ghost xs");
+  const more = o.nSessions > o.sessions.length ? "<span>等 " + num(o.nSessions) + " 个会话都给过</span>" : "";
+  return '<div class="orow"><span class="ok" title="' + esc(o.name) + '">' + esc(o.text !== o.name ? o.name : CAT_NAME[o.cat] || "") + "</span>" +
+    '<div class="om">' + outLink(o, "ot" + (o.gone ? " gone" : ""), hl(o.text, oq)) +
+    (o.cat === "file" ? '<span class="op">' + hl(o.path || o.url, oq) + (o.gone ? "　已经不在了" : "") + "</span>" : "") +
+    (o.ctx ? '<p class="oc" title="AI 给出它时说的话">「' + hl(o.ctx, oq) + "」</p>" : "") +
+    '<div class="os">' + o.sessions.map(sessLink).join("") + more + "</div></div>" +
+    '<div class="oa"><span class="otm">' + esc(when(o.ts)) + '</span><span class="oacts">' + acts + "</span></div></div>";
+}
+function renderOutputs() {
+  const n = c => c === "all" ? Object.values(oCounts).reduce((a, b) => a + b, 0) : oCounts[c] || 0;
+  document.getElementById("hsum").innerHTML = (oq || oKey || oCat !== "all"
+    ? '<span class="mono hit">找到 ' + num(oTotal) + " 个产出物</span>"
+    : '<span class="mono">共 ' + num(oAll) + " 个产出物 · 来自 " + num(oAllSessions) + " 个会话</span>") +
+    '<span class="note">' + ico("info", 13) + "AI 在回复里给你的链接和本机文件，同一个链接只列一次；飞书文档显示真实标题</span>";
+  let html = '<div class="ocats"><div class="seg src" role="group" aria-label="只看哪类产出物">' + CATS.map(([c, label]) =>
+    '<button type="button" aria-pressed="' + (oCat === c) + '" onclick="setCat(\'' + c + "')\">" + label + '<span class="n">' + num(n(c)) + "</span></button>").join("") + "</div>" +
+    (oKey ? '<span class="chip" title="只看这个会话给的">只看「' + esc(oKeyTitle()) + "」</span>" + btn("看全部会话的", "clearOutKey()", "ghost xs") : "") + "</div>";
+  if (!oItems.length) {
+    html += '<div class="dash" style="margin: 0; padding: 20px; gap: 14px">' + face("search", 36) + '<span class="tx">' + (oq
+      ? "<b>翻遍了，没找到「" + esc(oq) + "」</b><span>" + (oCat !== "all" || oKey ? "现在只看了一部分，换成全部试试。" : "换个说法，或者少打几个词试试。") + "</span>"
+      : "<b>这里还空着</b><span>AI 在回复里给你链接或文件后，会自动收在这里。</span>") + "</span></div>";
+    document.getElementById("hlist").innerHTML = html;
+    return;
+  }
+  let day = null;
+  oItems.forEach((o, i) => {
+    const dn = dayNo(o.ts);
+    if (i === 0 || dn !== day) { html += (i ? "</div></section>" : "") + '<section class="day">' + dayHead(o.ts) + '<div class="olist">'; day = dn; }
+    html += orow(o);
+  });
+  html += "</div></section>";
+  if (oItems.length < oTotal) html += btn("再加载 100 个", "searchOut(oq, true)", "sec hd", "", 'style="align-self: flex-start"');
+  document.getElementById("hlist").innerHTML = html;
+}
+
 // ---------------- 事件
 document.getElementById("logo-b").innerHTML = face("logo", 28);
 document.getElementById("logo-h").innerHTML = face("logo", 32);
 document.getElementById("q").addEventListener("input", e => {
   clearTimeout(hTimer);
   document.getElementById("q-clear").hidden = !e.target.value;
-  hTimer = setTimeout(() => search(e.target.value.trim()), 250);
+  const v = e.target.value.trim();
+  hTimer = setTimeout(() => tab === "outputs" ? searchOut(v) : search(v), 250);
 });
 document.addEventListener("click", e => {
   if (menu && !e.target.closest("#menu")) closeMenu();
