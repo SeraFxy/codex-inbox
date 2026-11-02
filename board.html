@@ -584,6 +584,7 @@ function clip(text) { clips[++clipN] = text; return clipN; }
 function domId(key) { return String(key).replace(/[^a-zA-Z0-9]/g, ""); }
 function selecting() { return !!String(window.getSelection()); }
 function typing() { const el = document.activeElement; return !!(el && el.matches(".reply textarea, .tagpop input, .tagpop select, .menu input")); }
+function ime(e) { return e.isComposing || e.keyCode === 229; }   // 中文输入法还在选字：回车是上屏、Esc 是取消，不算提交
 function num(n) { return Number(n || 0).toLocaleString("en-US"); }
 
 // ---------------- 时间：按看板的工作时区（服务端给偏移量），写法照文案规范
@@ -905,7 +906,11 @@ function openPop(anchor, html, onEnter) {
   pop.style.left = Math.min(Math.max(8, r.left), window.innerWidth - pop.offsetWidth - 8) + "px";
   pop.style.top = (r.bottom + 8 + pop.offsetHeight > window.innerHeight ? Math.max(8, r.top - pop.offsetHeight - 8) : r.bottom + 8) + "px";
   const input = pop.querySelector("input");
-  input.addEventListener("keydown", e => { if (e.key === "Enter") onEnter(); if (e.key === "Escape") closeTag(); });
+  input.addEventListener("keydown", e => {
+    if (ime(e)) return;
+    if (e.key === "Enter") onEnter();
+    if (e.key === "Escape") closeTag();
+  });
   input.focus(); input.select();
   return input;
 }
@@ -1038,6 +1043,7 @@ function openTopics(el, key) {
   q.addEventListener("input", () => { picker.q = q.value; pickerList(); });
   q.addEventListener("keydown", e => {
     const first = document.querySelector("#tp-list button");
+    if (ime(e)) return;
     if (e.key === "Enter" && first && q.value.trim()) { e.preventDefault(); first.click(); }   // 空着按回车不乱归
     else if (e.key === "ArrowDown" && first) { e.preventDefault(); first.focus(); }
   });
@@ -1649,6 +1655,7 @@ document.addEventListener("click", e => {
   if (tagEdit && !e.target.closest("#tagpop") && !e.target.closest(".chip")) closeTag();
 });
 document.addEventListener("keydown", e => {
+  if (ime(e)) return;
   if (e.key === "Escape") {
     if (tagEdit) closeTag();
     if (menu) { const el = menu.el; closeMenu(); if (el.isConnected) el.focus(); }
