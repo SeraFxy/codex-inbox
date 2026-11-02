@@ -111,6 +111,7 @@ a:focus-visible, button:focus-visible { outline: 2px solid var(--bk-ink-1); outl
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 .chip.sm { height: 18px; padding: 0 5px; border-radius: 5px; font-size: 10.5px; line-height: 18px; }
+.chip.tool { background: transparent; box-shadow: inset 0 0 0 1px var(--bk-line-strong); color: var(--bk-ink-1); }   /* 工具：描边，和填色的项目标签分开 */
 button.chip { cursor: pointer; transition: box-shadow .12s; }
 button.chip:hover { box-shadow: inset 0 0 0 1px var(--bk-ink-1); }
 .count { display: inline-flex; align-items: center; justify-content: center; min-width: 18px; height: 18px; padding: 0 5px; border-radius: 999px; font: 600 11px/18px var(--bk-mono); }
@@ -371,6 +372,13 @@ kbd.k.lg { min-width: 22px; height: 22px; padding: 0 6px; border-radius: 6px; fo
 .seg a { display: inline-flex; align-items: center; height: 32px; padding: 0 16px; border-radius: 9px; color: var(--bk-ink-2); font-size: 13px; font-weight: 500; text-decoration: none; }
 .seg a:hover { color: var(--bk-ink-1); }
 .seg a[aria-current="page"] { background: var(--bk-surface); color: var(--bk-ink-1); font-weight: 600; box-shadow: var(--bk-on); }
+.seg.src { align-self: center; }
+.seg.src button { display: inline-flex; align-items: center; gap: 6px; height: 28px; padding: 0 12px; border: 0; border-radius: 9px;
+  background: transparent; color: var(--bk-ink-2); font-size: 13px; font-weight: 500; cursor: pointer; }
+.seg.src button:hover { color: var(--bk-ink-1); }
+.seg.src button[aria-pressed="true"] { background: var(--bk-surface); color: var(--bk-ink-1); font-weight: 600; box-shadow: var(--bk-on); }
+.seg.src button:focus-visible { outline: 2px solid var(--bk-ink-1); outline-offset: 1px; }
+.seg.src .n { font: 500 12px/1 var(--bk-mono); color: var(--bk-ink-3); }
 .hsearch { display: flex; flex-direction: column; gap: 10px; }
 .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 .search {
@@ -399,7 +407,6 @@ kbd.k.lg { min-width: 22px; height: 22px; padding: 0 6px; border-radius: 6px; fo
 .hbody { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
 .htop { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; }
 .htop h3 { margin: 0; min-width: 0; font-size: 15px; line-height: 22px; font-weight: 600; word-break: break-word; }
-.htop .ag { font: 12px/22px var(--bk-mono); color: var(--bk-ink-3); }
 .htop .hm { margin-left: auto; font: 12px/22px var(--bk-mono); color: var(--bk-ink-3); white-space: nowrap; }
 .hlines { display: flex; flex-direction: column; gap: 8px; }
 .hline { display: flex; align-items: flex-start; gap: 12px; }
@@ -447,7 +454,7 @@ mark { background: var(--bk-lime-mark); color: #1B2026; border-radius: 3px; box-
 .toast button:hover { background: rgba(255, 255, 255, .16); }
 
 @media (max-width: 640px) {
-  .btn, .tab, .opt { min-height: 40px; }
+  .btn, .tab, .opt, .seg.src button { min-height: 40px; }
   .kbd-hints, kbd.k { display: none !important; }
   .btn.sec.searchbtn { width: auto; flex: 1; }
   .hline { flex-wrap: wrap; }
@@ -465,6 +472,7 @@ mark { background: var(--bk-lime-mark); color: #1B2026; border-radius: 3px; box-
       <span class="metam js-date"></span>
     </div>
     <div class="tools">
+      <div class="seg src" id="srcseg" role="group" aria-label="只看哪个工具的会话"></div>
       <button type="button" class="btn sec searchbtn" onclick="goSearch()"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg><span>搜会话和说过的话</span><kbd class="k md">⌘K</kbd></button>
       <a class="btn ghost" href="#history" onclick="event.preventDefault();setTab('history')"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 5.5h14a1.5 1.5 0 0 1 1.5 1.5v8a1.5 1.5 0 0 1-1.5 1.5h-8l-4.5 3.5V16.5H5A1.5 1.5 0 0 1 3.5 15V7A1.5 1.5 0 0 1 5 5.5Z"/></svg>我说过的话</a>
     </div>
@@ -571,6 +579,7 @@ let scope = store("ledger.scope") || { t: "all" };
 let railOpen = store("ledger.rail") !== false;
 const railFold = new Set(store("ledger.fold") || []);   // 收起的项目
 let archOpen = store("ledger.arch") === true;            // 左栏「归档」展开着
+let src = store("ledger.src") || "all";                  // 只看哪个工具的会话：all / claude / codex
 let picker = null;      // 「归到主题」菜单：{ key, q }
 const prevFace = {};    // 会话 key -> 上次的表情，用来发现「AI 在做 → 待你确认完成」，跳一下
 const bubOpen = {};     // 展开全文的气泡
@@ -713,11 +722,15 @@ function shortOf(it) {
 // ---------------- 数据
 function allItems(s) { return s ? s.groups.reduce((a, g) => a.concat(g.items), []).concat(s.hidden) : []; }
 function findItem(key) { return key ? allItems(state).find(it => it.key === key) || null : null; }
+const TOOLS = { claude: "CC", codex: "Codex" };
+function toolName(x) { return TOOLS[x.tool] || x.toolLabel || ""; }
+function toolChip(x) { return '<span class="chip sm tool" title="' + (x.tool === "codex" ? "Codex" : "Claude Code") + '">' + esc(toolName(x)) + "</span>"; }
+function srcOk(it) { return src === "all" || it.tool === src; }   // 页头的来源筛选，全局生效
 function viewItems(v, all) {
-  // all = 不管左栏选了什么，整个标签页的会话
+  // all = 不管左栏选了什么，整个标签页的会话（来源筛选照样生效）
   if (!state) return [];
-  if (v === "hidden") return state.hidden.filter(it => all || inScope(it));
-  const out = state.groups.filter(g => VIEWS[v].groups.includes(g.id)).reduce((a, g) => a.concat(g.items), []);
+  if (v === "hidden") return state.hidden.filter(it => srcOk(it) && (all || inScope(it)));
+  const out = state.groups.filter(g => VIEWS[v].groups.includes(g.id)).reduce((a, g) => a.concat(g.items), []).filter(srcOk);
   // 置顶的在最上面，其余按更新时间，新的在前；「在等」按理由、到点时间排（等着的会话不会更新）
   let list = v === "wait" ? out.map((it, i) => [it, i]).sort((a, b) => ORDER[faceOf(a[0])] - ORDER[faceOf(b[0])] || a[1] - b[1]).map(x => x[0])
     : out.slice().sort((a, b) => b.last - a.last);
@@ -753,7 +766,7 @@ function scopeName(sc) {
 const GENERIC = new Set(["桌面", "主目录", "其他"]);
 function railData() {
   // 左栏要列的项目：有会话在跟的，或建过主题的。每格算一共几条（灰）和其中轮到你的几条（红）
-  const active = state.groups.reduce((a, g) => a.concat(g.items), []), you = new Set(viewItems("you", true).map(it => it.key));
+  const active = state.groups.reduce((a, g) => a.concat(g.items), []).filter(srcOk), you = new Set(viewItems("you", true).map(it => it.key));
   const cnt = sc => { const xs = active.filter(it => inScope(it, sc)); return { n: xs.length, hot: xs.filter(it => you.has(it.key)).length }; };
   // 归档的项目都列出来，哪怕里面的会话都完成了：点进去看「已完成」里的历史
   const keys = [...new Set(active.map(railProject).concat((state.topics || []).map(t => t.project), Object.keys(state.archived || {})))];
@@ -779,7 +792,20 @@ function fillView() {
   if (v) view = v;
 }
 function manual(v) { return !!(state && state.order && (state.order[v] || []).length); }
-function needCount() { const g = state && state.groups.find(x => x.id === "need"); return g ? g.items.length : 0; }
+function needCount() { const g = state && state.groups.find(x => x.id === "need"); return g ? g.items.filter(srcOk).length : 0; }
+function renderSrc() {
+  const n = t => state ? state.groups.reduce((a, g) => a + g.items.filter(it => t === "all" || it.tool === t).length, 0) : 0;
+  document.getElementById("srcseg").innerHTML = [["all", "全部"], ["claude", "CC"], ["codex", "Codex"]].map(([t, label]) =>
+    '<button type="button" aria-pressed="' + (src === t) + '" onclick="setSrc(\'' + t + "')\"" + (t === "claude" ? ' title="Claude Code"' : "") + ">" + label +
+    '<span class="n">' + n(t) + "</span></button>").join("");
+}
+function setSrc(t) {
+  src = t; store("ledger.src", t);
+  selKey = null; selIdx = 0; closeMenu();
+  fillView();
+  render();
+  if (hLoaded) search(hq);
+}
 
 let localAt = 0;   // 本地最近一次改顺序、置顶的时间
 function setLocal(patch) { Object.assign(state, patch); localAt = Date.now(); }
@@ -930,6 +956,7 @@ function syncHtml() {
 function renderTop() {
   document.querySelectorAll(".js-sync").forEach(el => { el.innerHTML = syncHtml(); });
   if (!state) return;
+  renderSrc();
   document.querySelectorAll(".js-date").forEach(el => {
     el.textContent = state.nowText + (el.classList.contains("js-tz") && state.tzText ? " · " + state.tzText : "");
   });
@@ -1203,7 +1230,8 @@ function renderQueue() {
   } else if (rest.length) html += qgroup(top.length ? "其余按更新时间" : "", rest);
   if (!items.length)
     html += '<div class="dash">' + face("logo", 32) + '<span class="tx"><b>' + v.emptyTitle + "</b><span>" +
-      (scope.t === "all" ? v.emptyText : "左栏选的是「" + esc(scopeName(scope)) + "」，别处的会话没列出来。") + "</span></span></div>";
+      (scope.t === "all" && src === "all" ? v.emptyText : (scope.t === "all" ? "" : "左栏选的是「" + esc(scopeName(scope)) + "」，别处的会话没列出来。") +
+        (src === "all" ? "" : "只看 " + TOOLS[src] + " 的会话，另一个工具的没列出来。")) + "</span></span></div>";
   document.getElementById("qlist").innerHTML = html;
   const nHidden = viewItems("hidden").length;
   document.getElementById("qfoot").innerHTML = view === "hidden" ? btn("返回「轮到你」", "setView('you')", "ghost xs")
@@ -1222,7 +1250,7 @@ function row(it, i) {
     '<span class="fc' + (hopNow.has(it.key) ? " bk-hop" : "") + '">' + face(f, 24, i) + "</span>" +
     '<span class="t" title="' + esc(it.title) + '">' + esc(it.title) + "</span>" +
     '<span class="w' + (f === "stuck" || f === "alarm" || f === "wait" ? " hot" : "") + '">' + esc(rowTime(it)) + "</span>" +
-    '<span class="s"><span class="chip sm">' + esc(chipText(it)) + "</span><span>" + esc(shortOf(it)) + "</span></span>" +
+    '<span class="s">' + toolChip(it) + '<span class="chip sm">' + esc(chipText(it)) + "</span><span>" + esc(shortOf(it)) + "</span></span>" +
     '<span class="racts">' + acts + "</span></div>";
 }
 function pick(key) {
@@ -1345,8 +1373,8 @@ function renderDetail() {
     acts += btn(ico("check", 14, 2.2) + (f === "review" ? "确认完成" : "完成"), "act('" + k + "','done')", "ghost", "挪到「已完成」；你再和这个会话说话，它会自动回到看板");
   }
   let html = '<div class="dhead"><span class="fc' + (hopNow.has(it.key) ? " bk-hop" : "") + '">' + face(f, 44, 0, REASON[f]) + "</span>" +
-    '<div class="dtitle"><h2>' + esc(it.title) + '</h2><div class="dmeta">' + tagChip(it) + topicChip(it) + "<span>" + esc(it.toolLabel) +
-    '</span><span aria-hidden="true">·</span><span>最后动静 ' + esc(it.last ? when(it.last) : "—") + "</span></div></div>" +
+    '<div class="dtitle"><h2>' + esc(it.title) + '</h2><div class="dmeta">' + toolChip(it) + tagChip(it) + topicChip(it) +
+    '<span>最后动静 ' + esc(it.last ? when(it.last) : "—") + "</span></div></div>" +
     '<div class="dacts">' + acts + "</div></div>";
   html += '<div class="why">' + ico("info", 16) + "<span><b>" + esc(badgeOf(it)) + "</b>　" + esc(whyOf(it)) + "</span></div>";
   if (!hidden) html += '<div class="part tight"><span class="sec-l">现状</span><p class="now">' + esc(it.headline) + "</p></div>";
@@ -1548,7 +1576,7 @@ async function search(q, more) {
   hq = q; hLoaded = true;
   document.getElementById("q-clear").hidden = !q;
   const off = more ? hSessions.length : 0;
-  const r = await fetch("/api/sessions?q=" + encodeURIComponent(q) + "&offset=" + off, { cache: "no-store" });
+  const r = await fetch("/api/sessions?q=" + encodeURIComponent(q) + "&offset=" + off + (src === "all" ? "" : "&tool=" + src), { cache: "no-store" });
   const res = await r.json();
   if (q !== hq) return;  // 打字快时旧结果晚到，丢掉
   hSessions = more ? hSessions.concat(res.sessions) : res.sessions;
@@ -1610,7 +1638,7 @@ function scard(s, si, faces) {
   const meta = [hq ? "命中 " + s.hits : "", s.count + " 句", s.linksTotal ? s.linksTotal + " 个链接" : "", s.lastTs ? when(s.lastTs) : s.lastText].filter(Boolean).join(" · ");
   const more = open ? "收起" + ico("up") : (s.count > 1 ? "展开全部 " + s.count + " 句" : "展开") + (s.goal || s.linksTotal ? "、目标和链接" : "") + ico("down");
   return '<article class="hcard" id="hs-' + domId(s.key) + '"><div class="fc">' + (fk ? face(fk, 24, si, REASON[fk]) : "") + "</div>" +
-    '<div class="hbody"><div class="htop">' + tagChip(s) + "<h3>" + hl(s.title) + '</h3><span class="ag">' + esc(s.toolLabel) + '</span><span class="hm">' + esc(meta) + "</span></div>" +
+    '<div class="hbody"><div class="htop">' + tagChip(s) + "<h3>" + hl(s.title) + '</h3>' + toolChip(s) + '<span class="hm">' + esc(meta) + "</span></div>" +
     (open ? sessExtra(full) : "") +
     '<div class="hlines">' + items.map((it, i) => line(it, (open ? "f" : "p") + si + "_" + i)).join("") + "</div>" +
     '<div class="hfoot">' + btn(more, "toggleSession('" + k + "')", "ghost sm") + btn("打开会话" + ico("open"), "openSession('" + k + "',this)", "ghost sm") + "</div></div></article>";

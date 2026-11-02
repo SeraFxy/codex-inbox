@@ -1251,10 +1251,14 @@ def search_prompts(conn, q, limit=100, offset=0):
             "all": first[1], "since": fmt_time(first[0], now) if first[0] else ""}
 
 
-def search_sessions(conn, q, limit=50, offset=0):
-    """按会话汇总：有命中的会话按最近一次命中排序，每个会话带最多 3 条命中预览。"""
+def search_sessions(conn, q, limit=50, offset=0, tool=""):
+    """按会话汇总：有命中的会话按最近一次命中排序，每个会话带最多 3 条命中预览。tool = claude / codex 时只看这个工具的。"""
     now = time.time()
     conds, args = _like_where(q)
+    by_tool = (" WHERE tool=?", [tool]) if tool in ("claude", "codex") else ("", [])
+    if by_tool[1]:
+        conds.append("tool=?")
+        args.append(tool)
     sql_where = (" WHERE " + " AND ".join(conds)) if conds else ""
     total = conn.execute("SELECT COUNT(DISTINCT session_key) FROM prompts" + sql_where, args).fetchone()[0]
     rows = conn.execute("SELECT session_key, COUNT(*) AS hits, MAX(ts) AS last_ts FROM prompts" + sql_where +
@@ -1275,7 +1279,7 @@ def search_sessions(conn, q, limit=50, offset=0):
                     "goal": ex["goal"], "linksTotal": ex["linksTotal"],
                     "preview": [{"ts": it["ts"], "timeText": it["timeText"], "text": it["text"], "images": it["images"]}
                                 for it in items]})
-    first = conn.execute("SELECT MIN(ts), COUNT(*), COUNT(DISTINCT session_key) FROM prompts").fetchone()
+    first = conn.execute("SELECT MIN(ts), COUNT(*), COUNT(DISTINCT session_key) FROM prompts" + by_tool[0], by_tool[1]).fetchone()
     return {"q": q, "total": total, "sessions": out, "all": first[1], "allSessions": first[2],
             "since": fmt_time(first[0], now) if first[0] else ""}
 
@@ -2225,7 +2229,7 @@ class Handler(BaseHTTPRequestHandler):
         if u.path == "/api/sessions":
             q = parse_qs(u.query)
             with APP.lock:
-                res = search_sessions(APP.conn, (q.get("q") or [""])[0], 50, int((q.get("offset") or ["0"])[0]))
+                res = search_sessions(APP.conn, (q.get("q") or [""])[0], 50, int((q.get("offset") or ["0"])[0]), (q.get("tool") or [""])[0])
             return self._send(200, json.dumps(res, ensure_ascii=False))
         if u.path == "/api/session":
             q = parse_qs(u.query)
