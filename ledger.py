@@ -771,6 +771,7 @@ def scan(conn, cfg):
     migrate_tz(conn)
     migrate_codex_prompts(conn)
     migrate_codex_files_preamble(conn)
+    migrate_project_parents(conn)
     t0 = time.time()
     horizon = t0 - max(cfg["window_days"], 30) * 86400
     files = [("claude", p) for p in glob.glob(os.path.join(CLAUDE_PROJECTS, "*", "*.jsonl"))]
@@ -2245,6 +2246,19 @@ def migrate_codex_prompts(conn):
     meta_set(conn, "codex_prompts_v2", time.time())
     conn.commit()
     log("已补回 %d 个 Codex 会话里你说过的话" % n)
+
+
+def migrate_project_parents(conn):
+    """改了 project_parents：「我说过的话」里存的项目按新规则重算一遍（看板每次现算，不用管）。"""
+    cur = json.dumps(sorted(PROJECT_PARENTS), ensure_ascii=False)
+    if meta_get(conn, "project_parents") == cur:
+        return
+    for r in conn.execute("SELECT DISTINCT cwd, project FROM prompts").fetchall():
+        p = project_of(r["cwd"])
+        if r["cwd"] and p != r["project"]:
+            conn.execute("UPDATE prompts SET project=? WHERE cwd=?", (p, r["cwd"]))
+    meta_set(conn, "project_parents", cur)
+    conn.commit()
 
 
 def migrate_codex_files_preamble(conn):
