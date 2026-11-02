@@ -891,8 +891,6 @@ function setSrc(t) {
   selKey = null; selIdx = 0; closeMenu();
   fillView();
   render();
-  if (hLoaded) search(hq);
-  if (oLoaded) searchOut(oq);
 }
 
 let localAt = 0;   // 本地最近一次改顺序、置顶的时间
@@ -1944,7 +1942,8 @@ async function search(q, more) {
   hq = q; hLoaded = true;
   if (tab === "history" || tab === "search") document.getElementById("q-clear").hidden = !q;
   const off = more ? hSessions.length : 0;
-  const r = await fetch("/api/sessions?q=" + encodeURIComponent(q) + "&offset=" + off + (src === "all" ? "" : "&tool=" + src), { cache: "no-store" });
+  // 搜索是全局的：不跟看板页头的「CC / Codex」筛选走（搜索页上看不到那个筛选，跟着走会悄悄漏掉另一个工具的）
+  const r = await fetch("/api/sessions?q=" + encodeURIComponent(q) + "&offset=" + off, { cache: "no-store" });
   const res = await r.json();
   if (q !== hq) return;  // 打字快时旧结果晚到，丢掉
   hSessions = more ? hSessions.concat(res.sessions) : res.sessions;
@@ -2064,11 +2063,11 @@ function goOutputs(q, key, cat) {
 async function searchOut(q, more) {
   oq = q; oLoaded = true;
   if (tab === "outputs") document.getElementById("q-clear").hidden = !q;
-  const off = more ? oItems.length : 0, sig = [q, oCat, oKey, src].join("|");
+  const off = more ? oItems.length : 0, sig = [q, oCat, oKey].join("|");
   oSig = sig;
   try {
     const r = await fetch("/api/outputs?q=" + encodeURIComponent(q) + "&offset=" + off + (oCat === "all" ? "" : "&cat=" + oCat) +
-      (oKey ? "&key=" + encodeURIComponent(oKey) : src === "all" ? "" : "&tool=" + src), { cache: "no-store" });
+      (oKey ? "&key=" + encodeURIComponent(oKey) : ""), { cache: "no-store" });
     const res = await r.json();
     if (sig !== oSig) return;  // 打字快时旧结果晚到，丢掉
     oItems = more ? oItems.concat(res.items) : res.items;
