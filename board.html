@@ -156,6 +156,7 @@ kbd.k.lg { min-width: 22px; height: 22px; padding: 0 6px; border-radius: 6px; fo
 .dnav button[aria-current="true"] { background: var(--bk-sunken); color: var(--bk-ink-1); font-weight: 600; }
 .dnav button:focus-visible { outline: 2px solid var(--bk-ink-1); outline-offset: -2px; }
 [id^="ds-"] { scroll-margin-top: 64px; }
+@media (min-width: 961px) { .dnav { top: -24px; } }   /* 详情栏自己滚动时，贴顶位置要扣掉它 24px 的上内边距，不然上面会露出一条正文 */
 @media (min-width: 961px) {
   .board { height: 100vh; height: 100dvh; min-height: 0; }
   .split { flex-wrap: nowrap; min-height: 0; }
