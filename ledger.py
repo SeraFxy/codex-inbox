@@ -1593,8 +1593,7 @@ def shell_quote(s):
     return "'" + s.replace("'", "'\\''") + "'"
 
 
-ORDER_VIEWS = ("you", "ai", "wait", "inbox", "rail")   # 看板的四个标签页，rail 是左栏项目的顺序（存项目 key）
-VIEW_GROUPS = {"you": ("need", "confirm"), "ai": ("ai",), "wait": ("time", "peer"), "inbox": ("backlog",)}   # 和 board.html 的 VIEWS 对应
+ORDER_VIEWS = ("rail",)   # 拖过的顺序：rail 是左栏项目的顺序（存项目 key）。队列不再拖着排，改成置顶，见 load_pins
 
 
 def load_order(conn):
@@ -1602,7 +1601,16 @@ def load_order(conn):
         order = json.loads(meta_get(conn, "order", "{}"))
     except ValueError:
         return {}
-    return order if isinstance(order, dict) else {}
+    return {k: v for k, v in order.items() if k in ORDER_VIEWS} if isinstance(order, dict) else {}
+
+
+def load_pins(conn):
+    """置顶的会话 key，新钉的在前。看板上置顶的排在每个标签页最上面，其余按更新时间。"""
+    try:
+        pins = json.loads(meta_get(conn, "pins", "[]"))
+    except ValueError:
+        return []
+    return [k for k in pins if isinstance(k, str)] if isinstance(pins, list) else []
 
 
 def build_board(conn, cfg, now=None):
@@ -1660,13 +1668,12 @@ def build_board(conn, cfg, now=None):
             g.sort(key=lambda it: it["idle"])
         groups.append({"id": gid, "title": title, "hint": hint, "items": g})
     hidden.sort(key=lambda it: it["idle"])
-    # 拖过顺序的标签页：会话离开这个标签页就忘掉它的位置，回来时算新来的，排在最上面
-    order = load_order(conn)
-    member = {v: {it["key"] for g in groups if g["id"] in gids for it in g["items"]} for v, gids in VIEW_GROUPS.items()}
-    kept = {v: [k for k in keys if k in member[v]] if v in member else keys for v, keys in order.items()}
-    kept = {v: keys for v, keys in kept.items() if keys}
-    if kept != order:
-        meta_set(conn, "order", json.dumps(kept, ensure_ascii=False))
+    # 置顶只给还在看板上的会话：完成了、不再跟踪了，就不再钉着
+    pins = load_pins(conn)
+    active = {it["key"] for it in items}
+    if any(k not in active for k in pins):
+        pins = [k for k in pins if k in active]
+        meta_set(conn, "pins", json.dumps(pins, ensure_ascii=False))
         conn.commit()
     last_scan = float(meta_get(conn, "last_scan", 0) or 0)
     return {
@@ -1675,7 +1682,7 @@ def build_board(conn, cfg, now=None):
         "tzOffsetMin": int(clock(now).astimezone(WORK_TZ).utcoffset().total_seconds() // 60),
         "staleHours": cfg["stale_hours"], "interruptedMin": cfg["interrupted_min"], "windowDays": cfg["window_days"],
         "scanMs": int(meta_get(conn, "last_scan_ms", 0) or 0), "scanIntervalMin": cfg["scan_interval_min"],
-        "groups": groups, "hidden": hidden, "order": kept, "digestTime": cfg["digest_time"], "tzText": tz_text(cfg),
+        "groups": groups, "hidden": hidden, "order": load_order(conn), "pins": pins, "digestTime": cfg["digest_time"], "tzText": tz_text(cfg),
         "topics": [{"id": t["id"], "name": t["name"], "project": t["project"], "projectLabel": tag_of(ctx["tags"], t["project"])[0]}
                    for t in topics if not t["deleted"]],
     }
@@ -1952,6 +1959,13 @@ class App:
                 c.execute("INSERT OR REPLACE INTO overrides (key, action, until_ts, at) VALUES (?, 'snooze', ?, ?)", (key, until, now))
                 c.commit()
                 return True, "已推迟到 " + fmt_time(until, now)
+            if action == "pin" and key and isinstance(arg, dict):
+                pins = [k for k in load_pins(c) if k != key]
+                if arg.get("on"):
+                    pins.insert(0, key)
+                meta_set(c, "pins", json.dumps(pins, ensure_ascii=False))
+                c.commit()
+                return True, "已置顶" if arg.get("on") else "已取消置顶"
             if action == "topic" and isinstance(arg, dict):
                 # 归到主题：{id} 归进去（id 为空 = 移出主题），{name, project} 先找或新建再归，{auto} 删掉手动的、改回按 #主题 自动归
                 if arg.get("auto"):
@@ -2005,7 +2019,7 @@ class App:
                 c.commit()
                 return True, "标签已更新"
             if action == "order" and isinstance(arg, dict) and arg.get("view") in ORDER_VIEWS:
-                # 看板里拖动排序：按标签页存一串会话 key（左栏存项目 key），空列表 = 恢复默认排序
+                # 左栏拖项目排序：存一串项目 key，空列表 = 恢复默认排序
                 keys = [k for k in (arg.get("keys") or []) if isinstance(k, str)][:500]
                 order = load_order(c)
                 if keys:

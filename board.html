@@ -234,13 +234,11 @@ kbd.k.lg { min-width: 22px; height: 22px; padding: 0 6px; border-radius: 6px; fo
 }
 .ra:hover, .ra.on { background: var(--bk-sunken); color: var(--bk-ink-1); }
 .ra:focus-visible { outline: 2px solid var(--bk-ink-1); outline-offset: 1px; }
-/* 拖动排序 */
+/* 拖动：会话拖到左栏归主题，左栏拖项目换位置 */
 .row.dragging { opacity: .4; }
-.row.drop-before::before, .row.drop-after::after, .rgroup.drop-before::before, .rgroup.drop-after::after {
+.rgroup.drop-before::before, .rgroup.drop-after::after {
   content: ""; position: absolute; left: 10px; right: 10px; height: 2px; border-radius: 2px; background: var(--bk-ink-1); pointer-events: none;
 }
-.row.drop-before::before { top: -2px; }
-.row.drop-after::after { bottom: -2px; }
 .rgroup.drop-before::before { top: -5px; }
 .rgroup.drop-after::after { bottom: -5px; }
 .dash { display: flex; align-items: center; gap: 12px; margin: 0 4px; padding: 16px; border: 1px dashed var(--bk-line-strong); border-radius: 14px; }
@@ -486,7 +484,7 @@ mark { background: var(--bk-lime-mark); color: #1B2026; border-radius: 3px; box-
           <span><kbd class="k">O</kbd>打开会话</span>
           <span><kbd class="k">E</kbd>完成</span>
           <span><kbd class="k">S</kbd>推迟</span>
-          <span><kbd class="k">⇧</kbd><kbd class="k">J</kbd><kbd class="k">K</kbd>调顺序</span>
+          <span><kbd class="k">P</kbd>置顶</span>
           <span><kbd class="k">[</kbd>侧栏</span>
           <span><kbd class="k">/</kbd>搜索</span>
         </div>
@@ -533,13 +531,13 @@ mark { background: var(--bk-lime-mark); color: #1B2026; border-radius: 3px; box-
 const TOKEN = "__LEDGER_TOKEN__";
 // 队列的四个视图（外加「已完成」），groups 是服务端 GROUPS 的 id
 const VIEWS = {
-  you: { label: "轮到你", groups: ["need", "confirm"], hint: "球在你这边，卡住和到点的排前面。",
+  you: { label: "轮到你", groups: ["need", "confirm"], hint: "球在你这边。置顶的在前，其余按更新时间，新的在前。",
          emptyTitle: "没有要你拍板的事", emptyText: "AI 们在安静干活，有新情况会自己跳到这里。" },
-  ai: { label: "AI 在做", groups: ["ai"], hint: "正在跑，需要你时会自己挪过去。",
+  ai: { label: "AI 在做", groups: ["ai"], hint: "正在跑，需要你时会自己挪过去。按更新时间，新的在前。",
         emptyTitle: "没有在跑的任务", emptyText: "手上闲着，随时可以交代新活。" },
   wait: { label: "在等", groups: ["time", "peer"], hint: "推迟的、等到点和等同事的，到点自己回来。",
           emptyTitle: "没有在等的事", emptyText: "推迟或者等同事的会话会出现在这里。" },
-  inbox: { label: "待整理", groups: ["backlog"], hint: "没写状态或很久没动静的会话。",
+  inbox: { label: "待整理", groups: ["backlog"], hint: "没写状态或很久没动静的会话，新的在前。",
            emptyTitle: "都整理完了", emptyText: "新会话没写状态行时会先放在这里。" },
   hidden: { label: "已完成", groups: [], hint: "",
             emptyTitle: "最近没有完成的", emptyText: "点了「完成」的会话会在这里留一阵，方便恢复。" }
@@ -714,13 +712,10 @@ function viewItems(v, all) {
   if (!state) return [];
   if (v === "hidden") return state.hidden.filter(it => all || inScope(it));
   const out = state.groups.filter(g => VIEWS[v].groups.includes(g.id)).reduce((a, g) => a.concat(g.items), []);
-  // 先按理由排，同类保持服务端的顺序（等得久的、先到点的在前）
-  let list = out.map((it, i) => [it, i]).sort((a, b) => ORDER[faceOf(a[0])] - ORDER[faceOf(b[0])] || a[1] - b[1]).map(x => x[0]);
-  if (manual(v)) {
-    // 拖过顺序的标签页：按你排的来，新冒出来的会话放在最上面
-    const rank = new Map(state.order[v].map((k, i) => [k, i]));
-    list = list.filter(it => !rank.has(it.key)).concat(list.filter(it => rank.has(it.key)).sort((a, b) => rank.get(a.key) - rank.get(b.key)));
-  }
+  // 置顶的在最上面，其余按更新时间，新的在前；「在等」按理由、到点时间排（等着的会话不会更新）
+  let list = v === "wait" ? out.map((it, i) => [it, i]).sort((a, b) => ORDER[faceOf(a[0])] - ORDER[faceOf(b[0])] || a[1] - b[1]).map(x => x[0])
+    : out.slice().sort((a, b) => b.last - a.last);
+  list = list.filter(pinned).concat(list.filter(it => !pinned(it)));
   return all ? list : list.filter(it => inScope(it));
 }
 // ---------------- 项目与主题
@@ -778,14 +773,14 @@ function fillView() {
 function manual(v) { return !!(state && state.order && (state.order[v] || []).length); }
 function needCount() { const g = state && state.groups.find(x => x.id === "need"); return g ? g.items.length : 0; }
 
-let orderAt = 0;   // 本地最近一次改顺序的时间
-function setOrder(order) { state.order = order; orderAt = Date.now(); }
+let localAt = 0;   // 本地最近一次改顺序、置顶的时间
+function setLocal(patch) { Object.assign(state, patch); localAt = Date.now(); }
 async function load(refresh) {
   const t0 = Date.now();
   try {
     const r = await fetch("/api/state" + (refresh ? "?refresh=" + refresh : ""), { cache: "no-store" });
     const next = await r.json();
-    if (state && orderAt >= t0) next.order = state.order;   // 拉取途中你刚调过顺序：先用本地的，免得被旧数据盖回去
+    if (state && localAt >= t0) { next.order = state.order; next.pins = state.pins; }   // 拉取途中你刚调过顺序、置顶：先用本地的，免得被旧数据盖回去
     failed = false;
     hopNow = new Set();
     allItems(next).forEach(it => {
@@ -1083,7 +1078,7 @@ function projectMore(el) {
 }
 function resetRailOrder() {
   closeMenu();
-  const order = Object.assign({}, state.order); delete order.rail; setOrder(order);
+  const order = Object.assign({}, state.order); delete order.rail; setLocal({ order });
   renderRail();
   post("order", "", { view: "rail", keys: [] }).then(() => toast("左栏已恢复默认顺序"), () => toast("操作失败：本机服务没响应"));
 }
@@ -1150,7 +1145,7 @@ function renderQueue() {
       (id === "you" && c ? '<span class="count hot">' + c + "</span>" : '<span class="n">' + c + "</span>") + "</button>";
   }).join("");
   document.getElementById("qhint").innerHTML = view === "hidden" ? "最近 " + (state.windowDays || 14) + " 天完成或不再跟踪的。"
-    : manual(view) ? '<span title="新来的会话、从别的标签页回来的会话放在最上面">按你排的顺序</span>' + btn("恢复默认", "resetOrder()", "ghost xs") : esc(v.hint);
+    : esc(v.hint);
 
   if (!items.some(it => it.key === selKey)) { const it = items[Math.min(selIdx, items.length - 1)]; selKey = it ? it.key : null; }
   selIdx = Math.max(0, items.findIndex(it => it.key === selKey));
@@ -1160,13 +1155,15 @@ function renderQueue() {
     html += '<div class="dash card"><b>先清一遍</b><span>这些会话停在半路、没写状态。按 J / K 往下看，没用的按 E 完成；确定都不要了，也可以一次清掉。</span>' +
       btn("这一组全部不再跟踪", "bulkUntrack()", "sec sm") + "</div>";
   let i = 0;
-  if (manual(view)) html += '<div class="qgroup">' + items.map(it => row(it, i++)).join("") + "</div>";
-  else {
+  const qgroup = (label, xs) => '<div class="qgroup">' + (label ? '<span class="qlabel">' + label + " · " + xs.length + "</span>" : "") + xs.map(it => row(it, i++)).join("") + "</div>";
+  const top = items.filter(pinned), rest = items.filter(it => !pinned(it));
+  if (top.length) html += qgroup("置顶", top);
+  if (view === "wait" || view === "hidden") {
+    // 在等、已完成：按理由分组
     const groups = [];
-    items.forEach(it => { const f = faceOf(it), g = groups[groups.length - 1]; if (g && g.f === f) g.items.push(it); else groups.push({ f, items: [it] }); });
-    html += groups.map(g => '<div class="qgroup"><span class="qlabel">' + REASON[g.f] + " · " + g.items.length + "</span>" +
-      g.items.map(it => row(it, i++)).join("") + "</div>").join("");
-  }
+    rest.forEach(it => { const f = faceOf(it), g = groups[groups.length - 1]; if (g && g.f === f) g.items.push(it); else groups.push({ f, items: [it] }); });
+    html += groups.map(g => qgroup(REASON[g.f], g.items)).join("");
+  } else if (rest.length) html += qgroup(top.length ? "其余按更新时间" : "", rest);
   if (!items.length)
     html += '<div class="dash">' + face("logo", 32) + '<span class="tx"><b>' + v.emptyTitle + "</b><span>" +
       (scope.t === "all" ? v.emptyText : "左栏选的是「" + esc(scopeName(scope)) + "」，别处的会话没列出来。") + "</span></span></div>";
@@ -1210,36 +1207,16 @@ function move(step) {
   if (r) r.scrollIntoView({ block: "nearest" });
   document.getElementById("detail").scrollTop = 0;
 }
-// 拖动或 ⇧J / ⇧K 调顺序：按标签页存在服务端，换浏览器也在
-function saveOrder(sub) {
-  // 左栏筛选着的时候只重排看得见的这几条，其余会话的位置不动
-  const full = viewItems(view, true).map(it => it.key), mine = new Set(sub);
-  let n = 0;
-  const keys = full.map(k => mine.has(k) ? sub[n++] : k);
-  setOrder(Object.assign({}, state.order, { [view]: keys }));
+// 置顶：存在服务端，换浏览器也在；完成或不再跟踪的会话自动取消
+function pinned(it) { return !!(state && (state.pins || []).includes(it.key)); }
+function togglePin(key) {
+  const it = findItem(key);
+  closeMenu();
+  if (!it || it.group === "hidden") return;
+  const on = !pinned(it);
+  setLocal({ pins: on ? [key].concat(state.pins || []) : (state.pins || []).filter(k => k !== key) });
   render();
-  post("order", "", { view, keys }).then(res => { if (!res.ok) toast(res.message || "顺序没存上"); }, () => toast("顺序没存上：本机服务没响应"));
-}
-function resetOrder() {
-  const order = Object.assign({}, state.order); delete order[view]; setOrder(order);
-  render();
-  post("order", "", { view, keys: [] }).then(() => toast("已恢复默认排序"), () => toast("操作失败：本机服务没响应"));
-}
-function shift(step) {
-  const keys = viewItems(view).map(it => it.key), i = keys.indexOf(selKey), j = i + step;
-  if (i < 0 || j < 0 || j >= keys.length) return;
-  keys.splice(j, 0, keys.splice(i, 1)[0]);
-  saveOrder(keys);
-  const r = document.getElementById("row-" + domId(selKey));
-  if (r) { r.focus({ preventScroll: true }); r.scrollIntoView({ block: "nearest" }); }
-}
-function dropMark(e) {
-  document.querySelectorAll(".drop-before, .drop-after").forEach(el => el.classList.remove("drop-before", "drop-after"));
-  const r = e && e.target.closest && e.target.closest(".row");
-  if (!r || !drag || r.dataset.key === drag) return null;
-  const rect = r.getBoundingClientRect(), after = e.clientY > rect.top + rect.height / 2;
-  r.classList.add(after ? "drop-after" : "drop-before");
-  return { key: r.dataset.key, after };
+  post("pin", key, { on }).then(res => toast(res.ok ? (on ? "已置顶" : "已取消置顶") : res.message || "没成功"), () => toast("操作失败：本机服务没响应"));
 }
 const qlist = document.getElementById("qlist");
 qlist.addEventListener("dragstart", e => {
@@ -1250,18 +1227,7 @@ qlist.addEventListener("dragstart", e => {
   e.dataTransfer.setData("text/plain", drag);
   requestAnimationFrame(() => r.classList.add("dragging"));
 });
-qlist.addEventListener("dragover", e => { if (drag && dropMark(e)) { e.preventDefault(); e.dataTransfer.dropEffect = "move"; } });
-qlist.addEventListener("drop", e => {
-  const at = dropMark(e);
-  if (!drag || !at) return;
-  e.preventDefault();
-  const keys = viewItems(view).map(it => it.key).filter(k => k !== drag);
-  keys.splice(keys.indexOf(at.key) + (at.after ? 1 : 0), 0, drag);
-  drag = null;
-  saveOrder(keys);
-});
 qlist.addEventListener("dragend", () => {
-  dropMark(null);
   document.querySelectorAll(".row.dragging, .ri.drop").forEach(el => el.classList.remove("dragging", "drop"));
   drag = null;
 });
@@ -1303,7 +1269,7 @@ function railMove(e) {
   e.preventDefault();
   const keys = railData().projects.map(x => x.key).filter(k => k !== p);
   keys.splice(keys.indexOf(at.p) + (at.after ? 1 : 0), 0, p);
-  setOrder(Object.assign({}, state.order, { rail: keys }));
+  setLocal({ order: Object.assign({}, state.order, { rail: keys }) });
   renderRail();
   post("order", "", { view: "rail", keys }).then(res => { if (!res.ok) toast(res.message || "顺序没存上"); }, () => toast("顺序没存上：本机服务没响应"));
 }
@@ -1374,7 +1340,8 @@ function openMenu(el, key, more) {
   const k = esc(key);
   let html = faceOf(it) === "run" ? "" : '<span class="ml">推迟到…</span>' +
     SNOOZE.map(o => mi(o[1], "act('" + k + "','snooze','" + o[0] + "')", esc(snoozeAt(o[0])))).join("");
-  if (more) html += (html ? "<hr>" : "") + mi("归到主题…", "openTopics(menu.el,'" + k + "')", it.topic ? esc(it.topic.name) : "") +
+  if (more) html += (html ? "<hr>" : "") + mi(pinned(it) ? "取消置顶" : "置顶", "togglePin('" + k + "')", "P") +
+    mi("归到主题…", "openTopics(menu.el,'" + k + "')", it.topic ? esc(it.topic.name) : "") +
     mi("不再跟踪这个会话", "act('" + k + "','untrack')");
   showMenu(el, key, html);
 }
@@ -1671,11 +1638,11 @@ document.addEventListener("keydown", e => {
   if ((e.code === "BracketLeft" || (e.key.length === 1 && "[{【「".includes(e.key))) && !e.target.closest("#menu")) { e.preventDefault(); toggleRail(); return; }
   if ((e.key === "Enter" || e.key === " ") && e.target.classList.contains("row")) { e.preventDefault(); pick(e.target.dataset.key); return; }
   if (e.target.closest("#menu, button, a")) return;
-  if (e.shiftKey && (k === "j" || k === "k")) { if (view !== "hidden") shift(k === "j" ? 1 : -1); return; }
   if (k === "j") move(1);
   else if (k === "k") move(-1);
   else if (k === "o" && it) openSession(it.key, document.getElementById("open-btn"));
   else if (k === "e" && it && it.group !== "hidden") act(it.key, "done");
+  else if (k === "p" && it) togglePin(it.key);
   else if (k === "s" && it && it.group !== "hidden" && faceOf(it) !== "run") openMenu(document.getElementById("snooze-btn"), it.key);
 });
 ["rail", "queue", "detail"].forEach(id => document.getElementById(id).addEventListener("scroll", closeMenu, { passive: true }));
