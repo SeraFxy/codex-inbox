@@ -447,9 +447,22 @@ def note_asks(st, text, ts):
         st["asks"] = [a for a in asks if a not in drop]
 
 
+HEAD_SEP_RE = re.compile(r"\s*(?:——|—|--|：|:)\s*")
+QUOTE_RE = re.compile(r"[\s“”\"'「」『』《》`]+")
+
+
+def short_head(body, q):
+    """「Top20 名单——ok的」「样卡写法：认可」：用问题开头几个字（至少 4 个）指代这件，后面接答复。返回答复，不是就返回空。"""
+    m = HEAD_SEP_RE.search(body)
+    if not m:
+        return ""
+    head = QUOTE_RE.sub("", body[:m.start()])
+    return body[m.end():].strip() if len(head) >= 4 and QUOTE_RE.sub("", q).startswith(head) else ""
+
+
 def answer_of(a, lines):
-    """你这条消息里有没有答这件。认三种：「N. 事情：选项」（看板拼的格式）、把 ❓ 行抄回来改过选项、提到编号。
-    写「待定」的不算；原样抄回来、选项一个没删的也不算。"""
+    """你这条消息里有没有答这件。认四种：「N. 事情：选项」（看板拼的格式）、把 ❓ 行抄回来改过选项、提到编号、
+    用问题开头几个字指代（「Top20 名单——ok的」）。写「待定」的不算；原样抄回来、选项一个没删的也不算。"""
     q = Q_TAIL_RE.sub("", a.get("q") or "")
     pid = re.compile(r"(?<![A-Za-z0-9-])%s(?!\d)" % re.escape(a["id"]), re.I) if a.get("id") else None
     echo = "｜".join(a.get("opts") or [])
@@ -457,6 +470,9 @@ def answer_of(a, lines):
         body = NUM_HEAD_RE.sub("", line, count=1)
         hit_q = bool(q) and body.startswith(q)
         if not hit_q and not (pid and pid.search(line)):
+            short = short_head(body, q)
+            if short and not PENDING_RE.search(line) and short != "待定":
+                return short[:80]
             continue
         if PENDING_RE.search(line):
             continue
@@ -478,6 +494,15 @@ def note_answers(st, text, ts):
         ans = answer_of(a, lines)
         if ans:
             a["done"], a["ans"] = ts or time.time(), ans
+    # 只回了一个选项（「两条一起开」）：哪件有这个选项就是答哪件；几件都有，只认最近一轮问的，那一轮里还不止一件就不猜
+    for line in lines:
+        t = Q_TAIL_RE.sub("", NUM_HEAD_RE.sub("", line, count=1)).strip()
+        hit = [a for a in asks if not a.get("done") and t and t != "待定" and t in (a.get("opts") or [])]
+        if hit:
+            newest = max(a.get("last") or 0 for a in hit)
+            hit = [a for a in hit if (a.get("last") or 0) == newest]
+            if len(hit) == 1:
+                hit[0]["done"], hit[0]["ans"] = ts or time.time(), t
 
 
 PASTE_TAG_RE = re.compile(r'</?pasted_content(?:\s+id="[^"]*")?\s*>')
@@ -3660,7 +3685,7 @@ def migrate_handoffs(conn):
 
 def migrate_asks(conn, cfg):
     """没答的 ❓ 是后加的：最近 window_days 天、问过 ❓ 的会话重读一遍，把问过没答的补进来。只跑一次。"""
-    if meta_get(conn, "asks_v1"):
+    if meta_get(conn, "asks_v2"):   # v2：认法加了「问题开头几个字——答复」和「只回一个选项」，重读一遍
         return
     t0, n = time.time(), 0
     horizon = t0 - cfg["window_days"] * 86400
@@ -3690,7 +3715,7 @@ def migrate_asks(conn, cfg):
         st["asks"] = fresh["asks"]
         conn.execute("UPDATE sessions SET data=? WHERE key=?", (json.dumps(st, ensure_ascii=False), r["session_key"]))
         n += 1
-    meta_set(conn, "asks_v1", time.time())
+    meta_set(conn, "asks_v2", time.time())
     conn.commit()
     log("已补回 %d 个会话问过的 ❓，用时 %d ms" % (n, int((time.time() - t0) * 1000)))
 
