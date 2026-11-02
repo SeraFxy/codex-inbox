@@ -1402,7 +1402,9 @@ def claude_live():
 
 
 WAITING_FOR = {
-    "input needed": "它在等你填一项信息",
+    # Claude Code 把 input needed 归为提问：AskUserQuestion 弹出的选项、MCP 要你填的表单都是它。
+    # 提问那一条 tool_use 要等你回答后才写进对话记录，pending_tool 这时还是上一个工具，只能靠它认
+    "input needed": "它问了你一个问题，在等你回答",
     "goal proposal": "它提了一个目标，在等你确认",
     "sandbox request": "在等你批准一个沙箱外的访问",
     "worker request": "后台任务在等你批准一个操作",
