@@ -75,8 +75,8 @@ Use exactly one of these six status words, in Chinese:
 - 等同事 (waiting on a colleague): write it as 「等同事（name）」; the time is when to follow up.
 - 等时间点 (waiting for a time): something I must do myself at a set time; the time is required.
 - 已定时 (scheduled): you have scheduled yourself to resume at a set time; the time is required (currently only Claude sessions in cmux support this).
-- AI在做 (AI working): you are still running in the background and do not need me yet.
-- 待你确认完成 (done, awaiting my sign-off): the completion criteria are met; give the evidence in one sentence. Never write "done" yourself.
+- AI在做 (AI working): you are still running in the background and do not need me yet. Also use it while waiting for a pipeline, build or deploy to finish, and actually watch it: in Claude Code, poll its status with a background command (you get woken up when it exits); in Codex, wait for it within the turn; for long waits, schedule yourself with `ledger schedule` and write 已定时. Until it finishes, do not write 等你 or 待你确认完成: I cannot do anything yet.
+- 待你确认完成 (done, awaiting my sign-off): the completion criteria are met; give the evidence in one sentence, using the finished result (e.g. "pipeline #91313 passed"), not "triggered". Never write "done" yourself.
 Write times as `YYYY-MM-DD HH:MM` in the same time zone as the dashboard. Do not use 📌 or 🎯 anywhere else in the reply.
 In the first reply of a task, and whenever the goal or the completion criteria change, add this line above the 📌 line:
 `🎯 目标：<one-line goal>｜完成标准：<what counts as done>`
