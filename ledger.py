@@ -2981,10 +2981,13 @@ class App:
                 for k in keys:
                     c.execute("INSERT OR REPLACE INTO overrides (key, action, until_ts, at) VALUES (?, ?, NULL, ?)", (k, action, now))
                 c.commit()
-                if action == "done":
-                    tab = close_cmux_tab(c, key)
-                    return True, "完成了，已移出看板" + ("，" + tab if tab else "")
-                return True, "已不再跟踪 %d 个" % len(keys) if len(keys) > 1 else "已不再跟踪"
+                # 完成、不再跟踪都把 cmux 里的标签页顺手关掉（关不了的会说为什么）
+                tabs = [close_cmux_tab(c, k) for k in keys]
+                if len(keys) == 1:
+                    return True, ("完成了，已移出看板" if action == "done" else "已不再跟踪") + ("，" + tabs[0] if tabs[0] else "")
+                shut = sum(t == "终端标签页也关了" for t in tabs)
+                left = sum(bool(t) and t != "终端标签页也关了" for t in tabs)
+                return True, "已不再跟踪 %d 个" % len(keys) + ("，关了 %d 个终端标签页" % shut if shut else "") + ("，%d 个没关" % left if left else "")
             if action == "snooze":
                 until = snooze_until(arg, now)
                 c.execute("INSERT OR REPLACE INTO overrides (key, action, until_ts, at) VALUES (?, 'snooze', ?, ?)", (key, until, now))
@@ -3284,6 +3287,8 @@ def snooze_until(opt, now):
     if opt == "tonight":
         t = d.replace(hour=21, minute=0, second=0, microsecond=0)
         return (t if t.timestamp() > now else t + dt.timedelta(days=1)).timestamp()
+    if opt == "3d":
+        return (d.replace(hour=9, minute=0, second=0, microsecond=0) + dt.timedelta(days=3)).timestamp()
     if opt == "monday":
         days = (7 - d.weekday()) % 7 or 7
         return (d.replace(hour=9, minute=0, second=0, microsecond=0) + dt.timedelta(days=days)).timestamp()

@@ -637,7 +637,7 @@ const WAITS = {
   other: ["打开会话", "它在会话里开着一个窗口等你处理，打开会话看看。"],
 };
 function waitOf(it) { return it.kind === "approval" ? WAITS[it.wait] || WAITS.other : null; }
-const SNOOZE = [["15m", "15 分钟后"], ["1h", "1 小时后"], ["3h", "3 小时后"], ["tonight", "今晚"], ["tomorrow", "明早"], ["monday", "下周一上午"]];
+const SNOOZE = [["15m", "15 分钟后"], ["1h", "1 小时后"], ["3h", "3 小时后"], ["tonight", "今晚"], ["tomorrow", "明早"], ["3d", "3 天后"], ["monday", "下周一上午"]];
 const NUDGES = ["还在吗？刚才那条看到了吗？", "刚才断了，接着做，先说一声做到哪了"];
 const GOAL_ASK = "在下一条回复的状态行上面补一行：🎯 目标：<一句话>｜完成标准：<做到什么算完>";
 const WEEK = "日一二三四五六";
@@ -901,9 +901,16 @@ function setSrc(t) {
 }
 
 let localAt = 0;   // 本地最近一次改顺序、置顶的时间
+// 鼠标按着的时候不重画：刷新正好落在按下和松开之间，按钮被换掉，这一下就点空了。松开后再补画
+let pressing = false, owedRender = false, loadedAt = 0;
+function laterRender(fn) { if (pressing) owedRender = true; else fn(); }
+document.addEventListener("pointerdown", () => { pressing = true; }, true);
+for (const ev of ["pointerup", "pointercancel"])
+  document.addEventListener(ev, () => setTimeout(() => { pressing = false; if (owedRender) { owedRender = false; render(); } }, 0), true);
 function setLocal(patch) { Object.assign(state, patch); localAt = Date.now(); }
 async function load(refresh) {
   const t0 = Date.now();
+  loadedAt = t0;
   try {
     const r = await fetch("/api/state" + (refresh ? "?refresh=" + refresh : ""), { cache: "no-store" });
     const next = await r.json();
@@ -919,6 +926,7 @@ async function load(refresh) {
     state = next;
     if (first) { fixScope(railData()); fillView(); }
     if (selecting() || typing() || menu || drag || rdrag) return renderTop();  // 正在选字、打字、开着菜单或拖动时先不重画列表，下次刷新再画
+    if (pressing) { owedRender = true; return renderTop(); }
     render();
     hopNow.clear();
   } catch (e) {
@@ -1716,6 +1724,7 @@ function snoozeAt(opt) {
   else if (opt === "1h") t = n + 3600;
   else if (opt === "3h") t = n + 3 * 3600;
   else if (opt === "tonight") { t = base + 21 * 3600; if (t <= n) t += 86400; }
+  else if (opt === "3d") t = base + 3 * 86400 + 9 * 3600;
   else if (opt === "monday") t = base + ((7 - (d.getUTCDay() + 6) % 7) % 7 || 7) * 86400 + 9 * 3600;
   return when(t);
 }
@@ -1765,7 +1774,7 @@ async function loadHandoff(key, ts) {
   let zh = null;
   try { zh = localStorage.getItem("ledger.hozh2." + key + "." + ts); } catch (e) {}
   dHo[key] = { ts, text, zh, showZh: !!zh };
-  if (selKey === key) renderDetail();
+  if (selKey === key) laterRender(renderDetail);
 }
 function hoMd(text) {
   return esc(text).replace(/^#{1,4} +(.+)$/gm, '<b class="h">$1</b>').replace(/\*\*([^*\n]+)\*\*/g, "<b>$1</b>").replace(/`([^`\n]+)`/g, "<code>$1</code>");
@@ -2286,7 +2295,8 @@ document.addEventListener("keydown", e => {
 });
 ["rail", "queue", "detail"].forEach(id => document.getElementById(id).addEventListener("scroll", closeMenu, { passive: true }));
 window.addEventListener("resize", closeMenu);
-document.addEventListener("visibilitychange", () => { if (!document.hidden) load("1"); });
+// 切回来时拉一次新的；5 秒内来回切就不拉了，省得每切一次整页重画一次
+document.addEventListener("visibilitychange", () => { if (!document.hidden && Date.now() - loadedAt > 5000) load("1"); });
 setInterval(() => { if (!document.hidden && !tagEdit) load("1"); }, 60000);  // 顺带读新记录，服务端一分钟最多读一次
 document.getElementById("split").classList.toggle("railx", !railOpen);
 load("1");
