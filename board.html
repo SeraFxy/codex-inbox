@@ -142,6 +142,7 @@ kbd.k.lg { min-width: 22px; height: 22px; padding: 0 6px; border-radius: 6px; fo
 .bhead { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px 16px; padding: 12px clamp(16px, 2vw, 24px); }
 .split { flex: 1; min-width: 0; display: flex; flex-wrap: wrap; align-items: stretch; border-top: 1px solid var(--bk-line); }
 .queue { flex: 0 1 420px; min-width: 0; padding: 16px 12px; border-right: 1px solid var(--bk-line); display: flex; flex-direction: column; gap: 14px; }
+.queue > * { flex-shrink: 0; }   /* 这一栏自己滚动：提示折行时别被压扁、压到下面的卡片上 */
 .detail { flex: 999 1 540px; min-width: 0; padding: 24px clamp(16px, 3vw, 44px) 40px; background: var(--bk-surface); }
 .detail-in { width: 100%; max-width: 900px; min-height: 100%; display: flex; flex-direction: column; gap: 26px; }
 @media (min-width: 961px) {
@@ -544,13 +545,13 @@ mark { background: var(--bk-lime-mark); color: #1B2026; border-radius: 3px; box-
 const TOKEN = "__LEDGER_TOKEN__";
 // 队列的四个视图（外加「已完成」），groups 是服务端 GROUPS 的 id
 const VIEWS = {
-  you: { label: "轮到你", groups: ["need", "confirm"], hint: "球在你这边。置顶的在前，其余按更新时间，新的在前。",
+  you: { label: "轮到你", groups: ["need", "confirm"], hint: "球在你这边，有新动静的在前。",
          emptyTitle: "没有要你拍板的事", emptyText: "AI 们在安静干活，有新情况会自己跳到这里。" },
-  ai: { label: "AI 在做", groups: ["ai"], hint: "正在跑，需要你时会自己挪过去。按更新时间，新的在前。",
+  ai: { label: "AI 在做", groups: ["ai"], hint: "正在跑，需要你时会自己挪过去。",
         emptyTitle: "没有在跑的任务", emptyText: "手上闲着，随时可以交代新活。" },
   wait: { label: "在等", groups: ["time", "peer"], hint: "推迟的、等到点和等同事的，到点自己回来。",
           emptyTitle: "没有在等的事", emptyText: "推迟或者等同事的会话会出现在这里。" },
-  inbox: { label: "待整理", groups: ["backlog"], hint: "没写状态或很久没动静的会话，新的在前。",
+  inbox: { label: "待整理", groups: ["backlog"], hint: "没写状态或很久没动静的会话。",
            emptyTitle: "都整理完了", emptyText: "新会话没写状态行时会先放在这里。" },
   hidden: { label: "已完成", groups: [], hint: "",
             emptyTitle: "最近没有完成的", emptyText: "点了「完成」的会话会在这里留一阵，方便恢复。" }
@@ -794,7 +795,7 @@ function fillView() {
 function manual(v) { return !!(state && state.order && (state.order[v] || []).length); }
 function needCount() { const g = state && state.groups.find(x => x.id === "need"); return g ? g.items.filter(srcOk).length : 0; }
 function renderSrc() {
-  const n = t => state ? state.groups.reduce((a, g) => a + g.items.filter(it => t === "all" || it.tool === t).length, 0) : 0;
+  const n = t => state ? state.groups.reduce((a, g) => a + g.items.filter(it => (t === "all" || it.tool === t) && !archivedP(railProject(it))).length, 0) : 0;
   document.getElementById("srcseg").innerHTML = [["all", "全部"], ["claude", "CC"], ["codex", "Codex"]].map(([t, label]) =>
     '<button type="button" aria-pressed="' + (src === t) + '" onclick="setSrc(\'' + t + "')\"" + (t === "claude" ? ' title="Claude Code"' : "") + ">" + label +
     '<span class="n">' + n(t) + "</span></button>").join("");
