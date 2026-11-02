@@ -31,7 +31,7 @@ import threading
 import time
 import traceback
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from urllib.parse import parse_qs, unquote as unquote_url, urlparse
+from urllib.parse import parse_qs, quote as quote_url, unquote as unquote_url, urlparse
 from urllib.request import Request, urlopen
 
 HOME = os.path.expanduser("~")
@@ -59,6 +59,7 @@ SUB_ENV = {
     ]),
 }
 LARK = shutil.which("lark-cli", path=SUB_ENV["PATH"]) or "lark-cli"   # 飞书汇总用，没装就不发
+GLAB = shutil.which("glab", path=SUB_ENV["PATH"]) or "glab"            # 查 MR 合并了没有，没装就不查
 
 DEFAULTS = {
     "port": 47800,
@@ -73,6 +74,7 @@ DEFAULTS = {
     "utc_offset_hours": None,  # 看板按哪个时区算时间；空 = 本机时区。Mac 时区和工作时区不一样时填，如北京时间填 8
     "project_parents": [],     # 这些目录下的每个子目录算一个项目，如 ["~/code"]；其余按 ~/Desktop/<项目>、~/<项目> 推断
     "feishu_doc_titles": True, # 产出物里的飞书文档用 lark-cli 以你的身份查真实标题；false 就只用 AI 写的说明
+    "gitlab_mr_state": True,   # AI 给的 GitLab MR 用 glab 以你的身份查标题和合并了没有；false 就不查
 }
 
 HEAD_BYTES = 512 * 1024
@@ -101,6 +103,7 @@ CREATE TABLE IF NOT EXISTS tags (project TEXT PRIMARY KEY, label TEXT, color TEX
 CREATE TABLE IF NOT EXISTS goals (session_key TEXT PRIMARY KEY, goal TEXT, criteria TEXT, status TEXT, at REAL);
 CREATE TABLE IF NOT EXISTS links (session_key TEXT, url TEXT, label TEXT, ts REAL, PRIMARY KEY (session_key, url));
 CREATE TABLE IF NOT EXISTS doc_titles (token TEXT PRIMARY KEY, title TEXT, at REAL);
+CREATE TABLE IF NOT EXISTS mr_state (ref TEXT PRIMARY KEY, state TEXT, title TEXT, at REAL);
 CREATE TABLE IF NOT EXISTS images (session_key TEXT, sha TEXT, ts REAL, file TEXT, bytes INTEGER, PRIMARY KEY (session_key, sha));
 CREATE INDEX IF NOT EXISTS images_session ON images(session_key, ts);
 CREATE TABLE IF NOT EXISTS topics (id INTEGER PRIMARY KEY AUTOINCREMENT, project TEXT, name TEXT, aliases TEXT DEFAULT '[]',
@@ -168,9 +171,10 @@ def open_db():
 
 
 def migrate_links(conn):
-    """产出物表后加的三列：ctx = AI 给出它的那句话，cat = 飞书 / 代码 / 文件 / 网页，doc = 飞书文档的「类型:token」，用来取真实标题。"""
+    """产出物表后加的列：ctx = AI 给出它的那句话，cat = 飞书 / 代码 / 文件 / 网页 / MR，doc = 飞书文档的「类型:token」，用来取真实标题，
+    mr = GitLab MR 的「主机/项目!编号」，用来查合并了没有。"""
     cols = {r[1] for r in conn.execute("PRAGMA table_info(links)")}
-    for col in ("ctx", "cat", "doc"):
+    for col in ("ctx", "cat", "doc", "mr"):
         if col not in cols:
             try:
                 conn.execute("ALTER TABLE links ADD COLUMN %s TEXT DEFAULT ''" % col)
@@ -180,10 +184,12 @@ def migrate_links(conn):
     conn.execute("CREATE INDEX IF NOT EXISTS links_url ON links(url)")
     conn.execute("CREATE INDEX IF NOT EXISTS links_doc ON links(doc)")
     rows = conn.execute("SELECT DISTINCT url FROM links WHERE cat IS NULL OR cat = ''").fetchall()
+    if meta_get(conn, "links_mr") != "1":   # MR、流水线、提交从「代码」里分出来，单算一类
+        rows += conn.execute("SELECT DISTINCT url FROM links WHERE cat = 'code'").fetchall()
+        meta_set(conn, "links_mr", "1")
     for (url,) in rows:
-        conn.execute("UPDATE links SET cat=?, doc=? WHERE url=?", (out_cat(url), feishu_doc(url), url))
-    if rows:
-        conn.commit()
+        conn.execute("UPDATE links SET cat=?, doc=?, mr=? WHERE url=?", (out_cat(url), feishu_doc(url), mr_ref(url), url))
+    conn.commit()
 
 
 def meta_get(conn, k, default=None):
@@ -423,6 +429,9 @@ def link_name(url):
     m = re.search(r"/([^/]+)/-/merge_requests/(\d+)", path)
     if m:
         return "MR !%s · %s" % (m.group(2), m.group(1))
+    m = re.search(r"^/[^/]+/([^/]+)/pull/(\d+)", path) if host == "github.com" else None
+    if m:
+        return "PR #%s · %s" % (m.group(2), m.group(1))
     m = re.search(r"/([^/]+)/-/(pipelines|jobs)/(\d+)", path)
     if m:
         return "%s #%s · %s" % ("流水线" if m.group(2) == "pipelines" else "任务", m.group(3), m.group(1))
@@ -437,8 +446,13 @@ def link_name(url):
     return host[4:] if host.startswith("www.") else host
 
 
+MR_PATH_RE = re.compile(r"/-/(merge_requests|pipelines|jobs|commit|compare)(/|$)|^/[^/]+/[^/]+/(pull|commit|compare|actions/runs)(/|$)")
+GITLAB_MR_RE = re.compile(r"^/(.+?)/-/merge_requests/(\d+)(/|$)")
+
+
 def out_cat(url):
-    """产出物分四类：飞书（本租户的文档表格）、代码（MR、流水线、仓库）、文件（本机）、网页（其余）。"""
+    """AI 给的东西分两种：产物（飞书文档表格、代码仓库和文件、本机文件、网页），一直要留着；
+    MR 和流水线（MR / PR、流水线、提交）是临时的，合并完就不用再看，单算一类 mr，不算产物。"""
     if url.startswith("/"):
         return "file"
     u = urlparse(url)
@@ -446,8 +460,17 @@ def out_cat(url):
     if (host.endswith(".feishu.cn") or host.endswith(".larksuite.com")) and host.split(".")[0] not in ("open", "www"):
         return "feishu"
     if "/-/" in path or host.startswith(("git.", "gitlab.")) or host == "github.com":
-        return "code"
+        return "mr" if MR_PATH_RE.search(path) else "code"
     return "web"
+
+
+def mr_ref(url):
+    """GitLab MR 链接 -> 「主机/项目路径!编号」，按它用 glab 查标题和合并了没有；别的链接返回空。"""
+    if url.startswith("/"):
+        return ""
+    u = urlparse(url)
+    m = GITLAB_MR_RE.match(u.path)
+    return "%s/%s!%s" % (u.netloc.lower(), m.group(1), m.group(2)) if m and u.netloc else ""
 
 
 def feishu_doc(url):
@@ -645,12 +668,12 @@ def flush_media(conn, key, st):
         ctx = row[3] if len(row) > 3 else ""
         url = url[:1000]
         # 同一个会话里多次给出同一个链接：时间取最近一次，说明取最近一次非空的，原话取最近一次的
-        conn.execute("INSERT INTO links (session_key, url, label, ts, ctx, cat, doc) VALUES (?, ?, ?, ?, ?, ?, ?) "
+        conn.execute("INSERT INTO links (session_key, url, label, ts, ctx, cat, doc, mr) VALUES (?, ?, ?, ?, ?, ?, ?, ?) "
                      "ON CONFLICT(session_key, url) DO UPDATE SET ts=MAX(links.ts, excluded.ts), "
                      "label=CASE WHEN excluded.label != '' THEN excluded.label ELSE links.label END, "
                      "ctx=CASE WHEN excluded.ctx != '' AND (links.ctx IS NULL OR links.ctx = '' OR excluded.ts >= links.ts) "
                      "THEN excluded.ctx ELSE links.ctx END",
-                     (key, url, label, ts or 0, ctx, out_cat(url), feishu_doc(url)))
+                     (key, url, label, ts or 0, ctx, out_cat(url), feishu_doc(url), mr_ref(url)))
     for ts, sha, name, size in st.pop("new_images", []):
         conn.execute("INSERT OR IGNORE INTO images (session_key, sha, ts, file, bytes) VALUES (?, ?, ?, ?, ?)",
                      (key, sha, ts or 0, name, size))
@@ -1319,7 +1342,7 @@ def merge_batches(items, gap=3):
 
 def session_extras(conn, key):
     g = conn.execute("SELECT goal, criteria, status FROM goals WHERE session_key=?", (key,)).fetchone()
-    n = conn.execute("SELECT COUNT(DISTINCT " + OUT_KEY.replace("l.", "") + ") FROM links WHERE session_key=?", (key,)).fetchone()[0]
+    n = conn.execute("SELECT COUNT(DISTINCT " + OUT_KEY.replace("l.", "") + ") FROM links WHERE session_key=? AND cat != 'mr'", (key,)).fetchone()[0]
     return {
         "goal": g["goal"] if g else "", "criteria": g["criteria"] if g else "",
         "goalStatus": GOAL_STATUS.get(g["status"], g["status"]) if g and g["status"] else "",
@@ -1431,15 +1454,16 @@ def session_prompts(conn, key):
 
 
 def _out_where(q, cat="", key="", tool=""):
-    """产出物的搜索条件：每个词都要在链接 / 文件路径、真实标题、AI 写的说明和原话、会话名或项目里出现。"""
+    """产出物的搜索条件：每个词都要在链接 / 文件路径、真实标题、AI 写的说明和原话、会话名或项目里出现。
+    cat 空着 = 只看产物（不含 MR 和流水线），any = 全都要，mr_open = 还开着的 MR（没查过的也算），其余 = 只看这一类。"""
     conds, args = [], []
     for w in [w for w in (q or "").split() if w][:6]:
         like = "%" + w.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
-        conds.append("(l.url LIKE ? ESCAPE '\\' OR l.label LIKE ? ESCAPE '\\' OR l.ctx LIKE ? ESCAPE '\\' OR d.title LIKE ? ESCAPE '\\' "
+        conds.append("(l.url LIKE ? ESCAPE '\\' OR l.label LIKE ? ESCAPE '\\' OR l.ctx LIKE ? ESCAPE '\\' OR d.title LIKE ? ESCAPE '\\' OR m.title LIKE ? ESCAPE '\\' "
                      "OR l.session_key IN (SELECT session_key FROM names WHERE title LIKE ? ESCAPE '\\') "
                      "OR l.session_key IN (SELECT session_key FROM prompts WHERE title LIKE ? ESCAPE '\\' OR project LIKE ? ESCAPE '\\' "
                      "OR project IN (SELECT project FROM tags WHERE label LIKE ? ESCAPE '\\')))")
-        args += [like] * 8
+        args += [like] * 9
     if key:
         conds.append("l.session_key=?")
         args.append(key)
@@ -1449,13 +1473,18 @@ def _out_where(q, cat="", key="", tool=""):
     if cat in OUT_CATS:
         conds.append("l.cat=?")
         args.append(cat)
+    elif cat == "mr_open":
+        conds.append("l.mr != '' AND (m.state IS NULL OR m.state IN ('opened', 'locked'))")
+    elif cat != "any":
+        conds.append("l.cat != 'mr'")
     return (" WHERE " + " AND ".join(conds)) if conds else "", args
 
 
-OUT_FROM = " FROM links l LEFT JOIN doc_titles d ON l.doc != '' AND d.token = l.doc"
+OUT_FROM = (" FROM links l LEFT JOIN doc_titles d ON l.doc != '' AND d.token = l.doc"
+            " LEFT JOIN mr_state m ON l.mr != '' AND m.ref = l.mr")
 # 同一篇飞书文档算一个产出物：带 #块锚点、?from= 的各种写法都归到「类型:token」；别的按链接本身
 OUT_KEY = "(CASE WHEN l.doc != '' THEN l.doc ELSE l.url END)"
-OUT_CATS = ("feishu", "code", "file", "web")
+OUT_CATS = ("feishu", "code", "file", "web", "mr")
 
 
 def count_outputs(conn, q, tool=""):
@@ -1493,13 +1522,15 @@ def search_outputs(conn, q, cat="", key="", tool="", limit=100, offset=0):
     total = conn.execute("SELECT COUNT(DISTINCT " + OUT_KEY + ")" + OUT_FROM + where, args).fetchone()[0]
     rows = conn.execute("SELECT " + OUT_KEY + " AS g, MAX(l.ts) AS ts" + OUT_FROM + where +
                         " GROUP BY g ORDER BY ts DESC LIMIT ? OFFSET ?", args + [limit, offset]).fetchall()
-    cw, cargs = _out_where(q, "", key, tool)
+    cw, cargs = _out_where(q, "any", key, tool)
     counts = {r[0] or "web": r[1] for r in conn.execute("SELECT l.cat, COUNT(DISTINCT " + OUT_KEY + ")" + OUT_FROM + cw + " GROUP BY l.cat", cargs)}
+    ow, oargs = _out_where(q, "mr_open", key, tool)
+    counts["mr_open"] = conn.execute("SELECT COUNT(DISTINCT " + OUT_KEY + ")" + OUT_FROM + ow, oargs).fetchone()[0]
     by_tool = ([key], " AND l.session_key=?") if key else (([tool + ":%"], " AND l.session_key LIKE ?") if tool in ("claude", "codex") else ([], ""))
     items, keys = [], []
     for r in rows:
         by_doc = "://" not in r["g"] and not r["g"].startswith("/")   # 「类型:token」按 doc 列查，别的按链接查，都走索引
-        occ = conn.execute("SELECT l.session_key, l.url, l.label, l.ctx, l.ts, d.title" + OUT_FROM + (" WHERE l.doc=?" if by_doc else " WHERE l.url=?") + by_tool[1] +
+        occ = conn.execute("SELECT l.session_key, l.url, l.label, l.ctx, l.ts, COALESCE(d.title, m.title, '') AS title, m.state" + OUT_FROM + (" WHERE l.doc=?" if by_doc else " WHERE l.url=?") + by_tool[1] +
                            " ORDER BY l.ts DESC", [r["g"]] + by_tool[0]).fetchall()
         if not occ:
             continue
@@ -1512,7 +1543,7 @@ def search_outputs(conn, q, cat="", key="", tool="", limit=100, offset=0):
         url = next((o["url"] for o in occ if "#" not in o["url"]), head["url"])   # 有不带锚点的就用它，打开是文档开头
         it = {"url": url, "cat": out_cat(url), "name": link_name(url), "title": head["title"] or "", "label": label,
               "text": out_text(url, label, head["title"]), "ctx": head["ctx"] or "", "ts": r["ts"], "timeText": fmt_time(r["ts"], now),
-              "nSessions": len(sess), "sessions": sess[:3]}
+              "nSessions": len(sess), "sessions": sess[:3], "state": head["state"] or ""}
         if it["cat"] == "file":
             it["path"] = home_rel(url)
             it["gone"] = not os.path.exists(url)
@@ -1522,7 +1553,7 @@ def search_outputs(conn, q, cat="", key="", tool="", limit=100, offset=0):
     for it in items:
         for x in it["sessions"]:
             x.update(briefs.get(x["key"], {}))
-    allc = conn.execute("SELECT COUNT(DISTINCT " + OUT_KEY + "), COUNT(DISTINCT l.session_key) FROM links l").fetchone()
+    allc = conn.execute("SELECT COUNT(DISTINCT " + OUT_KEY + "), COUNT(DISTINCT l.session_key) FROM links l WHERE l.cat != 'mr'").fetchone()
     res = {"q": q, "cat": cat, "key": key, "total": total, "counts": counts, "items": items,
            "all": allc[0], "allSessions": allc[1], "wider": 0, "promptHits": 0}
     if q.strip():
@@ -1536,10 +1567,10 @@ def search_outputs(conn, q, cat="", key="", tool="", limit=100, offset=0):
     return res
 
 
-def out_brief(url, label, title, ts, now):
-    """详情里一行产出物要的字段。"""
+def out_brief(url, label, title, ts, now, state=""):
+    """详情里一行产出物要的字段。state = MR 的状态：opened / merged / closed，没查过是空的。"""
     it = {"url": url, "cat": out_cat(url), "name": link_name(url), "text": out_text(url, label, title),
-          "timeText": fmt_time(ts, now) if ts else ""}
+          "timeText": fmt_time(ts, now) if ts else "", "state": state or ""}
     if it["cat"] == "file":
         it["path"] = home_rel(url)
     return it
@@ -1551,6 +1582,43 @@ def pending_docs(conn, now, limit=200):
         "SELECT l.doc FROM links l LEFT JOIN doc_titles d ON d.token = l.doc WHERE l.doc != '' "
         "AND (d.token IS NULL OR (d.title = '' AND d.at < ?)) GROUP BY l.doc ORDER BY MAX(l.ts) DESC LIMIT ?",
         (now - 7 * 86400, limit))]
+
+
+def pending_mrs(conn, now, limit=300):
+    """要查合并状态的 MR（新给的排前面）：没查过的；开着的、最近 30 天给过的，15 分钟查一次；上次没查到的 6 小时后再试。
+    合并了、关了的不再查。"""
+    return [r[0] for r in conn.execute(
+        "SELECT l.mr FROM links l LEFT JOIN mr_state m ON m.ref = l.mr WHERE l.mr != '' "
+        "AND (m.ref IS NULL OR (m.state IN ('opened', 'locked') AND m.at < ?) OR (m.state = '' AND m.at < ?)) "
+        "GROUP BY l.mr HAVING m.ref IS NULL OR m.state = '' OR MAX(l.ts) >= ? ORDER BY MAX(l.ts) DESC LIMIT ?",
+        (now - 900, now - 6 * 3600, now - 30 * 86400, limit))]
+
+
+def fetch_mr_states(refs):
+    """用 glab 以你的身份按项目批量查 MR（一次 40 个，多了 GitLab 会回 502；不调 AI）。返回 {ref: (状态, 标题)}，查不到的是 ("", "")；
+    glab 没装或一个都没查成返回 None。"""
+    if not (os.path.isabs(GLAB) and os.access(GLAB, os.X_OK)):
+        return None
+    groups = {}
+    for ref in refs:
+        where, iid = ref.rsplit("!", 1)
+        groups.setdefault(tuple(where.split("/", 1)), []).append(iid)
+    got, ok = {}, False
+    for (host, proj), iids in groups.items():
+        for i in range(0, len(iids), 40):
+            part = iids[i:i + 40]
+            r = run([GLAB, "api", "--hostname", host, "projects/%s/merge_requests?%s&per_page=100"
+                     % (quote_url(proj, safe=""), "&".join("iids[]=" + x for x in part))], timeout=30)
+            try:
+                res = json.loads(r.stdout or "") if r.returncode == 0 else None
+            except ValueError:
+                res = None
+            ok = ok or isinstance(res, list)
+            seen = {str(m.get("iid")): m for m in res if isinstance(m, dict)} if isinstance(res, list) else {}
+            for x in part:
+                m = seen.get(x) or {}
+                got["%s/%s!%s" % (host, proj, x)] = (str(m.get("state") or "")[:12], str(m.get("title") or "").strip()[:200])
+    return got if ok else None
 
 
 def fetch_doc_titles(docs):
@@ -1912,7 +1980,11 @@ def make_item(st, now, cfg, ov, sched, titles, goals, ctx):
             "goalStatus": GOAL_STATUS.get(codex_goal.get("status") or saved.get("status") or "", ""),
             "originalTitle": (st.get("custom_title") or titles.get(st["id"]) or st.get("ai_title") or "")
                              if ctx["names"].get(key) else "",
-            "links": ctx["links"].get(key, [])[:8], "linksTotal": len(ctx["links"].get(key, [])),   # 详情里先列 8 个，展开再按会话取全部
+            # 产物先列 8 个，展开再按会话取全部；MR 和流水线是临时的，单独列在下面
+            "links": [l for l in ctx["links"].get(key, []) if l["cat"] != "mr"][:8],
+            "linksTotal": sum(1 for l in ctx["links"].get(key, []) if l["cat"] != "mr"),
+            "mrs": [l for l in ctx["links"].get(key, []) if l["cat"] == "mr"][:50],
+            "mrsTotal": sum(1 for l in ctx["links"].get(key, []) if l["cat"] == "mr"),
             "firstPrompt": (st.get("first_prompt") or "")[:300],
             "lastPrompt": (st.get("last_prompt") or "")[:300] if st.get("last_prompt") != st.get("first_prompt") else "",
             "lastReply": tail_text(st.get("last_text") or st.get("progress_text")),
@@ -2007,12 +2079,12 @@ def build_board(conn, cfg, now=None):
     ctx = {"names": name_map(conn), "tags": tag_map(conn), "moved": load_moved(conn), "links": {}, "live": claude_live(),
            "goals": {r["session_key"]: dict(r) for r in conn.execute("SELECT * FROM goals")}}
     seen_out = set()
-    for r in conn.execute("SELECT l.session_key, l.url, l.label, l.ts, l.doc, d.title" + OUT_FROM +
+    for r in conn.execute("SELECT l.session_key, l.url, l.label, l.ts, l.doc, COALESCE(d.title, m.title, '') AS title, m.state" + OUT_FROM +
                           " WHERE l.session_key IN (SELECT key FROM sessions WHERE last_activity >= ?) ORDER BY l.ts DESC", (now - 30 * 86400,)):
         if (r["session_key"], r["doc"] or r["url"]) in seen_out:
             continue   # 同一篇飞书文档的别的写法（带锚点等），只留最近一次
         seen_out.add((r["session_key"], r["doc"] or r["url"]))
-        ctx["links"].setdefault(r["session_key"], []).append(out_brief(r["url"], r["label"], r["title"], r["ts"], now))
+        ctx["links"].setdefault(r["session_key"], []).append(out_brief(r["url"], r["label"], r["title"], r["ts"], now, r["state"]))
     for r in conn.execute("SELECT data FROM sessions WHERE last_activity >= ?", (now - 30 * 86400,)):
         st = json.loads(r["data"])
         if not include_session(st):
@@ -2593,6 +2665,28 @@ class App:
         self.notify_due(now)
         self.maybe_digest(now)
         self.sync_doc_titles(now)
+        self.sync_mr_states(now)
+
+    def sync_mr_states(self, now):
+        """MR 合并了没有：每分钟最多查一批（300 个），glab 没装、没登录就隔 6 小时再试。"""
+        if not self.cfg.get("gitlab_mr_state", True):
+            return
+        with self.lock:
+            if now < float(meta_get(self.conn, "mr_state_retry", 0) or 0):
+                return
+            refs = pending_mrs(self.conn, now)
+        if not refs:
+            return
+        got = fetch_mr_states(refs)   # 网络请求不占锁
+        with self.lock:
+            if got is None:
+                meta_set(self.conn, "mr_state_retry", now + 6 * 3600)
+                log("查 MR 状态失败（glab 没装或没登录），6 小时后再试")
+            else:
+                for ref in refs:
+                    state, title = got.get(ref, ("", ""))
+                    self.conn.execute("INSERT OR REPLACE INTO mr_state (ref, state, title, at) VALUES (?, ?, ?, ?)", (ref, state, title, now))
+            self.conn.commit()
 
     def sync_doc_titles(self, now):
         """飞书文档换成真实标题：每分钟最多查一批（200 篇），lark-cli 没装、没登录就隔 6 小时再试。"""

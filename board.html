@@ -352,7 +352,9 @@ kbd.k.lg { min-width: 22px; height: 22px; padding: 0 6px; border-radius: 6px; fo
 .links a:hover { color: var(--bk-run-ink); text-decoration: underline; }
 .links .lt { flex: none; margin-left: auto; font: 11px var(--bk-mono); color: var(--bk-ink-3); }
 .lmore { font-size: 12px; line-height: 18px; color: var(--bk-ink-3); }
-.dout .lbar { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; margin-left: -8px; }
+.dout .lbar, .dmr .lbar { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; margin-left: -8px; }
+.links .lst { flex: none; }
+.links li.done a { color: var(--bk-ink-3); }
 .lfilter {
   width: 100%; height: 36px; padding: 0 12px; border: 1px solid var(--bk-line-strong); border-radius: 12px; background: var(--bk-surface);
   font-size: 13px; outline: none; transition: border-color .12s, box-shadow .12s;
@@ -459,6 +461,7 @@ kbd.k.lg { min-width: 22px; height: 22px; padding: 0 6px; border-radius: 6px; fo
 .ocats { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; }
 .ocats .seg.src { align-self: flex-start; max-width: 100%; overflow-x: auto; scrollbar-width: none; }
 .ocats .seg.src button { flex: none; white-space: nowrap; }
+.orow.done .ot { color: var(--bk-ink-2); font-weight: 400; }
 .orow .os1 { display: inline-flex; align-items: center; gap: 6px; min-width: 0; max-width: 100%; }
 mark { background: var(--bk-lime-mark); color: #1B2026; border-radius: 3px; box-shadow: 0 0 0 2px var(--bk-lime-mark); }
 
@@ -965,9 +968,13 @@ function outLink(l, cls, inner) {
   return '<a href="' + esc(l.url) + '"' + c + ' target="_blank" rel="noopener" title="' + esc(l.url) + '">' + t + "</a>";
 }
 function linkList(links) {
-  return '<ul class="links">' + links.map(l =>
-    '<li><span class="lk">' + esc(l.text !== l.name ? l.name : "") + "</span>" + outLink(l) + '<span class="lt">' + esc(l.timeText) + "</span></li>").join("") + "</ul>";
+  return '<ul class="links">' + links.map(l => '<li' + (l.cat === "mr" && !mrLive(l) ? ' class="done"' : "") + '><span class="lk">' + esc(l.text !== l.name ? l.name : "") +
+    "</span>" + outLink(l) + (MR_STATE[l.state] ? '<span class="chip sm lst">' + MR_STATE[l.state] + "</span>" : "") +
+    '<span class="lt">' + esc(l.timeText) + "</span></li>").join("") + "</ul>";
 }
+// MR 和流水线：临时的，开着的 MR 列出来，合并了、关了的和流水线、提交收起来
+const MR_STATE = { opened: "待合并", locked: "待合并", merged: "已合并", closed: "已关闭" };
+function mrLive(l) { return l.state === "opened" || l.state === "locked" || (!l.state && /^MR /.test(l.name)); }
 async function openFile(path, reveal) {
   try {
     const res = await post("openfile", "", { path, reveal: !!reveal });
@@ -1585,6 +1592,7 @@ function renderDetail() {
   html += convo(it);
   if (d.goal || !hidden) html += goalSec(it);
   html += outSec(it);
+  html += mrSec(it);
   html += infoSec(it);
   el.innerHTML = '<div class="detail-in">' + html + "</div>";
 }
@@ -1625,6 +1633,24 @@ async function expandOut(key, quiet) {
   if (selKey === key && tab === "board" && !typing()) renderDetail();
 }
 function foldOut(key) { delete dOut[key]; delete dOutQ[key]; renderDetail(); }
+const dMrAll = {};   // 会话 key -> 展开了合并完的 MR 和流水线
+function mrSec(it) {
+  const d = it.details, k = esc(it.key), all = d.mrs || [];
+  if (!d.mrsTotal) return "";
+  const live = all.filter(mrLive), rest = all.filter(l => !mrLive(l)), open = dMrAll[it.key];
+  const cnt = {};
+  rest.forEach(l => { const t = MR_STATE[l.state] || (/^MR |^PR /.test(l.name) ? "其他 MR" : "流水线和提交"); cnt[t] = (cnt[t] || 0) + 1; });
+  const sum = ["已合并", "已关闭", "其他 MR", "流水线和提交"].filter(t => cnt[t]).map(t => t + " " + num(cnt[t]) + " 个").join("、");
+  let html = '<div class="part dmr"><div class="sec-hd"><span class="sec-t">MR 和流水线</span><span class="mono">' + num(d.mrsTotal) + " 个</span></div>" +
+    '<span class="sec-l">临时的，合并完就不用再管' + (live.length ? "；还开着的 " + num(live.length) + " 个" : "；都处理完了") + "</span>";
+  const list = open ? all : live;
+  if (list.length) html += linkList(list);
+  if (rest.length || d.mrsTotal > all.length)
+    html += '<div class="lbar">' + (rest.length ? btn(open ? "收起合并完的" + ico("up") : sum + ico("down"),
+      "dMrAll['" + k + "']=" + (open ? "false" : "true") + ";renderDetail()", "ghost sm") : "") +
+      (d.mrsTotal > all.length ? btn("全部 " + num(d.mrsTotal) + " 个在「产出物」里", "goOutputs('', '" + k + "', 'mr')", "ghost sm") : "") + "</div>";
+  return html + "</div>";
+}
 function snoozeAt(opt) {
   // 和服务端 snooze_until 同一套算法，按工作时区算出几点，不让人心算
   const n = nowTs(), d = wd(n), base = n - (d.getUTCHours() * 3600 + d.getUTCMinutes() * 60 + d.getUTCSeconds());
@@ -1930,11 +1956,12 @@ function renderHistory() {
 }
 
 // ---------------- 产出物：AI 在回复里给你的链接和本机文件，能搜，能跳回给出它的会话
-const CATS = [["all", "全部"], ["feishu", "飞书"], ["code", "代码"], ["file", "文件"], ["web", "网页"]];
+// 产物一直留着；MR 和流水线是临时的，单独一组，「全部产物」里不算它们
+const CATS = [["all", "全部产物"], ["feishu", "飞书"], ["file", "文件"], ["web", "网页"], ["code", "代码"]];
 let oq = "", oCat = "all", oKey = "", oItems = [], oTotal = 0, oCounts = {}, oAll = 0, oAllSessions = 0, oWider = 0, oPromptHits = 0, oLoaded = false, oReady = false, oSig = "";
-function goOutputs(q, key) {
-  // 从看板详情、我说过的话跳过来：key = 只看这个会话的
-  oq = q || ""; oKey = key || ""; oCat = "all"; oLoaded = false;
+function goOutputs(q, key, cat) {
+  // 从看板详情、我说过的话跳过来：key = 只看这个会话的，cat = 只看哪一类
+  oq = q || ""; oKey = key || ""; oCat = cat || "all"; oLoaded = false;
   setTab("outputs");
   window.scrollTo(0, 0);
 }
@@ -1973,7 +2000,7 @@ function sessLink(x) {
     (on ? "回到看板，打开这个会话的详情" : "已不在看板上，点一下直接打开会话") + '" onclick="' + (on ? "locate" : "openSession") + "(clips[" + clip(x.key) + '])">' +
     hl(x.title || "（未命名会话）", oq) + "</button></span>";
 }
-const CAT_NAME = { feishu: "飞书", code: "代码", file: "文件", web: "网页" };
+const CAT_NAME = { feishu: "飞书", code: "代码", file: "文件", web: "网页", mr: "MR 和流水线", mr_open: "还开着的 MR" };
 function orow(o) {
   const s0 = o.sessions[0], k0 = s0 ? clip(s0.key) : 0;
   const acts = (s0 && findItem(s0.key) ? btn("在看板里看", "locate(clips[" + k0 + "])", "ghost xs", "回到看板，打开给出它的会话的详情") : "") +
@@ -1981,33 +2008,41 @@ function orow(o) {
     (o.cat === "file" && !o.gone ? btn("在访达里显示", "openFile(clips[" + clip(o.url) + "],true)", "ghost xs") : "") +
     btn(o.cat === "file" ? "复制路径" : "复制链接", "copyClip(" + clip(o.url) + ")", "ghost xs");
   const more = o.nSessions > o.sessions.length ? "<span>等 " + num(o.nSessions) + " 个会话都给过</span>" : "";
-  return '<div class="orow"><span class="ok" title="' + esc(o.name) + '">' + esc(o.text !== o.name ? o.name : CAT_NAME[o.cat] || "") + "</span>" +
+  return '<div class="orow' + (o.cat === "mr" && !mrLive(o) ? " done" : "") + '"><span class="ok" title="' + esc(o.name) + '">' +
+    esc(o.text !== o.name ? o.name : CAT_NAME[o.cat] || "") + "</span>" +
     '<div class="om">' + outLink(o, "ot" + (o.gone ? " gone" : ""), hl(o.text, oq)) +
     (o.cat === "file" ? '<span class="op">' + hl(o.path || o.url, oq) + (o.gone ? "　已经不在了" : "") + "</span>" : "") +
     (o.ctx ? '<p class="oc" title="AI 给出它时说的话">「' + hl(o.ctx, oq) + "」</p>" : "") +
-    '<div class="os">' + o.sessions.map(sessLink).join("") + more + "</div></div>" +
+    '<div class="os">' + (MR_STATE[o.state] ? '<span class="chip sm">' + MR_STATE[o.state] + "</span>" : "") + o.sessions.map(sessLink).join("") + more + "</div></div>" +
     '<div class="oa"><span class="otm">' + esc(when(o.ts)) + '</span><span class="oacts">' + acts + "</span></div></div>";
 }
 function renderOutputs() {
-  const n = c => c === "all" ? Object.values(oCounts).reduce((a, b) => a + b, 0) : oCounts[c] || 0;
+  const n = c => c === "all" ? CATS.reduce((a, [k]) => a + (k === "all" ? 0 : oCounts[k] || 0), 0) : oCounts[c] || 0;
+  const mr = oCat === "mr" || oCat === "mr_open", seg = ([c, label]) =>
+    '<button type="button" aria-pressed="' + (oCat === c) + '" onclick="setCat(\'' + c + "')\">" + label + '<span class="n">' + num(n(c)) + "</span></button>";
   document.getElementById("hsum").innerHTML = '<span class="hl1">' + (oq || oKey || oCat !== "all"
-    ? '<span class="mono hit">找到 ' + num(oTotal) + " 个产出物</span>"
+    ? '<span class="mono hit">找到 ' + num(oTotal) + (oCat === "mr_open" ? " 个还开着的 MR" : mr ? " 个 MR 和流水线" : " 个产出物") + "</span>"
     : '<span class="mono">共 ' + num(oAll) + " 个产出物 · 来自 " + num(oAllSessions) + " 个会话</span>") +
     (oq && oPromptHits ? btn("你自己在 " + num(oPromptHits) + " 个会话里说过" + ico("right", 12), "goHistory(oq)", "ghost xs", "到「我说过的话」里看") : "") + "</span>" +
-    '<span class="note">' + ico("info", 13) + "AI 在回复里给你的链接和本机文件，同一个链接只列一次；飞书文档显示真实标题</span>";
-  let html = '<div class="ocats"><div class="seg src" role="group" aria-label="只看哪类产出物">' + CATS.map(([c, label]) =>
-    '<button type="button" aria-pressed="' + (oCat === c) + '" onclick="setCat(\'' + c + "')\">" + label + '<span class="n">' + num(n(c)) + "</span></button>").join("") + "</div>" +
+    '<span class="note">' + ico("info", 13) + (mr ? "临时的：开着的 MR 标「待合并」，合并完的变灰，不用再管"
+      : "AI 给你的文档、文件和网页，一直留着；MR 和流水线是临时的，单独放一组") + "</span>";
+  let html = '<div class="ocats"><div class="seg src" role="group" aria-label="只看哪类产出物">' + CATS.map(seg).join("") + "</div>" +
+    '<div class="seg src" role="group" aria-label="临时的链接">' + seg(["mr_open", "还开着的 MR"]) + seg(["mr", "MR 和流水线"]) + "</div>" +
     (oKey ? '<span class="chip" title="只看这个会话给的">只看「' + esc(oKeyTitle()) + "」</span>" + btn("看全部会话的", "clearOutKey()", "ghost xs") : "") + "</div>";
   if (!oItems.length) {
-    // 只看某个会话或某一类时没搜到：直接说放开后有几个，一键放开
+    // 只看某个会话或某一类时没搜到：直接说放开后有几个，一键放开；产物里没有、MR 和流水线里有时给那边的入口
     const part = oKey ? "只看「" + oKeyTitle() + "」" + (oCat !== "all" ? "里的" + CAT_NAME[oCat] : "") : oCat !== "all" ? "只看" + CAT_NAME[oCat] : "";
-    const tip = !oq ? "AI 在回复里给你链接或文件后，会自动收在这里。"
+    const inMr = !!(oq && !mr && oCounts.mr);
+    const tip = !oq ? (oCat === "mr_open" ? "合并完、关掉的在「MR 和流水线」里。" : mr ? "AI 在回复里给你 MR 或流水线链接后，会收在这里。" : "AI 在回复里给你链接或文件后，会自动收在这里。")
+      : inMr ? "产物里没有，MR 和流水线里有 " + num(oCounts.mr) + " 个对得上。"
       : oWider ? "放开到全部会话、全部类型，有 " + num(oWider) + " 个。"
       : oPromptHits ? "AI 没给过，但你自己在 " + num(oPromptHits) + " 个会话里说过。"
       : part ? "放开到全部也没有。换个说法，或者少打几个词试试。" : "换个说法，或者少打几个词试试。";
     html += '<div class="dash" style="margin: 0; padding: 20px; gap: 14px">' + face("search", 36) + '<span class="tx">' +
-      (oq ? "<b>" + (part ? part + "时" : "") + "没找到「" + esc(oq) + "」</b>" : "<b>这里还空着</b>") + "<span>" + esc(tip) + "</span></span>" +
-      (oq && oWider ? btn("看全部 " + num(oWider) + " 个", "widenOut()", "sec sm", "", 'style="margin-left: auto"')
+      (oq ? "<b>" + (part ? part + "时" : "") + "没找到「" + esc(oq) + "」</b>" : "<b>" + (oCat === "mr_open" ? "开着的 MR 都处理完了" : "这里还空着") + "</b>") +
+      "<span>" + esc(tip) + "</span></span>" +
+      (inMr ? btn("去 MR 和流水线里看", "setCat('mr')", "sec sm", "", 'style="margin-left: auto"')
+        : oq && oWider ? btn("看全部 " + num(oWider) + " 个", "widenOut()", "sec sm", "", 'style="margin-left: auto"')
         : oq && oPromptHits ? btn("去我说过的话里看", "goHistory(oq)", "sec sm", "", 'style="margin-left: auto"') : "") + "</div>";
     document.getElementById("hlist").innerHTML = html;
     return;
