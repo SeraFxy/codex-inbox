@@ -2592,12 +2592,17 @@ def board_refs(conn, keys, items, now):
     for k in keys:
         it = by_key.get(k)
         if it:
-            out.append({"key": k, "title": it["title"], "tool": it["tool"], "project": it["project"], "last": it["last"], "onBoard": True, "auto": it["auto"]})
+            out.append({"key": k, "title": it["title"], "tool": it["tool"], "project": it["project"], "last": it["last"], "onBoard": True, "auto": it["auto"],
+                        "topic": it.get("topic")})
             continue
         row = conn.execute("SELECT * FROM prompts WHERE session_key=? ORDER BY ts DESC LIMIT 1", (k,)).fetchone()
         if row:
             x = prompt_rows_to_items(conn, [row], now)[0]
-            out.append({"key": k, "title": x["title"], "tool": x["tool"], "project": x["project"], "last": x["ts"], "onBoard": False, "auto": x["auto"]})
+            # 不在看板上的：只认你手动放进去的主题（#主题 要读对话记录才知道）
+            t = conn.execute("SELECT t.id, t.name, t.project FROM session_topics s JOIN topics t ON t.id = s.topic_id "
+                             "WHERE s.session_key=? AND NOT t.deleted", (k,)).fetchone()
+            out.append({"key": k, "title": x["title"], "tool": x["tool"], "project": x["project"], "last": x["ts"], "onBoard": False, "auto": x["auto"],
+                        "topic": dict(t) if t else None})
     return out
 
 

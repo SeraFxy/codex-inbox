@@ -194,6 +194,7 @@ kbd.k.lg { min-width: 22px; height: 22px; padding: 0 6px; border-radius: 6px; fo
 .rsec:focus-visible { outline: 2px solid var(--bk-ink-1); outline-offset: 1px; }
 .rsec .n { margin-left: auto; font: 500 12px/1 var(--bk-mono); }
 .ri.fav { padding-left: 26px; gap: 6px; }
+.rfg { padding: 8px 10px 2px 26px; font-size: 12px; line-height: 16px; color: var(--bk-ink-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }   /* 收藏里的主题小标题 */
 .ri.off .nm { color: var(--bk-ink-3); }   /* 暂停了的定时任务，和「已暂停的 N 个」那一行 */
 .rfoot { margin: auto 0 0; padding: 12px 10px 0; font-size: 12px; line-height: 18px; color: var(--bk-ink-3); }
 .qtop { display: none; align-items: center; gap: 6px; margin-bottom: -4px; }
@@ -1135,11 +1136,11 @@ function renderRail() {
   if (favs.length) {
     html += '<button type="button" class="rsec" aria-expanded="' + favOpen + '" onclick="toggleFavs()">' + ico(favOpen ? "down" : "right", 14) +
       "<span>收藏</span><span class=\"n\">" + favs.length + "</span></button>";
-    if (favOpen) html += favs.map(x => '<div class="rt">' +
+    if (favOpen) html += favGroups(favs).map(g => (g.label ? '<div class="rfg" title="' + esc(g.label) + '">' + esc(g.label) + "</div>" : "") + g.items.map(x => '<div class="rt">' +
       '<button type="button" class="ri fav" data-key="' + esc(x.key) + '" aria-current="' + (x.key === selKey) + '" title="' + esc(x.title) + (x.onBoard ? "" : "（点一下打开会话）") +
       '" onclick="goFav(this.dataset.key)">' + toolChip(x) + '<span class="nm">' + esc(x.title) + "</span></button>" +
       '<button type="button" class="ra" title="打开或取消收藏" aria-label="「' + esc(x.title) + '」打开或取消收藏" aria-haspopup="menu" aria-expanded="false"' +
-      ' data-key="' + esc(x.key) + '" onclick="event.stopPropagation();favMore(this,this.dataset.key)">' + ico("more", 15) + "</button></div>").join("");
+      ' data-key="' + esc(x.key) + '" onclick="event.stopPropagation();favMore(this,this.dataset.key)">' + ico("more", 15) + "</button></div>").join("")).join("");
   }
   html += autoSec();
   if (arch.length || d.archTopics.length) {
@@ -1191,12 +1192,23 @@ function toggleFavs() {
   renderRail();
 }
 // 收藏：存在服务端；完成了、过了 30 天也留着，点一下找到它，不在看板上的直接打开会话
+function favGroups(favs) {
+  // 收藏按主题分组：有主题的按「项目 · 主题」，没有的按项目；都在一组里就不出小标题。组按最近收藏的排
+  const out = [], by = {};
+  favs.forEach(x => {
+    const id = x.topic ? "t" + x.topic.id : "p" + (x.project || "");
+    if (!by[id]) out.push(by[id] = { label: x.topic ? plabel(x.topic.project) + " · " + x.topic.name : x.project || "其他", items: [] });
+    by[id].items.push(x);
+  });
+  if (out.length < 2) out.forEach(g => { g.label = ""; });
+  return out;
+}
 function favOn(key) { return !!(state && (state.favs || []).some(x => x.key === key)); }
 function toggleFav(key) {
   closeMenu();
   const it = findItem(key), on = !favOn(key);
   if (on && !it) return;
-  setLocal({ favs: on ? [{ key, title: it.title, tool: it.tool, project: it.project, last: it.last, onBoard: true }].concat(state.favs || [])
+  setLocal({ favs: on ? [{ key, title: it.title, tool: it.tool, project: it.project, last: it.last, onBoard: true, topic: it.topic }].concat(state.favs || [])
     : (state.favs || []).filter(x => x.key !== key) });
   if (on && !favOpen) { favOpen = true; store("ledger.favx", false); }
   render();
