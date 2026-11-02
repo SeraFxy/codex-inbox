@@ -1214,7 +1214,7 @@ def prompt_rows_to_items(conn, rows, now):
         if not title:
             fp = conn.execute("SELECT text FROM prompts WHERE session_key=? ORDER BY ts LIMIT 1", (r["session_key"],)).fetchone()
             if fp:
-                title = clean_line(fp["text"].strip().splitlines()[0] if fp["text"].strip() else "")[:30]
+                title = prompt_title(fp["text"], 30)
         label, color = tag_of(tags, r["project"])
         out.append({
             "key": r["session_key"], "tool": tool, "toolLabel": "Claude" if tool == "claude" else "Codex",
@@ -1330,6 +1330,16 @@ def color_of(name):
     if name in fixed:
         return fixed[name]
     return PALETTE[sum(ord(c) for c in name) % len(PALETTE)]
+
+
+def prompt_title(text, n=40):
+    """没起名字的会话，拿第一句话当标题：跳过链接和图片占位，取第一行像句话的。"""
+    for line in (text or "").splitlines():
+        t = re.sub(r"https?://\S+", "", clean_line(line))
+        t = re.sub(r"\s+", " ", t).strip(" \t[]()<>【】（）|-—:：,，.。")
+        if len(re.sub(r"\W", "", t)) >= 2:
+            return t[:n]
+    return clean_line((text or "").strip().splitlines()[0] if (text or "").strip() else "")[:n]
 
 
 def clean_line(s):
@@ -1450,7 +1460,7 @@ def make_item(st, now, cfg, ov, sched, titles, goals, ctx):
     goal_obj = st.get("goal") or {}
     codex_goal = goals.get(st["id"], {}) if st["tool"] == "codex" else {}
     title = (ctx["names"].get(key) or st.get("custom_title") or titles.get(st["id"]) or st.get("ai_title") or goal_obj.get("goal")
-             or clean_line((st.get("first_prompt") or "").splitlines()[0] if st.get("first_prompt") else "")[:40]
+             or prompt_title(st.get("first_prompt"))
              or "（无标题）")
     project = project_of(st.get("cwd"))
     project_label, project_color = tag_of(ctx["tags"], project)
