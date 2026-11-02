@@ -1023,6 +1023,72 @@ def codex_extras():
     return _codex_cache["titles"], _codex_cache["goals"]
 
 
+# ---------------------------------------------------------------- Codex 定时任务：哪些会话是定时任务在跑，看板上标「定时」
+
+_autos_cache = {"at": 0, "map": {}}
+
+
+def rrule_text(rule):
+    """Codex 定时任务的 rrule 写成「每天 10:00」「每周一 09:00」「每 5 分钟」，看不懂的返回空。DTSTART 是 UTC 的，钟点换成看板的时区。"""
+    lines = (rule or "").split("\n")
+    body = next((x for x in lines if "FREQ=" in x), "")
+    kv = dict(x.split("=", 1) for x in body.replace("RRULE:", "").split(";") if "=" in x)
+    utc = any(x.startswith("DTSTART") and x.endswith("Z") for x in lines)
+    off = int(dt.datetime.now().astimezone(WORK_TZ).utcoffset().total_seconds() // 60) if utc else 0
+    freq, n = kv.get("FREQ"), kv.get("INTERVAL", "1")
+    if freq == "MINUTELY":
+        return "每 %s 分钟" % n
+    if freq == "HOURLY":
+        return "每小时" if n == "1" else "每 %s 小时" % n
+    try:
+        mins = sorted(((int(h) * 60 + int(kv.get("BYMINUTE", "0").split(",")[0]) + off) % 1440) for h in kv.get("BYHOUR", "").split(","))
+    except ValueError:
+        return ""
+    at = "、".join("%02d:%02d" % divmod(m, 60) for m in mins)
+    if kv.get("COUNT") == "1":
+        return "%s 跑一次" % at
+    if freq == "DAILY":
+        return "每天 " + at
+    if freq == "WEEKLY":
+        days = [WEEK["MO TU WE TH FR SA SU".split().index(d)] for d in kv.get("BYDAY", "").split(",") if d in "MO TU WE TH FR SA SU".split()]
+        return ("每周" + "、".join(days) + " " + at) if days else ""
+    return ""
+
+
+def codex_automations():
+    """Codex 定时任务（~/.codex/automations/*/automation.toml）：{线程 id: {name, when, paused}}，1 分钟缓存。
+    同一个会话挂了好几个定时任务的，名字和时间连起来写，有一个在跑就不算暂停。"""
+    if time.time() - _autos_cache["at"] > 60:
+        found = {}
+        for path in glob.glob(os.path.join(CODEX_HOME, "automations", "*", "automation.toml")):
+            try:
+                with open(path, encoding="utf-8") as f:
+                    text = f.read()
+            except OSError:
+                continue
+            got = {}
+            for m in re.finditer(r'^(name|status|rrule|target_thread_id)\s*=\s*(".*")\s*$', text, re.M):
+                try:
+                    got[m.group(1)] = json.loads(m.group(2))
+                except ValueError:
+                    pass
+            tid = got.get("target_thread_id")
+            if not tid:
+                continue
+            paused = got.get("status", "ACTIVE") != "ACTIVE"
+            found.setdefault(tid, []).append((paused, got.get("name") or "", rrule_text(got.get("rrule"))))
+        _autos_cache.update(at=time.time(), map={
+            tid: {"name": "、".join(x[1] for x in sorted(xs) if x[1]), "when": "；".join(x[2] for x in sorted(xs) if x[2] and not x[0]),
+                  "paused": all(x[0] for x in xs)}
+            for tid, xs in found.items()})
+    return _autos_cache["map"]
+
+
+def auto_of(key):
+    tool, sid = key.split(":", 1)
+    return codex_automations().get(sid) if tool == "codex" else None
+
+
 # ---------------------------------------------------------------- 历史消息（你发给 agent 的每一句话）
 
 CLAUDE_HISTORY = os.path.join(HOME, ".claude", "history.jsonl")
@@ -1380,7 +1446,7 @@ def prompt_rows_to_items(conn, rows, now):
         out.append({
             "key": r["session_key"], "tool": tool, "toolLabel": "Claude" if tool == "claude" else "Codex",
             "ts": r["ts"], "timeText": fmt_time(r["ts"], now), "text": r["text"], "project": label,
-            "projectKey": project, "color": color, "title": title or "（未命名会话）", "images": [],
+            "projectKey": project, "color": color, "title": title or "（未命名会话）", "images": [], "auto": auto_of(r["session_key"]),
             "resume": ("cd %s && claude --resume %s" % (shell_quote(r["cwd"] or HOME), sid)) if tool == "claude"
                       else "codex resume %s" % sid,
         })
@@ -1436,7 +1502,7 @@ def search_sessions(conn, q, limit=50, offset=0, tool="", cross=True):
         head = items[0]
         ex = session_extras(conn, key)
         out.append({"key": key, "title": head["title"], "project": head["project"], "projectKey": head["projectKey"],
-                    "color": head["color"], "tool": head["tool"], "toolLabel": head["toolLabel"], "count": n,
+                    "color": head["color"], "tool": head["tool"], "toolLabel": head["toolLabel"], "auto": head["auto"], "count": n,
                     "hits": r["hits"], "lastTs": r["last_ts"], "lastText": fmt_time(r["last_ts"], now), "resume": head["resume"],
                     "goal": ex["goal"], "linksTotal": ex["linksTotal"],
                     "preview": [{"ts": it["ts"], "timeText": it["timeText"], "text": it["text"], "images": it["images"]}
@@ -1505,7 +1571,7 @@ def session_briefs(conn, keys, now):
             rows.append(r)
     out = {}
     for x in prompt_rows_to_items(conn, rows, now) if rows else []:
-        out[x["key"]] = {k: x[k] for k in ("key", "title", "project", "projectKey", "color", "tool", "toolLabel")}
+        out[x["key"]] = {k: x[k] for k in ("key", "title", "project", "projectKey", "color", "tool", "toolLabel", "auto")}
     for k in keys:
         if k not in out:
             tool = k.split(":", 1)[0]
@@ -1515,7 +1581,7 @@ def session_briefs(conn, keys, now):
             label, color = tag_of(tag_map(conn), project)
             out[k] = {"key": k, "title": name_map(conn).get(k) or st.get("custom_title") or readable(st.get("ai_title")) or "（未命名会话）",
                       "project": label, "projectKey": project, "color": color, "tool": tool,
-                      "toolLabel": "Claude" if tool == "claude" else "Codex"}
+                      "toolLabel": "Claude" if tool == "claude" else "Codex", "auto": auto_of(k)}
     return out
 
 
@@ -2005,7 +2071,7 @@ def make_item(st, now, cfg, ov, sched, titles, goals, ctx):
     return {
         "key": key, "tool": st["tool"], "toolLabel": "Claude" if st["tool"] == "claude" else "Codex",
         "title": title, "project": project_label, "projectKey": project, "color": project_color, "group": group, "kind": kind,
-        "moved": {"from": home, "label": tag_of(ctx["tags"], home)[0]} if project != home else None,
+        "moved": {"from": home, "label": tag_of(ctx["tags"], home)[0]} if project != home else None, "auto": auto_of(key),
         "headline": headline, "badges": badges, "sort": sort, "idle": idle, "last": last, "wait": wait,
         "meta": "最后动静 %s（%s前）" % (fmt_time(last, now), fmt_ago(idle)) if last else "",
         "scheduleId": sched["id"] if sched and sched["status"] == "pending" else None,
@@ -2093,12 +2159,12 @@ def board_favs(conn, items, now):
     for k in meta_keys(conn, "favs"):
         it = by_key.get(k)
         if it:
-            out.append({"key": k, "title": it["title"], "tool": it["tool"], "project": it["project"], "last": it["last"], "onBoard": True})
+            out.append({"key": k, "title": it["title"], "tool": it["tool"], "project": it["project"], "last": it["last"], "onBoard": True, "auto": it["auto"]})
             continue
         row = conn.execute("SELECT * FROM prompts WHERE session_key=? ORDER BY ts DESC LIMIT 1", (k,)).fetchone()
         if row:
             x = prompt_rows_to_items(conn, [row], now)[0]
-            out.append({"key": k, "title": x["title"], "tool": x["tool"], "project": x["project"], "last": x["ts"], "onBoard": False})
+            out.append({"key": k, "title": x["title"], "tool": x["tool"], "project": x["project"], "last": x["ts"], "onBoard": False, "auto": x["auto"]})
     return out
 
 

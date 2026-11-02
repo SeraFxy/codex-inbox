@@ -112,6 +112,7 @@ a:focus-visible, button:focus-visible { outline: 2px solid var(--bk-ink-1); outl
 }
 .chip.sm { height: 18px; padding: 0 5px; border-radius: 5px; font-size: 10.5px; line-height: 18px; }
 .chip.tool { background: transparent; box-shadow: inset 0 0 0 1px var(--bk-line-strong); color: var(--bk-ink-1); }   /* 工具：描边，和填色的项目标签分开 */
+.chip.tool.off { box-shadow: inset 0 0 0 1px var(--bk-line); color: var(--bk-ink-3); }   /* 暂停了的 Codex 定时任务 */
 button.chip { cursor: pointer; transition: box-shadow .12s; }
 button.chip:hover { box-shadow: inset 0 0 0 1px var(--bk-ink-1); }
 .count { display: inline-flex; align-items: center; justify-content: center; min-width: 18px; height: 18px; padding: 0 5px; border-radius: 999px; font: 600 11px/18px var(--bk-mono); }
@@ -785,7 +786,13 @@ function allItems(s) { return s ? s.groups.reduce((a, g) => a.concat(g.items), [
 function findItem(key) { return key ? allItems(state).find(it => it.key === key) || null : null; }
 const TOOLS = { claude: "CC", codex: "Codex" };
 function toolName(x) { return TOOLS[x.tool] || x.toolLabel || ""; }
-function toolChip(x) { return '<span class="chip sm tool" title="' + (x.tool === "codex" ? "Codex" : "Claude Code") + '">' + esc(toolName(x)) + "</span>"; }
+function toolChip(x) { return '<span class="chip sm tool" title="' + (x.tool === "codex" ? "Codex" : "Claude Code") + '">' + esc(toolName(x)) + "</span>" + autoChip(x); }
+function autoChip(x) {
+  // Codex 定时任务在跑的会话：标「定时」，悬停看是哪个定时任务、什么时候跑；暂停了的标浅一点
+  const a = x.auto;
+  if (!a) return "";
+  return '<span class="chip sm tool' + (a.paused ? " off" : "") + '" title="Codex 定时任务「' + esc(a.name) + "」，" + esc(a.paused ? "已暂停" : (a.when || "定时") + " 跑") + '">定时</span>';
+}
 function srcOk(it) { return src === "all" || it.tool === src; }   // 页头的来源筛选，全局生效
 function viewItems(v, all) {
   // all = 不管左栏选了什么，整个标签页的会话（来源筛选照样生效）
@@ -1589,7 +1596,7 @@ function renderDetail() {
     'aria-pressed="' + favOn(it.key) + '" aria-label="收藏"');
   let html = '<div class="dhead"><span class="fc' + (hopNow.has(it.key) ? " bk-hop" : "") + '">' + face(f, 44, 0, REASON[f]) + "</span>" +
     '<div class="dtitle"><h2 title="双击改名" ondblclick="renameSession(\'' + k + "',this)\">" + esc(it.title) + '</h2><div class="dmeta">' + toolChip(it) + tagChip(it) + topicChip(it) +
-    '<span>最后动静 ' + esc(it.last ? when(it.last) : "—") + "</span></div></div>" +
+    '<span>' + (it.auto ? esc(it.auto.paused ? "定时已暂停" : it.auto.when ? it.auto.when + " 跑" : "定时任务") + " · " : "") + "最后动静 " + esc(it.last ? when(it.last) : "—") + "</span></div></div>" +
     '<div class="dacts">' + acts + "</div></div>";
   html += '<div class="why">' + ico("info", 16) + "<span><b>" + esc(badgeOf(it)) + "</b>　" + esc(whyOf(it)) + "</span></div>";
   if (!hidden) html += '<div class="part tight"><span class="sec-l">现状</span><p class="now">' + esc(it.headline) + "</p></div>";
