@@ -345,9 +345,9 @@ kbd.k.lg { min-width: 22px; height: 22px; padding: 0 6px; border-radius: 6px; fo
 
 /* 压缩时的交接：Claude 上下文满了压缩时写给自己接着干活的，原文照放，只把标题、粗体、代码标出来 */
 .handoff { padding: 12px 14px; border: 1px solid var(--bk-line); border-radius: 14px; background: var(--bk-surface); font-size: 13px; line-height: 20px; white-space: pre-wrap; word-break: break-word; }
-.handoff.clamp { display: -webkit-box; -webkit-line-clamp: 10; -webkit-box-orient: vertical; overflow: hidden; }
+.handoff .clamp { display: -webkit-box; -webkit-line-clamp: 10; -webkit-box-orient: vertical; overflow: hidden; }
 .handoff b { font-weight: 600; }
-.handoff b.h { font-size: 14px; line-height: 22px; }
+.handoff b.h { font-size: 14px; }
 .handoff code { font: 12px/20px var(--bk-mono); }
 .ho-acts { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
 .goal { margin: 0; font-size: 14px; line-height: 22px; white-space: pre-wrap; word-break: break-word; }
@@ -1810,7 +1810,7 @@ function handoffSec(it) {
   else if (!g.text) body = '<span class="lmore">没读到这段交接。</span>';
   else {
     const text = g.showZh && g.zh ? g.zh : g.text, open = bubOpen[id];
-    body = '<div class="handoff' + (open ? "" : " clamp") + '">' + hoMd(text) + "</div>" +
+    body = '<div class="handoff">' + (open ? hoMd(text) : '<div class="clamp">' + hoMd(text) + "</div>") + "</div>" +
       '<div class="ho-acts">' + btn(open ? "收起" : "展开全文", "bubOpen['" + id + "']=!bubOpen['" + id + "'];renderDetail()", "ghost xs") +
       btn("复制", "copyClip(" + clip(text) + ")", "ghost xs") + hoTr(it.key, g) + "</div>";
   }
