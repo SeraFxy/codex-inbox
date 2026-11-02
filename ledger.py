@@ -1592,7 +1592,7 @@ def shell_quote(s):
     return "'" + s.replace("'", "'\\''") + "'"
 
 
-ORDER_VIEWS = ("you", "ai", "wait", "inbox")   # 看板的四个标签页
+ORDER_VIEWS = ("you", "ai", "wait", "inbox", "rail")   # 看板的四个标签页，rail 是左栏项目的顺序（存项目 key）
 
 
 def load_order(conn):
@@ -1995,7 +1995,7 @@ class App:
                 c.commit()
                 return True, "标签已更新"
             if action == "order" and isinstance(arg, dict) and arg.get("view") in ORDER_VIEWS:
-                # 看板里拖动排序：按标签页存一串会话 key，空列表 = 恢复默认排序
+                # 看板里拖动排序：按标签页存一串会话 key（左栏存项目 key），空列表 = 恢复默认排序
                 keys = [k for k in (arg.get("keys") or []) if isinstance(k, str)][:500]
                 order = load_order(c)
                 if keys:

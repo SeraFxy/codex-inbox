@@ -174,7 +174,8 @@ kbd.k.lg { min-width: 22px; height: 22px; padding: 0 6px; border-radius: 6px; fo
 .ri.proj .nm { font: 600 12px/16px var(--bk-mono); }
 .ri.none { color: var(--bk-ink-3); }
 .ri.drop { background: var(--bk-sunken); box-shadow: inset 0 0 0 1.5px var(--bk-ink-1); }
-.rgroup { display: flex; flex-direction: column; gap: 2px; margin-top: 8px; }
+.rgroup { position: relative; display: flex; flex-direction: column; gap: 2px; margin-top: 8px; }
+.rgroup.dragging { opacity: .4; }
 .rp, .rt { position: relative; display: flex; align-items: center; }
 .rfold {
   flex: none; display: inline-flex; align-items: center; justify-content: center; width: 22px; height: 32px; padding: 0; border: 0;
@@ -235,11 +236,13 @@ kbd.k.lg { min-width: 22px; height: 22px; padding: 0 6px; border-radius: 6px; fo
 .ra:focus-visible { outline: 2px solid var(--bk-ink-1); outline-offset: 1px; }
 /* 拖动排序 */
 .row.dragging { opacity: .4; }
-.row.drop-before::before, .row.drop-after::after {
+.row.drop-before::before, .row.drop-after::after, .rgroup.drop-before::before, .rgroup.drop-after::after {
   content: ""; position: absolute; left: 10px; right: 10px; height: 2px; border-radius: 2px; background: var(--bk-ink-1); pointer-events: none;
 }
 .row.drop-before::before { top: -2px; }
 .row.drop-after::after { bottom: -2px; }
+.rgroup.drop-before::before { top: -5px; }
+.rgroup.drop-after::after { bottom: -5px; }
 .dash { display: flex; align-items: center; gap: 12px; margin: 0 4px; padding: 16px; border: 1px dashed var(--bk-line-strong); border-radius: 14px; }
 .dash .tx { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
 .dash b { font-size: 14px; line-height: 20px; font-weight: 600; }
@@ -750,12 +753,14 @@ function railData() {
   const active = state.groups.reduce((a, g) => a.concat(g.items), []), you = new Set(viewItems("you", true).map(it => it.key));
   const cnt = sc => { const xs = active.filter(it => inScope(it, sc)); return { n: xs.length, hot: xs.filter(it => you.has(it.key)).length }; };
   const keys = [...new Set(active.map(railProject).concat((state.topics || []).map(t => t.project)))];
+  // 拖过顺序的按你排的来，没排过的新项目接在后面
+  const rank = new Map(((state.order || {}).rail || []).map((k, i) => [k, i])), at = p => rank.has(p.key) ? rank.get(p.key) : Infinity;
   return {
     all: cnt({ t: "all" }),
     projects: keys.map(p => ({
       key: p, label: plabel(p), c: cnt({ t: "p", p }), none: cnt({ t: "n", p }),
       topics: state.topics.filter(t => t.project === p).map(t => ({ t, c: cnt({ t: "t", id: t.id }) }))
-    })).sort((a, b) => GENERIC.has(a.key) - GENERIC.has(b.key) || a.label.localeCompare(b.label, "zh"))
+    })).sort((a, b) => (at(a) - at(b) || 0) || GENERIC.has(a.key) - GENERIC.has(b.key) || a.label.localeCompare(b.label, "zh"))
   };
 }
 function fixScope(d) {
@@ -786,7 +791,7 @@ async function load(refresh) {
     const first = !state;
     state = next;
     if (first) { fixScope(railData()); fillView(); }
-    if (selecting() || typing() || menu || drag) return renderTop();  // 正在选字、打字、开着菜单或拖动时先不重画列表，下次刷新再画
+    if (selecting() || typing() || menu || drag || rdrag) return renderTop();  // 正在选字、打字、开着菜单或拖动时先不重画列表，下次刷新再画
     render();
     hopNow.clear();
   } catch (e) {
@@ -962,7 +967,7 @@ function renderRail() {
     railItem("全部", { t: "all" }, d.all, "all");
   d.projects.forEach(p => {
     const open = !railFold.has(p.key);
-    html += '<div class="rgroup"><div class="rp">' + (p.topics.length ? '<button type="button" class="rfold" aria-label="' + (open ? "收起 " : "展开 ") + esc(p.label) +
+    html += '<div class="rgroup" data-p="' + esc(p.key) + '"><div class="rp" draggable="true">' + (p.topics.length ? '<button type="button" class="rfold" aria-label="' + (open ? "收起 " : "展开 ") + esc(p.label) +
       '" aria-expanded="' + open + '" data-p="' + esc(p.key) + '" onclick="foldProject(this)">' + ico(open ? "down" : "right", 14) + "</button>" : '<span class="rfold"></span>') +
       railItem(p.label, { t: "p", p: p.key }, p.c, "proj") +
       '<button type="button" class="ra" title="改名" aria-label="「' + esc(p.label) + '」改名" aria-haspopup="menu" aria-expanded="false" data-p="' + esc(p.key) +
@@ -976,7 +981,7 @@ function renderRail() {
     }
     html += "</div>";
   });
-  document.getElementById("rail").innerHTML = html + '<p class="rfoot">把会话拖到主题上就归进去了，也可以在发给 AI 的消息里写 #主题。双击项目或主题改名。红色数字 = 里面有轮到你的事。</p>';
+  document.getElementById("rail").innerHTML = html + '<p class="rfoot">把会话拖到主题上就归进去了，也可以在发给 AI 的消息里写 #主题。双击项目或主题改名，拖项目换位置。红色数字 = 里面有轮到你的事。</p>';
 }
 function setScope(el, e) {
   const sc = JSON.parse(el.dataset.scope);
@@ -1063,7 +1068,15 @@ function topicMore(el) {
   const t = topicById(Number(el.dataset.tid));
   if (t) showMenu(el, "", mi("改名…", "renameTopic(" + t.id + ")") + mi("删除主题", "deleteTopic(" + t.id + ")"));
 }
-function projectMore(el) { showMenu(el, "", mi("改名…", "renameProject(clips[" + clip(el.dataset.p) + "])")); }
+function projectMore(el) {
+  showMenu(el, "", mi("改名…", "renameProject(clips[" + clip(el.dataset.p) + "])") + (manual("rail") ? mi("恢复默认顺序", "resetRailOrder()", "", ' title="按名字排，桌面、其他放最后"') : ""));
+}
+function resetRailOrder() {
+  closeMenu();
+  const order = Object.assign({}, state.order); delete order.rail; state.order = order;
+  renderRail();
+  post("order", "", { view: "rail", keys: [] }).then(() => toast("左栏已恢复默认顺序"), () => toast("操作失败：本机服务没响应"));
+}
 function renameProject(p) {
   // 项目的名字就是详情里那个短码，改的是同一处
   const el = [...document.querySelectorAll(".rp .ra")].find(b => b.dataset.p === p);
@@ -1250,15 +1263,52 @@ function railDrop(e) {
   if (t) t.classList.add("drop");
   return t;
 }
-railEl.addEventListener("dragover", e => { if (railDrop(e)) { e.preventDefault(); e.dataTransfer.dropEffect = "move"; } });
-railEl.addEventListener("dragleave", e => { if (!railEl.contains(e.relatedTarget)) railDrop({}); });
+railEl.addEventListener("dragover", e => {
+  if (rdrag ? railMark(e) : railDrop(e)) { e.preventDefault(); e.dataTransfer.dropEffect = "move"; }
+});
+railEl.addEventListener("dragleave", e => { if (!railEl.contains(e.relatedTarget)) { railDrop({}); railMark(null); } });
 railEl.addEventListener("drop", e => {
+  if (rdrag) return railMove(e);
   const t = railDrop(e), key = drag;
   if (!t) return;
   e.preventDefault();
   t.classList.remove("drop");
   drag = null;
   setTopic(key, t.dataset.drop === "none" ? null : Number(t.dataset.drop));
+});
+// 左栏拖项目换位置：整组（项目和它下面的主题）一起挪，顺序存在服务端
+let rdrag = null;
+function railMark(e) {
+  railEl.querySelectorAll(".rgroup.drop-before, .rgroup.drop-after").forEach(el => el.classList.remove("drop-before", "drop-after"));
+  const g = e && e.target.closest && e.target.closest(".rgroup");
+  if (!g || !rdrag || g.dataset.p === rdrag) return null;
+  const rect = g.getBoundingClientRect(), after = e.clientY > rect.top + rect.height / 2;
+  g.classList.add(after ? "drop-after" : "drop-before");
+  return { p: g.dataset.p, after };
+}
+function railMove(e) {
+  const at = railMark(e), p = rdrag;
+  rdrag = null;
+  if (!at) return;
+  e.preventDefault();
+  const keys = railData().projects.map(x => x.key).filter(k => k !== p);
+  keys.splice(keys.indexOf(at.p) + (at.after ? 1 : 0), 0, p);
+  state.order = Object.assign({}, state.order, { rail: keys });
+  renderRail();
+  post("order", "", { view: "rail", keys }).then(res => { if (!res.ok) toast(res.message || "顺序没存上"); }, () => toast("顺序没存上：本机服务没响应"));
+}
+railEl.addEventListener("dragstart", e => {
+  const g = e.target.closest && e.target.closest(".rp") && e.target.closest(".rgroup");
+  if (!g) return;
+  rdrag = g.dataset.p; closeMenu(); closeTag();
+  e.dataTransfer.effectAllowed = "move";
+  e.dataTransfer.setData("text/plain", rdrag);
+  requestAnimationFrame(() => g.classList.add("dragging"));
+});
+railEl.addEventListener("dragend", () => {
+  railMark(null);
+  railEl.querySelectorAll(".rgroup.dragging").forEach(el => el.classList.remove("dragging"));
+  rdrag = null;
 });
 function bulkUntrack() {
   const items = viewItems("inbox");
