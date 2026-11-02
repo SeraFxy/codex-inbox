@@ -532,7 +532,7 @@ def save_goal(conn, key, goal, criteria="", status=""):
 def new_state(tool, sid, path):
     return {
         "tool": tool, "id": sid, "path": path, "cwd": "", "branch": "", "entrypoint": "",
-        "thread_source": "", "ai_title": "", "custom_title": "", "first_prompt": "", "last_prompt": "",
+        "thread_source": "", "source": "", "ai_title": "", "custom_title": "", "first_prompt": "", "last_prompt": "",
         "n_prompts": 0, "last_text": "", "progress_text": "", "turn_text": "", "turn": "ended",
         "last_kind": "", "status": None, "goal": None, "final_has_status": False,
         "last_ts": 0, "final_ts": 0,
@@ -693,6 +693,7 @@ def codex_line(st, line):
         st["id"] = p.get("id") or st["id"]
         st["cwd"] = p.get("cwd") or st["cwd"]
         st["thread_source"] = str(p.get("thread_source"))
+        st["source"] = codex_source(p)
         git = p.get("git")
         if isinstance(git, dict) and git.get("branch"):
             st["branch"] = git["branch"]
@@ -771,6 +772,7 @@ def scan(conn, cfg):
     migrate_tz(conn)
     migrate_codex_prompts(conn)
     migrate_codex_files_preamble(conn)
+    migrate_codex_source(conn)
     migrate_project_parents(conn)
     t0 = time.time()
     horizon = t0 - max(cfg["window_days"], 30) * 86400
@@ -1398,12 +1400,25 @@ def waiting_headline(what, tool):
     return WAITING_FOR.get(what) or "在等你处理：「%s」" % what
 
 
+# AI 自己调起的 Codex：codex exec（命令行跑一次）、mcp（别的 AI 把 Codex 当工具用）。thread_source 照样写 user，要看 source 认
+CODEX_AGENT_SOURCES = ("exec", "mcp")
+
+
+def codex_source(meta):
+    """session_meta 里的 source：桌面版是 vscode，终端是 cli；子代理和审查代理是一个对象，这里记成空，它们靠 thread_source 排除。"""
+    src = meta.get("source")
+    return src if isinstance(src, str) else ""
+
+
 def include_session(st):
+    # 只收你自己开的会话，AI 自己调起的子任务不收：
+    # Claude 的子代理记录在 subagents/ 子目录，不扫描；claude -p 和 SDK 的 entrypoint 是 sdk-*。
+    # Codex 的子代理、审查代理 thread_source 不是 user；codex exec 和 MCP 调起的看 source。
     # Codex 的自动任务（心跳）挂在你自己开的线程上，那条线程照样是你的任务；心跳发的 <heartbeat> 消息不算你说的话
     if st["tool"] == "claude":
         if (st.get("entrypoint") or "").startswith("sdk"):
             return False
-    elif st.get("thread_source") != "user":
+    elif st.get("thread_source") != "user" or st.get("source") in CODEX_AGENT_SOURCES:
         return False
     return st.get("n_prompts", 0) > 0
 
@@ -2299,6 +2314,29 @@ def migrate_project_parents(conn):
             conn.execute("UPDATE prompts SET project=? WHERE cwd=?", (p, r["cwd"]))
     meta_set(conn, "project_parents", cur)
     conn.commit()
+
+
+def migrate_codex_source(conn):
+    """早期版本没记 Codex 会话的启动方式，codex exec 起的会话混进了看板：已存的会话从记录第一行补上。"""
+    if meta_get(conn, "codex_source_v1"):
+        return
+    n = 0
+    for r in conn.execute("SELECT key, data FROM sessions WHERE key LIKE 'codex:%'").fetchall():
+        st = json.loads(r["data"])
+        if "source" in st:
+            continue
+        try:
+            with open(st.get("path") or "", "rb") as f:
+                rec = json.loads(f.readline().decode("utf-8", "replace"))
+        except (OSError, ValueError):
+            rec = {}
+        st["source"] = codex_source(rec.get("payload") or {}) if rec.get("type") == "session_meta" else ""
+        conn.execute("UPDATE sessions SET data=? WHERE key=?", (json.dumps(st, ensure_ascii=False), r["key"]))
+        n += st["source"] in CODEX_AGENT_SOURCES
+    meta_set(conn, "codex_source_v1", time.time())
+    conn.commit()
+    if n:
+        log("%d 个 codex exec 起的会话不再进看板" % n)
 
 
 def migrate_codex_files_preamble(conn):
