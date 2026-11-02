@@ -144,8 +144,9 @@ kbd.k.lg { min-width: 22px; height: 22px; padding: 0 6px; border-radius: 6px; fo
 .split { flex: 1; min-width: 0; display: flex; flex-wrap: wrap; align-items: stretch; border-top: 1px solid var(--bk-line); }
 .queue { flex: 0 1 420px; min-width: 0; padding: 16px 12px; border-right: 1px solid var(--bk-line); display: flex; flex-direction: column; gap: 14px; }
 .queue > * { flex-shrink: 0; }   /* 这一栏自己滚动：提示折行时别被压扁、压到下面的卡片上 */
-.detail { flex: 999 1 540px; min-width: 0; padding: 24px clamp(16px, 3vw, 44px) 40px; background: var(--bk-surface); }
-.detail-in { width: 100%; max-width: 900px; min-height: 100%; display: flex; flex-direction: column; gap: 26px; }
+.detail { flex: 999 1 540px; min-width: 0; padding: 0 clamp(16px, 3vw, 44px) 40px; background: var(--bk-surface); }
+/* 上边距放在里面这层：详情栏是滚动容器，它自己有上内边距的话，贴顶的导航在有的浏览器里会停在内边距下面，上面露出一条正文 */
+.detail-in { width: 100%; max-width: 900px; min-height: 100%; padding-top: 24px; display: flex; flex-direction: column; gap: 26px; }
 /* 详情的页内导航：贴在顶上，点一下滚到那一段 */
 .dnav { position: sticky; top: 0; z-index: 3; display: flex; gap: 2px; margin: -14px 0 -10px; padding: 8px 0; overflow-x: auto; scrollbar-width: none;
   background: var(--bk-surface); box-shadow: 0 1px 0 var(--bk-line); }
@@ -156,7 +157,6 @@ kbd.k.lg { min-width: 22px; height: 22px; padding: 0 6px; border-radius: 6px; fo
 .dnav button[aria-current="true"] { background: var(--bk-sunken); color: var(--bk-ink-1); font-weight: 600; }
 .dnav button:focus-visible { outline: 2px solid var(--bk-ink-1); outline-offset: -2px; }
 [id^="ds-"] { scroll-margin-top: 64px; }
-@media (min-width: 961px) { .dnav { top: -24px; } }   /* 详情栏自己滚动时，贴顶位置要扣掉它 24px 的上内边距，不然上面会露出一条正文 */
 @media (min-width: 961px) {
   .board { height: 100vh; height: 100dvh; min-height: 0; }
   .split { flex-wrap: nowrap; min-height: 0; }
@@ -626,7 +626,7 @@ mark { background: var(--bk-lime-mark); color: #1B2026; border-radius: 3px; box-
 <div class="tagpop" id="tagpop" hidden></div>
 <div class="toast" id="toast" role="status" hidden></div>
 <script>
-const TOKEN = "__LEDGER_TOKEN__";
+const TOKEN = "__LEDGER_TOKEN__", BUILD = "__LEDGER_BUILD__";
 // 队列的四个视图（外加「已完成」），groups 是服务端 GROUPS 的 id
 const VIEWS = {
   you: { label: "轮到你", groups: ["need", "confirm"], hint: "球在你这边，有新动静的在前。",
@@ -638,7 +638,9 @@ const VIEWS = {
   inbox: { label: "待整理", groups: ["backlog"], hint: "没写状态或很久没动静的会话。",
            emptyTitle: "都整理完了", emptyText: "新会话没写状态行时会先放在这里。" },
   hidden: { label: "已完成", groups: [], hint: "",
-            emptyTitle: "最近没有完成的", emptyText: "点了「完成」的会话会在这里留一阵，方便恢复。" }
+            emptyTitle: "最近没有完成的", emptyText: "点了「完成」的会话会在这里留一阵，方便恢复。" },
+  fav: { label: "收藏", groups: [], hint: "你收藏的会话，完成了也留着。拖到左栏的主题上就归过去。",
+         emptyTitle: "还没有收藏", emptyText: "详情右上角点星标，就收进这里。" }
 };
 const TABS = ["you", "ai", "wait", "inbox"];
 const ORDER = { stuck: 0, alarm: 1, wait: 2, review: 3, run: 4, timer: 5, peer: 6, inbox: 7, done: 8 };
@@ -838,6 +840,7 @@ function viewItems(v, all) {
   // all = 不管左栏选了什么，整个标签页的会话（来源筛选照样生效）
   if (!state) return [];
   if (v === "hidden") return state.hidden.filter(it => srcOk(it) && (all || inScope(it)));
+  if (v === "fav") return favGroups((state.favs || []).filter(srcOk)).reduce((a, g) => a.concat(g.items), []).map(x => findItem(x.key)).filter(Boolean);   // 不管左栏选了什么
   const out = state.groups.filter(g => VIEWS[v].groups.includes(g.id)).reduce((a, g) => a.concat(g.items), []).filter(srcOk);
   // 置顶的在最上面，其余按更新时间，新的在前；「在等」按理由、到点时间排（等着的会话不会更新）
   let list = v === "wait" ? out.map((it, i) => [it, i]).sort((a, b) => ORDER[faceOf(a[0])] - ORDER[faceOf(b[0])] || a[1] - b[1]).map(x => x[0])
@@ -942,8 +945,15 @@ async function load(refresh) {
     });
     const first = !state;
     state = next;
-    if (first) { fixScope(railData()); fillView(); }
-    if (selecting() || typing() || menu || drag || rdrag) return renderTop();  // 正在选字、打字、开着菜单或拖动时先不重画列表，下次刷新再画
+    if (first) {
+      fixScope(railData()); fillView();
+      try { const k = sessionStorage.getItem("ledger.reload"); sessionStorage.removeItem("ledger.reload"); if (k && findItem(k)) selKey = k; } catch (e) {}
+    }
+    if (selecting() || typing() || menu || drag || rdrag) return renderTop();
+    if (next.build && next.build !== BUILD && !pressing) {   // 看板刚部署了新版：换上新页面，选中的会话留着
+      try { if (selKey) sessionStorage.setItem("ledger.reload", selKey); } catch (e) {}
+      return location.reload();
+    }  // 正在选字、打字、开着菜单或拖动时先不重画列表，下次刷新再画
     if (pressing) { owedRender = true; return renderTop(); }
     render();
     hopNow.clear();
@@ -1130,7 +1140,7 @@ function setView(v) {
 // ---------------- 左栏：项目与主题
 function cntHtml(c) { return c.hot ? '<span class="count hot">' + c.hot + "</span>" : c.n ? '<span class="n">' + c.n + "</span>" : ""; }
 function sameScope(a, b) { return a.t === b.t && a.p === b.p && a.id === b.id; }
-function scopeData(sc) { return ' data-scope="' + esc(JSON.stringify(sc)) + '" aria-current="' + sameScope(sc, scope) + '"'; }
+function scopeData(sc) { return ' data-scope="' + esc(JSON.stringify(sc)) + '" aria-current="' + (view !== "fav" && sameScope(sc, scope)) + '"'; }
 function railItem(label, sc, c, cls, drop) {
   return '<button type="button" class="ri ' + cls + '"' + scopeData(sc) + (drop != null ? ' data-drop="' + drop + '"' : "") + ' onclick="setScope(this,event)">' +
     '<span class="nm" title="' + esc(label) + '">' + esc(label) + "</span>" + cntHtml(c) + "</button>";
@@ -1151,7 +1161,7 @@ function renderRail() {
     html += '<button type="button" class="rsec" aria-expanded="' + favOpen + '" onclick="toggleFavs()">' + ico(favOpen ? "down" : "right", 14) +
       "<span>收藏</span><span class=\"n\">" + favs.length + "</span></button>";
     if (favOpen) html += favGroups(favs).map(g => (g.label ? '<div class="rfg" title="' + esc(g.label) + '">' + esc(g.label) + "</div>" : "") + g.items.map(x => '<div class="rt">' +
-      '<button type="button" class="ri fav" data-key="' + esc(x.key) + '" aria-current="' + (x.key === selKey) + '" title="' + esc(x.title) + (x.onBoard ? "" : "（点一下打开会话）") +
+      '<button type="button" class="ri fav" data-key="' + esc(x.key) + '" aria-current="' + (view === "fav" && x.key === selKey) + '" title="' + esc(x.title) + (x.onBoard ? "" : "（点一下打开会话）") +
       '" onclick="goFav(this.dataset.key)">' + toolChip(x) + '<span class="nm">' + esc(x.title) + "</span></button>" +
       '<button type="button" class="ra" title="打开或取消收藏" aria-label="「' + esc(x.title) + '」打开或取消收藏" aria-haspopup="menu" aria-expanded="false"' +
       ' data-key="' + esc(x.key) + '" onclick="event.stopPropagation();favMore(this,this.dataset.key)">' + ico("more", 15) + "</button></div>").join("")).join("");
@@ -1230,10 +1240,20 @@ function toggleFav(key) {
     () => toast("操作失败：本机服务没响应"));
 }
 function favMore(el, key) {
-  showMenu(el, key, mi(ico("open", 14) + "打开会话", "closeMenu();openSession(clips[" + clip(key) + "])") + mi("取消收藏", "toggleFav(clips[" + clip(key) + "])"));
+  const it = findItem(key);
+  showMenu(el, key, mi(ico("open", 14) + "打开会话", "closeMenu();openSession(clips[" + clip(key) + "])") +
+    (it ? mi("归到主题…", "openTopics(menu.el,clips[" + clip(key) + "])", it.topic ? esc(it.topic.name) : "") : "") + mi("取消收藏", "toggleFav(clips[" + clip(key) + "])"));
 }
 function goFav(key) {
-  if (!locate(key)) openSession(key);   // 不在看板上了（完成很久、超过 30 天）：直接打开
+  // 中间一栏只列收藏（按主题分组），选中点的这条；不在看板上了（完成很久）就直接打开会话
+  const it = findItem(key);
+  if (!it) return openSession(key);
+  if (tab !== "board") setTab("board");
+  if (!srcOk(it)) { src = "all"; store("ledger.src", src); }
+  view = "fav"; store("ledger.view", view);
+  pick(key);
+  const r = document.getElementById("row-" + domId(key));
+  if (r) r.scrollIntoView({ block: "nearest" });
 }
 function locate(key) {
   // 在看板上找到这个会话并打开它的详情：来源筛选、左栏范围、标签页不对就切过去。不在看板上返回 false
@@ -1268,6 +1288,7 @@ function setScope(el, e) {
     return sc.t === "p" ? renameProject(sc.p) : renameTopic(sc.id);
   }
   scope = sc; store("ledger.scope", scope);
+  if (view === "fav") { view = "you"; store("ledger.view", view); }   // 从收藏回到项目、主题
   const p = scope.t === "t" ? (topicById(scope.id) || {}).project : scope.p;
   if (p && railFold.delete(p)) store("ledger.fold", [...railFold]);
   if (((p && archivedP(p)) || (scope.t === "t" && archivedT(scope.id))) && !archOpen) { archOpen = true; store("ledger.arch", true); }
@@ -1520,20 +1541,31 @@ function renderQueue() {
   let i = 0;
   const qgroup = (label, xs) => '<div class="qgroup">' + (label ? '<span class="qlabel">' + label + " · " + xs.length + "</span>" : "") + xs.map(it => row(it, i++)).join("") + "</div>";
   const top = items.filter(pinned), rest = items.filter(it => !pinned(it));
-  if (top.length) html += qgroup("置顶", top);
-  if (view === "wait" || view === "hidden") {
-    // 在等、已完成：按理由分组
-    const groups = [];
-    rest.forEach(it => { const f = faceOf(it), g = groups[groups.length - 1]; if (g && g.f === f) g.items.push(it); else groups.push({ f, items: [it] }); });
-    html += groups.map(g => qgroup(REASON[g.f], g.items)).join("");
-  } else if (rest.length) html += qgroup(top.length ? "其余按更新时间" : "", rest);
-  if (!items.length)
+  if (view === "fav") {
+    favGroups((state.favs || []).filter(srcOk)).forEach(g => {
+      const on = g.items.map(x => findItem(x.key)).filter(Boolean), off = g.items.filter(x => !findItem(x.key));
+      html += '<div class="qgroup">' + (g.label ? '<span class="qlabel">' + esc(g.label) + " · " + g.items.length + "</span>" : "") + on.map(it => row(it, i++)).join("") +
+        off.map(x => '<div class="row" role="button" tabindex="0" data-key="' + esc(x.key) + '" title="不在看板上了（完成超过 ' + (state.windowDays || 14) + ' 天），点一下打开会话" onclick="openSession(this.dataset.key)">' +
+          '<span class="fc">' + face("done", 24) + '</span><span class="t">' + esc(x.title) + '</span><span class="w">' + esc(x.last ? when(x.last) : "") + "</span>" +
+          '<span class="s">' + toolChip(x) + "<span>不在看板上了，点一下打开会话</span></span></div>").join("") + "</div>";
+    });
+  } else {
+    if (top.length) html += qgroup("置顶", top);
+    if (view === "wait" || view === "hidden") {
+      // 在等、已完成：按理由分组
+      const groups = [];
+      rest.forEach(it => { const f = faceOf(it), g = groups[groups.length - 1]; if (g && g.f === f) g.items.push(it); else groups.push({ f, items: [it] }); });
+      html += groups.map(g => qgroup(REASON[g.f], g.items)).join("");
+    } else if (rest.length) html += qgroup(top.length ? "其余按更新时间" : "", rest);
+  }
+  const all = scope.t === "all" || view === "fav";   // 收藏不管左栏选了什么
+  if (!items.length && !(view === "fav" && (state.favs || []).some(srcOk)))
     html += '<div class="dash">' + face("logo", 32) + '<span class="tx"><b>' + v.emptyTitle + "</b><span>" +
-      (scope.t === "all" && src === "all" ? v.emptyText : (scope.t === "all" ? "" : "左栏选的是「" + esc(scopeName(scope)) + "」，别处的会话没列出来。") +
+      (all && src === "all" ? v.emptyText : (all ? "" : "左栏选的是「" + esc(scopeName(scope)) + "」，别处的会话没列出来。") +
         (src === "all" ? "" : "只看 " + TOOLS[src] + " 的会话，另一个工具的没列出来。")) + "</span></span></div>";
   document.getElementById("qlist").innerHTML = html;
   const nHidden = viewItems("hidden").length;
-  document.getElementById("qfoot").innerHTML = view === "hidden" ? btn("返回「轮到你」", "setView('you')", "ghost xs")
+  document.getElementById("qfoot").innerHTML = view === "hidden" || view === "fav" ? btn("返回「轮到你」", "setView('you')", "ghost xs")
     : nHidden ? btn("已完成 / 不再跟踪 · " + nHidden, "setView('hidden')", "ghost xs") : "";
 }
 function row(it, i) {
@@ -1545,7 +1577,7 @@ function row(it, i) {
     : ra(ico("check", 15, 2.2), "act('" + k + "','done')", (f === "review" ? "确认完成" : "完成") + "（E）") +
       ra(ico("more", 15), "openMenu(this,'" + k + "',true)", f === "run" ? "更多" : "推迟和更多（S）", ' aria-haspopup="menu" aria-expanded="false"'));
   return '<div class="row" role="button" tabindex="0" id="row-' + domId(it.key) + '" data-key="' + k + '" aria-current="' + on + '"' +
-    (hidden ? "" : ' draggable="true"') + ' onclick="pick(\'' + k + '\')">' +
+    (hidden && view !== "fav" ? "" : ' draggable="true"') + ' onclick="pick(\'' + k + '\')">' +
     '<span class="fc' + (hopNow.has(it.key) ? " bk-hop" : "") + '">' + face(f, 24, i) + "</span>" +
     '<span class="t" title="' + esc(it.title) + '">' + esc(it.title) + "</span>" +
     '<span class="w' + (f === "stuck" || f === "alarm" || f === "wait" ? " hot" : "") + '">' + esc(rowTime(it)) + "</span>" +

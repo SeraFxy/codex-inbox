@@ -43,6 +43,15 @@ DB_PATH = os.path.join(DATA_DIR, "ledger.db")
 TOKEN_PATH = os.path.join(DATA_DIR, "token")
 CONFIG_PATH = os.path.join(BASE, "config.json")
 BOARD_HTML = os.path.join(BASE, "board.html")
+
+
+def board_build():
+    """看板页面的版本：deploy.sh 换了 board.html，开着的标签页对不上就自己刷新，不会一直用旧页面"""
+    try:
+        st = os.stat(BOARD_HTML)
+        return "%d-%d" % (st.st_mtime_ns // 1000000, st.st_size)
+    except OSError:
+        return ""
 IMG_DIR = os.path.join(DATA_DIR, "images")
 CMUX_STATE = os.path.join(HOME, "Library", "Application Support", "cmux", "session-com.cmuxterm.app.json")
 CLAUDE_PROJECTS = os.path.join(HOME, ".claude", "projects")
@@ -2713,7 +2722,7 @@ def build_board(conn, cfg, now=None):
         conn.commit()
     last_scan = float(meta_get(conn, "last_scan", 0) or 0)
     return {
-        "now": now, "nowText": "%d月%d日 周%s %s" % (clock(now).month, clock(now).day, WEEK[clock(now).weekday()], clock(now).strftime("%H:%M")),
+        "build": board_build(), "now": now, "nowText": "%d月%d日 周%s %s" % (clock(now).month, clock(now).day, WEEK[clock(now).weekday()], clock(now).strftime("%H:%M")),
         "lastScan": last_scan, "lastScanText": fmt_time(last_scan, now) if last_scan else "从未",
         "tzOffsetMin": int(clock(now).astimezone(WORK_TZ).utcoffset().total_seconds() // 60),
         "staleHours": cfg["stale_hours"], "interruptedMin": cfg["interrupted_min"], "windowDays": cfg["window_days"],
@@ -3515,7 +3524,7 @@ class Handler(BaseHTTPRequestHandler):
         u = urlparse(self.path)
         if u.path == "/":
             with open(BOARD_HTML, encoding="utf-8") as f:
-                html = f.read().replace("__LEDGER_TOKEN__", APP.token)
+                html = f.read().replace("__LEDGER_TOKEN__", APP.token).replace("__LEDGER_BUILD__", board_build())
             return self._send(200, html, "text/html; charset=utf-8")
         if u.path == "/favicon.png":
             with open(os.path.join(BASE, "favicon.png"), "rb") as f:
