@@ -1144,7 +1144,7 @@ function renderQueue() {
       (id === "you" && c ? '<span class="count hot">' + c + "</span>" : '<span class="n">' + c + "</span>") + "</button>";
   }).join("");
   document.getElementById("qhint").innerHTML = view === "hidden" ? "最近 " + (state.windowDays || 14) + " 天完成或不再跟踪的。"
-    : manual(view) ? '<span title="新来的会话放在最上面">按你排的顺序</span>' + btn("恢复默认", "resetOrder()", "ghost xs") : esc(v.hint);
+    : manual(view) ? '<span title="新来的会话、从别的标签页回来的会话放在最上面">按你排的顺序</span>' + btn("恢复默认", "resetOrder()", "ghost xs") : esc(v.hint);
 
   if (!items.some(it => it.key === selKey)) { const it = items[Math.min(selIdx, items.length - 1)]; selKey = it ? it.key : null; }
   selIdx = Math.max(0, items.findIndex(it => it.key === selKey));

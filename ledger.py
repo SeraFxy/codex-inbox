@@ -1593,6 +1593,7 @@ def shell_quote(s):
 
 
 ORDER_VIEWS = ("you", "ai", "wait", "inbox", "rail")   # 看板的四个标签页，rail 是左栏项目的顺序（存项目 key）
+VIEW_GROUPS = {"you": ("need", "confirm"), "ai": ("ai",), "wait": ("time", "peer"), "inbox": ("backlog",)}   # 和 board.html 的 VIEWS 对应
 
 
 def load_order(conn):
@@ -1658,6 +1659,14 @@ def build_board(conn, cfg, now=None):
             g.sort(key=lambda it: it["idle"])
         groups.append({"id": gid, "title": title, "hint": hint, "items": g})
     hidden.sort(key=lambda it: it["idle"])
+    # 拖过顺序的标签页：会话离开这个标签页就忘掉它的位置，回来时算新来的，排在最上面
+    order = load_order(conn)
+    member = {v: {it["key"] for g in groups if g["id"] in gids for it in g["items"]} for v, gids in VIEW_GROUPS.items()}
+    kept = {v: [k for k in keys if k in member[v]] if v in member else keys for v, keys in order.items()}
+    kept = {v: keys for v, keys in kept.items() if keys}
+    if kept != order:
+        meta_set(conn, "order", json.dumps(kept, ensure_ascii=False))
+        conn.commit()
     last_scan = float(meta_get(conn, "last_scan", 0) or 0)
     return {
         "now": now, "nowText": "%d月%d日 周%s %s" % (clock(now).month, clock(now).day, WEEK[clock(now).weekday()], clock(now).strftime("%H:%M")),
@@ -1665,7 +1674,7 @@ def build_board(conn, cfg, now=None):
         "tzOffsetMin": int(clock(now).astimezone(WORK_TZ).utcoffset().total_seconds() // 60),
         "staleHours": cfg["stale_hours"], "interruptedMin": cfg["interrupted_min"], "windowDays": cfg["window_days"],
         "scanMs": int(meta_get(conn, "last_scan_ms", 0) or 0), "scanIntervalMin": cfg["scan_interval_min"],
-        "groups": groups, "hidden": hidden, "order": load_order(conn), "digestTime": cfg["digest_time"], "tzText": tz_text(cfg),
+        "groups": groups, "hidden": hidden, "order": kept, "digestTime": cfg["digest_time"], "tzText": tz_text(cfg),
         "topics": [{"id": t["id"], "name": t["name"], "project": t["project"], "projectLabel": tag_of(ctx["tags"], t["project"])[0]}
                    for t in topics if not t["deleted"]],
     }
