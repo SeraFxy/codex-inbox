@@ -15,6 +15,7 @@ import base64
 import binascii
 import bisect
 import datetime as dt
+import getpass
 import glob
 import hashlib
 import json
@@ -188,9 +189,9 @@ def load_token():
     return tok
 
 
-def run(args, timeout=15):
+def run(args, timeout=15, env=None):
     try:
-        return subprocess.run(args, capture_output=True, text=True, timeout=timeout, env=SUB_ENV)
+        return subprocess.run(args, capture_output=True, text=True, timeout=timeout, env=env or SUB_ENV)
     except (OSError, subprocess.TimeoutExpired) as e:
         return subprocess.CompletedProcess(args, 1, "", str(e))
 
@@ -1789,12 +1790,37 @@ def build_board(conn, cfg, now=None):
 
 # ---------------------------------------------------------------- cmux 会话定位、打开、唤醒
 
-def cmux(*args, timeout=10):
-    return run([CMUX] + list(args), timeout=timeout)
+# 看板自己存的 cmux 套接字密码（cmux-setup 写，只有你的账号能读）。新版 cmux 会把密码从 cmux.json 挪进它自己的设置，
+# 开机自启的服务调命令行时读不到，所以看板另存一份，每次经 CMUX_SOCKET_PASSWORD 带上
+CMUX_PW_FILE = os.path.join(DATA_DIR, "cmux-password")
+
+
+def cmux_password():
+    try:
+        with open(CMUX_PW_FILE, encoding="utf-8") as f:
+            return f.read().strip()
+    except OSError:
+        return ""
+
+
+def save_cmux_password(pw):
+    os.makedirs(DATA_DIR, exist_ok=True)
+    fd = os.open(CMUX_PW_FILE, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w", encoding="utf-8") as f:
+        f.write(pw + "\n")
+    os.chmod(CMUX_PW_FILE, 0o600)
+
+
+def cmux(*args, timeout=10, password=None):
+    pw = cmux_password() if password is None else password
+    return run([CMUX] + list(args), timeout=timeout, env=dict(SUB_ENV, CMUX_SOCKET_PASSWORD=pw) if pw else None)
 
 
 _surface_cache = {"at": 0, "map": {}}
-CMUX_DENIED = "cmux 不允许看板控制它，没法替你跳转：到 cmux 设置 → 自动化，把「套接字控制模式」改成「密码模式」并设一个套接字密码"
+
+
+def cmux_denied():
+    return "cmux 不让看板控制它，没法替你跳转：在终端里运行 %s，按提示设置一次" % ledger_cmd("cmux-setup")
 
 
 def cmux_surfaces():
@@ -1925,7 +1951,7 @@ def open_session(conn, key):
         return True, "已在 Codex 里打开"
     surfaces = cmux_surfaces()
     if surfaces is None:
-        return False, CMUX_DENIED
+        return False, cmux_denied()
     loc = surfaces.get(st["id"])
     if loc:
         cmux("select-workspace", "--workspace", loc[0])
@@ -1963,7 +1989,7 @@ def wake_session(conn, s, now):
         _surface_cache["at"] = 0
         surfaces = cmux_surfaces()
         if surfaces is None:
-            return False, CMUX_DENIED
+            return False, cmux_denied()
         loc = surfaces.get(sid)
     if not loc:
         row = conn.execute("SELECT data FROM sessions WHERE key=?", (s["session_key"],)).fetchone()
@@ -2935,7 +2961,7 @@ def doctor_items():
             add("可选", "ok", name, "看板服务能控制 cmux（%s 模式）" % (mode or "?"))
         elif test is not None and mode == "password":
             add("可选", "fail", name, "已是密码模式，但看板服务控制不了 cmux",
-                "确认 cmux 开着，运行 %s reload-config，再运行 %s" % (home_rel(CMUX), ledger_cmd("doctor")))
+                "确认 cmux 开着，在终端里运行 %s，按提示把 cmux 设置里的套接字密码交给看板" % ledger_cmd("cmux-setup"))
         elif mode == "password":
             add("可选", "ok", name, "cmux 已是密码模式（看板服务没在跑或不是这份安装，没法实测）")
         else:
@@ -3138,7 +3164,7 @@ def cmd_feishu_setup(args):
 
 def cmd_cmux_setup(args):
     print("安全说明：密码模式下，这台 Mac 上知道密码的程序都能控制 cmux（看终端里的内容、往会话里打字）。"
-          "密码存在 %s，只有你的账号能读；在 cmux 终端里跑的程序本来就能控制 cmux，不受影响。" % home_rel(CMUX_CONFIG))
+          "密码存在 cmux 设置里，看板另存一份在 %s，只有你的账号能读。" % home_rel(CMUX_PW_FILE))
     print("改了以后，开机自启的看板服务才能跳到 cmux 里的会话、到点唤醒会话（ledger schedule）。"
           "想改回去：在 cmux 设置 → 自动化，把「套接字控制模式」改回默认。\n")
     if not os.path.exists(CMUX):
@@ -3173,7 +3199,8 @@ def cmd_cmux_setup(args):
         if not isinstance(auto, dict):
             sys.exit("❌ %s 里的 automation 不是对象，请手动检查" % home_rel(CMUX_CONFIG))
         has_pw = bool(auto.get("socketPassword"))
-        if auto.get("socketControlMode") == "password" and has_pw:
+        if cmux_mode() == "password":
+            # 已是密码模式就不动文件：新版 cmux 把密码挪进了自己的设置，这里再写一个会和设置里的对不上
             print("✅ cmux 已经是密码模式，不用改")
         else:
             print("会把 %s 的 automation.socketControlMode 设为 \"password\"，%s" % (
@@ -3213,9 +3240,26 @@ def cmd_cmux_setup(args):
             print("✅ cmux reload-config 完成")
         else:
             print("⚠️ cmux reload-config 没成功（cmux 可能没开着，下次打开时会读新设置）：" + (r.stderr or r.stdout).strip()[:200])
-    r = cmux("workspace", "list")
-    print(("✅ cmux workspace list 通过" if r.returncode == 0 else "❌ cmux workspace list 失败：" + (r.stderr or r.stdout).strip()[:200])
-          + "（在 cmux 终端里运行时这一步本来就能过，以下面看板服务的结果为准）")
+    # 看板另存一份密码，每次调 cmux 时带上：新版 cmux 会把密码从 cmux.json 挪进自己的设置，服务就读不到了
+    file_pw = ((data.get("automation") or {}).get("socketPassword") or "") if isinstance(data, dict) else ""
+    if file_pw and file_pw != cmux_password() and cmux("workspace", "list", password=file_pw).returncode == 0:
+        save_cmux_password(file_pw)
+        print("✅ 已把 %s 里的密码另存一份给看板（%s）" % (home_rel(CMUX_CONFIG), home_rel(CMUX_PW_FILE)))
+    r = cmux("workspace", "list")   # 和看板服务一样，不带 cmux 终端的环境变量
+    if r.returncode != 0 and cmux_mode() == "password" and re.search(r"auth|password", r.stderr + r.stdout, re.I):
+        print("看板还没有 cmux 认的套接字密码。到 cmux 设置 → 自动化，看「套接字密码」：有就复制；"
+              "空着就设一个长密码（可用 openssl rand -base64 32 生成），保存后复制。")
+        if not sys.stdin.isatty():
+            sys.exit("❌ 要在终端里运行这条命令，才能粘贴密码：%s" % ledger_cmd("cmux-setup"))
+        pw = getpass.getpass("粘贴到这里（不显示），回车：").strip()
+        if not pw:
+            sys.exit("➖ 没输入，什么也没改")
+        r = cmux("workspace", "list", password=pw)
+        if r.returncode != 0:
+            sys.exit("❌ cmux 不认这个密码：%s。确认在 cmux 设置里保存了，再运行一次" % (r.stderr or r.stdout).strip()[:200])
+        save_cmux_password(pw)
+        print("✅ 密码对了，已另存一份给看板（%s）" % home_rel(CMUX_PW_FILE))
+    print("✅ cmux workspace list 通过" if r.returncode == 0 else "❌ cmux workspace list 失败：" + (r.stderr or r.stdout).strip()[:200])
     test = board_selftest(load_config())
     if test is None:
         print("➖ 看板服务没在跑（或不是这份安装），没法从服务那边实测；装好后运行 %s 看「cmux 定时唤醒」一项" % ledger_cmd("doctor"))
