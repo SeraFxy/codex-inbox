@@ -1763,13 +1763,14 @@ async function loadHandoff(key, ts) {
   let text = "";
   try { text = (await (await fetch("/api/handoff?key=" + encodeURIComponent(key), { cache: "no-store" })).json()).text || ""; } catch (e) {}
   let zh = null;
-  try { zh = localStorage.getItem("ledger.hozh." + key + "." + ts); } catch (e) {}
+  try { zh = localStorage.getItem("ledger.hozh2." + key + "." + ts); } catch (e) {}
   dHo[key] = { ts, text, zh, showZh: !!zh };
   if (selKey === key) renderDetail();
 }
 function hoMd(text) {
   return esc(text).replace(/^#{1,4} +(.+)$/gm, '<b class="h">$1</b>').replace(/\*\*([^*\n]+)\*\*/g, "<b>$1</b>").replace(/`([^`\n]+)`/g, "<code>$1</code>");
 }
+const HO_KEEP = /(`[^`\n]*`|"[^"\n]*[\u4e00-\u9fff][^"\n]*"|“[^”\n]*”|「[^」\n]*」|[\u4e00-\u9fff\u3000-\u303f\uff01-\uff5e][\u4e00-\u9fff\u3000-\u303f\uff01-\uff5e\d\s]*)/;
 function hoEnglish(text) { return (text.match(/[\u4e00-\u9fff]/g) || []).length < text.length * 0.05; }
 function hoTr(key, g) {
   if (!("Translator" in self) || !hoEnglish(g.text)) return "";
@@ -1786,17 +1787,21 @@ async function translateHandoff(key) {
   try {
     const tr = await Translator.create({ sourceLanguage: "en", targetLanguage: "zh",
       monitor(m) { m.addEventListener("downloadprogress", e => say("下载语言包 " + Math.round(e.loaded * 100) + "%")); } });
-    // 一行一行翻，列表符号、标题井号原样留着
+    // 一行一行翻，列表符号、标题井号原样留着；你的中文原话、代码、带中文的引号整段不送去翻（混着翻会翻乱），只翻英文的部分
     const lines = g.text.split("\n"), out = [];
     for (let i = 0; i < lines.length; i++) {
-      const m = lines[i].match(/^(\s*(?:#{1,4} +|[-*] +|\d+\. +)?)(.*)$/);
-      out.push(/[A-Za-z]{2}/.test(m[2]) ? m[1] + await tr.translate(m[2]) : lines[i]);
+      const m = lines[i].match(/^(\s*(?:#{1,4} +|[-*] +|\d+\. +)?)(.*)$/), parts = m[2].split(HO_KEEP);
+      for (let j = 0; j < parts.length; j += 2) {
+        const p = parts[j], core = p.trim();
+        if (/[A-Za-z]{2}/.test(core)) parts[j] = (j && /^\s/.test(p) ? " " : "") + await tr.translate(core) + (/\s$/.test(p) && j < parts.length - 1 ? " " : "");
+      }
+      out.push(m[1] + parts.join(""));
       say("翻译中 " + Math.round((i + 1) * 100 / lines.length) + "%");
     }
     g.zh = out.join("\n"); g.showZh = true;
     try {
-      for (const k of Object.keys(localStorage)) if (k.startsWith("ledger.hozh." + key + ".")) localStorage.removeItem(k);
-      localStorage.setItem("ledger.hozh." + key + "." + g.ts, g.zh);
+      for (const k of Object.keys(localStorage)) if (k.startsWith("ledger.hozh2." + key + ".")) localStorage.removeItem(k);
+      localStorage.setItem("ledger.hozh2." + key + "." + g.ts, g.zh);
     } catch (e) {}
   } catch (e) { toast("没翻成：" + (e.message || e)); }
   g.busy = ""; renderDetail();
