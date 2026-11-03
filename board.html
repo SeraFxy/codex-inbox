@@ -2517,7 +2517,7 @@ function renderHistory() {
   document.getElementById("hsum").innerHTML = (hq
     ? '<span class="mono hit">找到 ' + (all ? num(hOutHits) + " 个产出物、" : "") + num(hTotal) + " 个会话</span>"
     : '<span class="mono">共 ' + num(hAllSessions) + " 个会话 · " + num(hAll) + " 句 · 最早到 " + esc(hSince) + "</span>") +
-    '<span class="note">' + ico("info", 13) + (all ? "同时搜你说过的话、Claude 压缩时的交接和 AI 给的产出物；只看一边就点上面的标签"
+    '<span class="note">' + ico("info", 13) + (all ? "同时搜你说过的话、AI 给的产出物，和它问你的、替你定的、状态、目标、压缩时的交接；只看一边就点上面的标签"
       : "Claude Code 默认只保留最近 30 天的对话记录，更早的只剩台账另存的你说过的话") + "</span>";
   const list = document.getElementById("hlist");
   const cross = all && hq && hOuts.length ? xblock("AI 给的产出物", "产出物", hOutHits, "goOutputs(sq)", hOuts.map(o => orow(o, hq)).join("")) : "";
