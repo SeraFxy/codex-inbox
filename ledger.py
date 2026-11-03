@@ -481,6 +481,16 @@ def note_calls(st, text, ts):
         st["calls"] = calls[-CALLS_MAX:]
 
 
+def close_asks(st, text, ts):
+    """🧭 行里带了编号的 ❓ 算答掉：你用自己的话回了（没写编号、没抄选项，看板认不出），它照着定了怎么办，或者说这件不用定了。
+    同一条回复里又用 ❓ 问了的，按还没定算。"""
+    asks = [a for a in st.get("asks") or [] if a.get("id") and not a.get("done") and (a.get("last") or 0) < ts]
+    for d in parse_calls(text) if asks else []:
+        for a in asks:
+            if not a.get("done") and re.search(r"(?<![A-Za-z0-9-])%s(?!\d)" % re.escape(a["id"]), d["t"], re.I):
+                a["done"], a["ans"] = ts, d["t"][:80]
+
+
 # ---------------------------------------------------------------- 没答的 ❓：跨轮记账，按固定格式判断答没答（不调模型）
 
 ASKS_MAX = 60
@@ -1155,6 +1165,7 @@ def on_final(st, text, ts):
         st["last_text"] = text[-6000:]
     note_asks(st, text, ts or time.time())
     note_calls(st, text, ts or time.time())
+    close_asks(st, text, ts or time.time())
     s = parse_status(text, ts or time.time())
     st["final_has_status"] = bool(s)
     if s:
