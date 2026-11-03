@@ -1793,7 +1793,7 @@ function renderDetail() {
     ["reply", decisionsOf(it).length ? "待你决定" : todoOf(it) ? "要你做" : oldAsksOf(it).length ? "没答的" : "推它一下", replyBox(it)],
     ["calls", "替你定的", callsSec(it)],
     ["convo", "对话", convo(it)],
-    ["handoff", "交接", handoffSec(it)],
+    ["handoff", "上下文压缩", handoffSec(it)],
     ["out", "产出物", outSec(it)],
     ["mr", "MR", mrSec(it)],
     ["info", "会话信息", infoSec(it)],
@@ -1815,7 +1815,7 @@ function sumCard(it) {
         (d.statusNote ? '<p class="sum-why">' + esc(d.statusNote) + "</p>" : "") +
         (ctxHot(it) ? '<p class="sum-why">上下文已用 <span class="mono">' + ctxOf(it) + "%</span>，这件做完换个新会话接着做，省 token。</p>" : "")) + "</div>";
   if (d.goal) {
-    const src = d.goalFrom === "handoff" ? "取自 " + when(d.goalTs) + " 压缩时的交接" : d.goalTs ? "写于 " + when(d.goalTs) : "";
+    const src = d.goalFrom === "handoff" ? "取自 " + when(d.goalTs) + " 上下文压缩时的摘要" : d.goalTs ? "写于 " + when(d.goalTs) : "";
     html += '<dl class="sum-goal"><div><dt>目标' + (d.goalStatus ? '<span class="pill">' + esc(d.goalStatus) + "</span>" : "") + "</dt><dd>" + mdInline(d.goal) +
       (src ? '<span class="sum-src">' + esc(src) + "</span>" : "") + "</dd></div>" +
       (d.criteria ? "<div><dt>完成标准</dt><dd>" + mdInline(d.criteria) + "</dd></div>" : "") + "</dl>";
@@ -2142,14 +2142,14 @@ function handoffSec(it) {
   if (!g || g.ts !== d.handoffTs) loadHandoff(it.key, d.handoffTs);
   let body, acts = "";
   if (!g || g.ts !== d.handoffTs || g.loading) body = '<span class="lmore">读取中…</span>';
-  else if (!g.text) body = '<span class="lmore">没读到这段交接。</span>';
+  else if (!g.text) body = '<span class="lmore">没读到这段压缩摘要。</span>';
   else {
     const text = g.showZh && g.zh ? g.zh : g.text, open = bubOpen[id];
     acts = btn(ico("copy", 13) + "复制", "copyClip(" + clip(text) + ")", "ghost xs") + hoTr(it.key, g);
     body = '<div class="handoff md' + (open ? "" : " fold") + '">' + mdHtml(text) + "</div>" +
       '<div class="tm-a">' + btn(open ? "收起" + ico("up") : "展开全文" + ico("down"), "bubOpen['" + id + "']=!bubOpen['" + id + "'];renderDetail()", "ghost xs") + "</div>";
   }
-  return '<div class="part dsec"><div class="sec-hd"><span class="sec-t">压缩时的交接<span class="pill mono">' + esc(when(d.handoffTs)) + "</span></span>" +
+  return '<div class="part dsec"><div class="sec-hd"><span class="sec-t">上下文压缩时的摘要<span class="pill mono">' + esc(when(d.handoffTs)) + "</span></span>" +
     '<span class="ho-acts">' + acts + "</span></div>" +
     '<span class="sec-l">上下文满了时它写给自己的，只写到那一刻；之后的进展看上面的对话。</span>' + body + "</div>";
 }
@@ -2654,7 +2654,7 @@ function sessExtra(full) {
 }
 function hoLine(h, key) {
   // 搜索结果里：压缩时的交接对上的那一段
-  return '<div class="hline"><span class="ht" title="' + esc(when(h.ts)) + ' 压缩时写的交接">交接</span><div class="hx"><p class="htext">' + hl(h.text) + "</p></div>" +
+  return '<div class="hline"><span class="ht" title="' + esc(when(h.ts)) + ' 上下文压缩时写的摘要">压缩摘要</span><div class="hx"><p class="htext">' + hl(h.text) + "</p></div>" +
     '<span class="hacts">' + ctxBtn(key, "handoff", h.ts, h.text) + "</span></div>";
 }
 // 搜索结果里：AI 问你的 ❓、替你定的 🧭、📌 状态行、🎯 目标里对上的那一句（只在「全部」里搜）
@@ -2742,7 +2742,7 @@ function ctxPanel(key) {
         if (j !== at) return tmHtml(m, id(j), true, "renderHistory");
         // 状态、目标那两行看板显示时去掉了，回复正文里没有：单独列在下面。交接只是一条分隔线：把对上的那段列出来
         const extra = !f.lost && (c.a.kind === "status" || c.a.kind === "goal" || c.a.kind === "handoff") ? '<div class="ctx-hit"><span class="tg">' +
-          (kind ? kind[0] : "交接") + '</span><p class="htext">' + esc(c.a.text) + "</p></div>" : "";
+          (kind ? kind[0] : "压缩摘要") + '</span><p class="htext">' + esc(c.a.text) + "</p></div>" : "";
         const m2 = Object.assign({}, m, { label: f.lost ? "台账记下的" : "搜到的" + (kind ? "「" + kind[0] + "」" : "") });
         return '<div class="ctx-at">' + tmHtml(m2, id(j), true, "renderHistory") + extra + "</div>";
       }).join("") +
@@ -2788,7 +2788,7 @@ function scard(s, si, faces) {
   const k = esc(s.key), open = hOpen[s.key], full = hFull[s.key];
   const items = open ? (full ? full.items : []) : s.preview;
   const fk = faces[s.key];
-  const meta = [hq && s.hits ? "命中 " + s.hits : "", hq && s.handoff ? "交接里有" : "", s.count + " 句", s.lastTs ? when(s.lastTs) : s.lastText].filter(Boolean).join(" · ");
+  const meta = [hq && s.hits ? "命中 " + s.hits : "", hq && s.handoff ? "压缩摘要里有" : "", s.count + " 句", s.lastTs ? when(s.lastTs) : s.lastText].filter(Boolean).join(" · ");
   const more = open ? "收起" + ico("up") : (s.count > 1 ? "展开全部 " + s.count + " 句" : "展开") + (s.goal ? "和目标" : "") + ico("down");
   return '<article class="hcard" id="hs-' + domId(s.key) + '"><div class="fc">' + (fk ? face(fk, 24, si, REASON[fk]) : "") + "</div>" +
     '<div class="hbody"><div class="htop">' + tagChip(s) + "<h3>" + hl(s.title) + '</h3>' + toolChip(s) + '<span class="hm">' + esc(meta) + "</span></div>" +
@@ -2813,7 +2813,7 @@ function renderHistory() {
   document.getElementById("hsum").innerHTML = (hq
     ? '<span class="mono hit">找到 ' + (all ? num(hOutHits) + " 个产出物、" : "") + num(hTotal) + " 个会话</span>"
     : '<span class="mono">共 ' + num(hAllSessions) + " 个会话 · " + num(hAll) + " 句 · 最早到 " + esc(hSince) + "</span>") +
-    '<span class="note">' + ico("info", 13) + (all ? "同时搜你说过的话、AI 给的产出物，和它问你的、替你定的、状态、目标、压缩时的交接；只看一边就点上面的标签"
+    '<span class="note">' + ico("info", 13) + (all ? "同时搜你说过的话、AI 给的产出物，和它问你的、替你定的、状态、目标、上下文压缩时的摘要；只看一边就点上面的标签"
       : "Claude Code 默认只保留最近 30 天的对话记录，更早的只剩台账另存的你说过的话") + "</span>";
   const list = document.getElementById("hlist");
   const cross = all && hq && hOuts.length ? xblock("AI 给的产出物", "产出物", hOutHits, "goOutputs(sq)", hOuts.map(o => orow(o, hq)).join("")) : "";
@@ -2827,7 +2827,7 @@ function renderHistory() {
   }
   const faces = {};
   allItems(state).forEach(it => { faces[it.key] = faceOf(it); });
-  let html = cross ? cross + '<div class="dayh"><b>你说过的话和交接</b><span>' + num(hTotal) + " 个会话</span></div>" : "", day = null;
+  let html = cross ? cross + '<div class="dayh"><b>你说过的话和压缩摘要</b><span>' + num(hTotal) + " 个会话</span></div>" : "", day = null;
   hSessions.forEach((s, i) => {
     const ts = s.lastTs || (s.preview[0] && s.preview[0].ts) || 0;
     const dn = ts ? dayNo(ts) : null;
