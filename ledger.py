@@ -2946,7 +2946,8 @@ def make_item(st, now, cfg, ov, sched, titles, goals, ctx):
             group, kind, sort = "need", "me", 2
     else:
         decisions = []
-    # 之前问过、你还没答的 ❓：只加徽标，不挪组（最新 📌 说了算）。点了「不用答了」、会话点过完成的收起来；它再问就再列出来
+    # 之前问过、你还没答的 ❓：加徽标，也和这一轮的 ❓ 一样挪到「轮到你」（球在你这边）；你点了「推迟」的、这一轮还在跑的不挪。
+    # 点了「不用答了」、会话点过完成的收起来；它再问就再列出来
     old_asks = []
     if group != "hidden":
         cur = {d["k"] for d in decisions}
@@ -2959,6 +2960,12 @@ def make_item(st, now, cfg, ov, sched, titles, goals, ctx):
                           key=lambda a: a["first"])[:20]
         if old_asks:
             badges.append("%d 件没答" % len(old_asks))
+            if turn == "ended" and not snoozed and not also and group in ("confirm", "time", "peer", "ai"):
+                if group == "confirm":
+                    group, kind, sort, done_ask = "need", "me", 2, True
+                else:
+                    also, also_at = kind, sort if group in ("time", "peer") and 1e9 < sort < now + 365 * 86400 else 0
+                    group, kind, sort = "need", "me", 2
     # 🧭 它没问你、自己定了的事：详情里列最近的；最后一轮回复里有的，行上提一句
     calls = st.get("calls") or []
     final_ts = st.get("final_ts") or 0

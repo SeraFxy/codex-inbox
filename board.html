@@ -858,10 +858,10 @@ function whyOf(it) {
   if (k === "sched_failed") return "定时唤醒没能把话发回会话。打开会话手动接着做，原因看下面的现状。";
   if (f === "stuck") return "它这一轮停在半路，超过 " + ((state && state.interruptedMin) || 30) + " 分钟没动静。可能在等一个没弹出来的确认，也可能已经中断。";
   if (f === "alarm") return k === "peer" ? "和同事约好的跟进时间到了。" : "你设的提醒到点了。到点的事排在等回话的前面。";
-  if (f === "wait" && alsoOf(it)) return alsoOf(it)[1] + "，又问了你 " + decisionsOf(it).length + " 件事要拍板，所以先排在「轮到你」。选好回复它" +
+  if (f === "wait" && alsoOf(it)) return alsoOf(it)[1] + "，" + askWhy(it) + "，所以先排在「轮到你」。选好回复它" +
     (it.details.alsoWait === "sched" ? "；定时唤醒照常。" : "。");
   if (f === "wait") return k === "approval" ? waitOf(it)[1] : it.details && it.details.doneAsk
-    ? "它说已经达到完成标准，但还问了你 " + decisionsOf(it).length + " 件事要你拍板。选好回复它；都不用做了就点「完成」结项。"
+    ? "它说已经达到完成标准，但" + askWhy(it) + "。选好回复它；都不用做了就点「完成」结项。"
     : "它停下来等你回话：回答它的问题、拍板，或者给下一步指示，它才能接着做。";
   if (f === "review") return (decisionsOf(it).length ? "它说已经达到完成标准，另外问了你 " + decisionsOf(it).length + " 件事，选好回复它。" : "它说已经达到完成标准，等你验收。") +
     "看过没问题点「完成」结项；还要改就打开会话接着说。";
@@ -891,6 +891,8 @@ function bgWhy(it) {
 function ctxOf(it) { return it.details && it.details.ctxPct != null ? it.details.ctxPct : null; }   // 上下文用了百分之几
 function ctxHot(it) { const c = ctxOf(it); return c != null && it.group !== "hidden" && c >= ((state && state.ctxWarn) || 70); }
 function decisionsOf(it) { return it.group !== "hidden" && it.details && it.details.decisions || []; }
+// 挪进「轮到你」的原因：这一轮问的 ❓，或之前问了还没答的
+function askWhy(it) { const n = decisionsOf(it).length; return n ? "又问了你 " + n + " 件事要拍板" : "之前问你的 " + oldAsksOf(it).length + " 件事还没答"; }
 function shortOf(it) {
   const n = decisionsOf(it).length, a = alsoOf(it);
   return !n ? it.headline : faceOf(it) === "review" || it.details && it.details.doneAsk ? "做完了，另有 " + n + " 件事等你决定"
