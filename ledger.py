@@ -2790,7 +2790,8 @@ def make_item(st, now, cfg, ov, sched, titles, goals, ctx):
             # 「等你」就是现在轮到你，后面的时间不管：AI 常把它估的「现在几点」填进去，估晚了会被当成将来、压在「在等」里。要你到点再做的，它该写「等时间点」
             group = "stale" if idle > stale_sec else "need"
             kind, sort = "me", 2
-            headline = ("%s没动静 · 下一步：%s" % (fmt_ago(idle), desc)) if group == "stale" else "下一步：" + desc
+            # 「要你做」不写「下一步」：下一步是谁的看不出来，容易当成它自己的计划略过去
+            headline = ("%s没动静 · 要你做：%s" % (fmt_ago(idle), desc)) if group == "stale" else "要你做：" + desc
         elif k == "peer":
             kind = "peer"
             if at and at <= now:
@@ -2809,7 +2810,7 @@ def make_item(st, now, cfg, ov, sched, titles, goals, ctx):
                 headline = "%s：%s" % (fmt_time(at, now), desc)
             else:
                 group, sort = "need", 2
-                headline = "下一步：" + desc
+                headline = "要你做：" + desc
         elif k == "sched":
             kind = "sched"
             if at and at > now:
@@ -2902,6 +2903,8 @@ def make_item(st, now, cfg, ov, sched, titles, goals, ctx):
             "ctxPct": ctx_pct(st),   # 上下文用了百分之几，算不出来是 None   # 压缩时的交接：正文较长，详情里再按 /api/handoff 取
             "status": ("📌 " + status["label"] + ("｜" + status["desc"] if status.get("desc") else "")) if status else "",
             "decisions": decisions, "doneAsk": done_ask, "oldAsks": old_asks,
+            # 「等你」写的那件事：没有 ❓ 要拍板时，详情里单列「要你做」，做完了回它一句
+            "todo": (status.get("desc") or "") if status and status.get("kind") == "me" else "",
             "calls": [{"t": c["t"], "why": c.get("why") or "", "ts": c.get("ts") or 0}   # 新的在前，同一轮的按原文顺序
                       for c in sorted(calls[-20:], key=lambda c: -(c.get("ts") or 0))],
             "callsFresh": fresh_calls,

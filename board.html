@@ -334,6 +334,7 @@ kbd.k.lg { min-width: 22px; height: 22px; padding: 0 6px; border-radius: 6px; fo
 .opt[aria-pressed="true"] .rk { color: inherit; }
 .opt.lg { min-height: 34px; padding: 6px 12px; border-radius: 10px; font-weight: 400; }
 .opts-row { display: flex; flex-wrap: wrap; gap: 8px; }
+.part .todo { margin: 0; font-size: 15px; line-height: 22px; font-weight: 600; text-wrap: pretty; word-break: break-word; }
 .reply { display: flex; flex-direction: column; gap: 10px; padding: 12px 12px 12px 14px; border: 1px solid var(--bk-line-strong); border-radius: 14px; box-shadow: var(--bk-e1); }
 .reply textarea {
   display: block; width: 100%; min-height: 76px; max-height: 60vh; padding: 8px 12px; resize: vertical; border: 1px solid var(--bk-line); border-radius: 12px;
@@ -1773,7 +1774,7 @@ function renderDetail() {
     '<div class="dacts">' + acts + "</div></div>";
   html += sumCard(it);
   const secs = [
-    ["reply", decisionsOf(it).length ? "待你决定" : oldAsksOf(it).length ? "没答的" : "推它一下", replyBox(it)],
+    ["reply", decisionsOf(it).length ? "待你决定" : todoOf(it) ? "要你做" : oldAsksOf(it).length ? "没答的" : "推它一下", replyBox(it)],
     ["calls", "替你定的", callsSec(it)],
     ["convo", "对话", convo(it)],
     ["handoff", "交接", handoffSec(it)],
@@ -2184,9 +2185,15 @@ async function setProjectDir(key, id, remove) {
 // 「之前问过、还没答」：台账记着的、它前几轮问过你还没答的 ❓（这一轮又问的不重复列）
 function oldAsksOf(it) { return it.group !== "hidden" && it.details && it.details.oldAsks || []; }
 function asksOf(it) { return decisionsOf(it).concat(oldAsksOf(it)); }
-function nudgesOf(it) { return faceOf(it) === "stuck" && it.kind === "interrupted" && !decisionsOf(it).length ? NUDGES : []; }
+// 「等你」但这一轮没有 ❓ 要拍板：它是要你去做一件事（批准、登录、看稿……），做完回它一句它才接着做
+const TODO_NUDGES = ["做完了，你接着做", "做不了，卡在这里："];
+function todoOf(it) { return it.kind === "me" && it.group !== "hidden" && !decisionsOf(it).length && it.details && it.details.todo || ""; }
+function nudgesOf(it) {
+  if (faceOf(it) === "stuck" && it.kind === "interrupted" && !decisionsOf(it).length) return NUDGES;
+  return todoOf(it) ? TODO_NUDGES : [];
+}
 function pickOf(it) {
-  const sig = JSON.stringify(decisionsOf(it));
+  const sig = JSON.stringify([decisionsOf(it), todoOf(it)]);
   // AI 又回了一轮，旧的选择和改过的回复作废；sel 按问题的 k 记，「不用答了」收掉一件不影响别的
   // 它推荐了的默认就选上（只管这一轮问的；之前问过、没答的不自动写进回复）
   if (!picks[it.key] || picks[it.key].sig !== sig) {
@@ -2259,7 +2266,9 @@ function replyBox(it) {
       '<span class="mono">已选 ' + ds.filter(d => p.sel[d.k] != null).length + " / " + n + "</span></span></div>" +
       '<div class="dlist">' + ds.map((d, i) => askRow(it, d, i, false)).join("") + "</div></div>";
   else if (nudges.length)
-    html += '<div class="part"><span class="sec-t">推它一下</span><div class="opts-row">' + nudges.map((t, j) =>
+    html += '<div class="part">' + (todoOf(it) ? '<span class="sec-t">要你做</span><p class="todo">' + mdInline(todoOf(it)) + "</p>" +
+      '<span class="sec-l">它停在这里等你。做完了回它一句，它才会接着做；不用它接着做了，点右上角「完成」。</span>'
+      : '<span class="sec-t">推它一下</span>') + '<div class="opts-row">' + nudges.map((t, j) =>
       '<button type="button" class="opt lg" aria-pressed="' + (p.quick === j) + '" onclick="pickQuick(\'' + k + "'," + j + ')">' + esc(t) + "</button>").join("") + "</div></div>";
   if (olds.length)
     html += '<div class="part"><div class="sec-hd"><span class="sec-t">之前问过、还没答 · ' + olds.length + "</span>" +
