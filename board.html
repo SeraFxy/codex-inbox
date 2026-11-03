@@ -517,6 +517,13 @@ kbd.k.lg { min-width: 22px; height: 22px; padding: 0 6px; border-radius: 6px; fo
 .sess-extra { display: flex; flex-direction: column; gap: 6px; padding: 12px 14px; border-radius: 12px; background: var(--bk-ground); font-size: 13px; line-height: 20px; }
 .sess-extra .goal-sub { color: var(--bk-ink-1); }
 .sess-extra .links { max-height: 260px; overflow: auto; }
+.hacts:has(.on) { opacity: 1; }
+.ctx { display: flex; flex-direction: column; gap: 6px; padding: 12px 16px 16px; border-radius: 12px; background: var(--bk-ground); }
+.ctx .thread { gap: 16px; margin-top: 6px; }
+.ctx-at { display: flex; flex-direction: column; margin: 0 -10px; padding: 10px; border-radius: 12px; background: var(--bk-surface); box-shadow: var(--bk-on); }
+.ctx-hit { display: flex; align-items: flex-start; gap: 8px; margin-top: 8px; padding-left: 28px; }
+.ctx-hit .tg { flex: none; font: 12px/22px var(--bk-mono); color: var(--bk-ink-3); }
+@media (max-width: 640px) { .ctx { padding: 12px; } .ctx-at { margin: 0 -6px; padding: 8px 6px; } .ctx-hit { padding-left: 0; } }
 .thumbs { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
 .thumbs a { display: block; border: 1px solid var(--bk-line); border-radius: 8px; overflow: hidden; background: var(--bk-sunken); }
 .thumbs img { display: block; height: 76px; max-width: 220px; object-fit: cover; }
@@ -1929,8 +1936,8 @@ function replyOf(it) {
   if ((d.replyLen || 0) > (d.lastReply || "").length) loadReply(it.key, d.replyTs);
   return d.lastReply;
 }
-// 对话里的一条：你说的放浅灰底（长的先露 3 行），它说的按 Markdown 排（长的先露一屏）
-function tmHtml(m, id, full) {
+// 对话里的一条：你说的放浅灰底（长的先露 3 行），它说的按 Markdown 排（长的先露一屏）。re = 展开、收起后重画哪一页
+function tmHtml(m, id, full, re) {
   const open = bubOpen[id];
   if (m.kind === "handoff") return '<div class="tm-ho"><span>' + esc(when(m.ts)) + " 上下文满了，压缩过一次</span></div>";
   const you = m.kind === "you";
@@ -1943,7 +1950,7 @@ function tmHtml(m, id, full) {
   const body = you ? '<div class="tm-b you"><div class="tx' + (long && !open ? " fold3" : "") + '">' + esc(m.text) + "</div>" + imgs + "</div>"
     : '<div class="tm-b md' + (long && !open ? " fold" : "") + '">' + mdHtml(m.text) + "</div>";
   return '<div class="tm">' + head + body + (long ? '<div class="tm-a">' + btn(open ? "收起" + ico("up") : "展开全文" + ico("down"),
-    "bubOpen['" + id + "']=!bubOpen['" + id + "'];renderDetail()", "ghost xs") + "</div>" : "") + "</div>";
+    "bubOpen['" + id + "']=!bubOpen['" + id + "'];" + (re || "renderDetail") + "()", "ghost xs") + "</div>" : "") + "</div>";
 }
 // 全部对话：你说的每一句（和「我说过的话」同一份）加上它每一轮最后的回复，按时间排；可以只看你说的。先列最近 40 条，往前一次再加 60 条
 const dAll = {};   // 会话 key -> { open, ts, items, you, it, only, show, loading }
@@ -2429,6 +2436,7 @@ async function search(q, more) {
   const r = await fetch("/api/sessions?q=" + encodeURIComponent(q) + "&offset=" + off + (tab === "search" ? "&handoff=1" : ""), { cache: "no-store" });
   const res = await r.json();
   if (q !== hq) return;  // 打字快时旧结果晚到，丢掉
+  if (!more) Object.keys(hCtx).forEach(k => delete hCtx[k]);   // 换了搜索词：前后对话是跟着上一次搜到的那句开的，收起
   hSessions = more ? hSessions.concat(res.sessions) : res.sessions;
   hTotal = res.total; hAll = res.all; hAllSessions = res.allSessions; hSince = res.since;
   if (!more) { hOutHits = res.outputHits || 0; hOuts = res.outputs || []; hPromptTotal = res.promptTotal != null ? res.promptTotal : res.total; }
@@ -2463,7 +2471,7 @@ function snippet(text, q) {
   for (const w of words) { const i = text.toLowerCase().indexOf(w.toLowerCase()); if (i >= 0 && (at < 0 || i < at)) at = i; }
   return at > 120 ? "…" + text.slice(Math.max(0, at - 60)) : text;
 }
-function line(it, id) {
+function line(it, id, key) {
   const text = it.text;
   const long = text.length > 300 || text.split("\n").length > 6;
   const open = hLong[id];
@@ -2472,22 +2480,144 @@ function line(it, id) {
   return '<div class="hline"><span class="ht">' + esc(it.ts ? when(it.ts) : it.timeText) + "</span>" +
     '<div class="hx"><p class="htext' + (long && !open ? " clamp" : "") + '">' + hl(long && !open ? snippet(text) : text) + "</p>" + imgs + "</div>" +
     '<span class="hacts">' + (long ? btn(open ? "收起" : "展开全文", "hLong['" + id + "']=!hLong['" + id + "'];renderHistory()", "ghost xs") : "") +
-    btn("复制", "copyClip(" + clip(text) + ")", "ghost xs") + "</span></div>";
+    ctxBtn(key, "you", it.ts, text) + btn("复制", "copyClip(" + clip(text) + ")", "ghost xs") + "</span></div>";
 }
 function sessExtra(full) {
   if (!full || !full.goal) return "";
   return '<div class="sess-extra"><span class="sec-l">目标' + (full.goalStatus ? '<span class="pill">' + esc(full.goalStatus) + "</span>" : "") +
     '</span><span class="goal-sub">' + esc(full.goal) + (full.criteria ? "\n完成标准：" + esc(full.criteria) : "") + "</span></div>";
 }
-function hoLine(h) {
+function hoLine(h, key) {
   // 搜索结果里：压缩时的交接对上的那一段
-  return '<div class="hline"><span class="ht" title="' + esc(when(h.ts)) + ' 压缩时写的交接">交接</span><div class="hx"><p class="htext">' + hl(h.text) + "</p></div></div>";
+  return '<div class="hline"><span class="ht" title="' + esc(when(h.ts)) + ' 压缩时写的交接">交接</span><div class="hx"><p class="htext">' + hl(h.text) + "</p></div>" +
+    '<span class="hacts">' + ctxBtn(key, "handoff", h.ts, h.text) + "</span></div>";
 }
 // 搜索结果里：AI 问你的 ❓、替你定的 🧭、📌 状态行、🎯 目标里对上的那一句（只在「全部」里搜）
 const NOTE_KIND = { ask: ["它问你", "它问你、要你拍板的事"], call: ["替你定", "它没问你、自己定了的事"], status: ["状态", "它最后写的状态行"], goal: ["目标", "这个会话的目标和完成标准"] };
-function noteLine(n) {
+function noteLine(n, key) {
   const k = NOTE_KIND[n.kind] || ["AI", ""];
-  return '<div class="hline"><span class="ht" title="' + esc((n.ts ? when(n.ts) + " · " : "") + k[1]) + '">' + k[0] + '</span><div class="hx"><p class="htext">' + hl(n.text) + "</p></div></div>";
+  return '<div class="hline"><span class="ht" title="' + esc((n.ts ? when(n.ts) + " · " : "") + k[1]) + '">' + k[0] + '</span><div class="hx"><p class="htext">' + hl(n.text) + "</p></div>" +
+    '<span class="hacts">' + ctxBtn(key, n.kind, n.ts, n.text) + "</span></div>";
+}
+// 前后对话：搜到的那一句（你说的、它问你的、替你定的、状态、目标、交接）在对话里前后各几条，就在结果卡片里展开。
+// 对话从 /api/transcript 取（和看板详情「全部对话」同一份：你说的每一句，加它每一轮最后的回复），一个会话只取一次
+const hTr = {};    // 会话 key -> { items, loading, at }
+const hCtx = {};   // 会话 key -> { a: 搜到的那一句 { kind, ts, text }, before, after, scroll }
+const CTX_N = 3, CTX_MORE = 6;
+function ctxOn(key, kind, ts) { const c = hCtx[key]; return !!c && c.a.kind === kind && c.a.ts === ts; }
+function ctxBtn(key, kind, ts, text) {
+  if (!key || !ts) return "";
+  const on = ctxOn(key, kind, ts);
+  return btn(on ? "收起前后" : "前后对话", "ctxOpen('" + esc(key) + "','" + kind + "'," + ts + "," + clip(text) + ")", "ghost xs" + (on ? " on" : ""),
+    on ? "" : "看这一句前后你和 AI 说了什么", 'aria-pressed="' + on + '"');
+}
+async function ctxOpen(key, kind, ts, ci) {
+  if (selecting()) return;
+  if (ctxOn(key, kind, ts)) return ctxClose(key);
+  hCtx[key] = { a: { kind, ts, text: clips[ci] || "" }, before: CTX_N, after: CTX_N, scroll: true };
+  const tr = hTr[key];
+  if (tr && (tr.loading || Date.now() - tr.at < 60000)) return renderHistory();   // 一分钟内取过的直接用
+  hTr[key] = { loading: true, items: tr && tr.items, at: Date.now() };
+  renderHistory();
+  try {
+    const res = await (await fetch("/api/transcript?key=" + encodeURIComponent(key), { cache: "no-store" })).json();
+    hTr[key] = { items: res.items || [], at: Date.now() };
+  } catch (e) {
+    delete hTr[key]; delete hCtx[key];
+    toast("没取到对话记录：本机服务没响应");
+  }
+  renderHistory();
+}
+function ctxClose(key) {
+  delete hCtx[key];
+  renderHistory();
+  const el = document.getElementById("hs-" + domId(key));
+  if (el && el.getBoundingClientRect().top < 0) el.scrollIntoView({ block: "start" });
+}
+function ctxMore(key, dir) {
+  const c = hCtx[key];
+  if (!c) return;
+  if (dir < 0) c.before += CTX_MORE; else c.after += CTX_MORE;
+  renderHistory();
+}
+// 在对话里找到搜到的那一句：时间对得上的优先（它问你的、替你定的、状态都记着是哪一轮写的），
+// 其次找含搜索词、时间最近的；都没有（对话记录已经清掉了）就把台账记下的那句按时间插进去
+function ctxFind(items, a) {
+  const want = a.kind === "you" ? "you" : a.kind === "handoff" ? "handoff" : "it";
+  const words = hq.toLowerCase().split(/\s+/).filter(Boolean);
+  let best = -1, bd = Infinity, wb = -1, wd = Infinity;
+  items.forEach((m, i) => {
+    if (m.kind !== want) return;
+    const d = Math.abs((m.ts || 0) - a.ts);
+    if (d < bd) { bd = d; best = i; }
+    if (d < wd && words.length && words.every(w => (m.text || "").toLowerCase().includes(w))) { wd = d; wb = i; }
+  });
+  if (best >= 0 && bd < 2) return { items, at: best };
+  if (wb >= 0) return { items, at: wb };
+  if (best >= 0 && bd < 6 * 3600) return { items, at: best };
+  let at = items.findIndex(m => (m.ts || 0) > a.ts);
+  if (at < 0) at = items.length;
+  const lost = { kind: want === "you" ? "you" : "it", ts: a.ts, text: a.text, lost: true };
+  return { items: items.slice(0, at).concat([lost], items.slice(at)), at, lost: true };
+}
+function ctxPanel(key) {
+  const c = hCtx[key], tr = hTr[key], k = esc(key);
+  if (!c) return "";
+  const kind = NOTE_KIND[c.a.kind];
+  let body, note = "你说的每一句都在；它的只列每一轮最后的回复，中间干活的过程不列。";
+  if (!tr || !tr.items) body = '<span class="lmore">读取对话记录…</span>';
+  else {
+    const f = ctxFind(tr.items, c.a), items = f.items, at = f.at, id = j => "c" + domId(key) + "_" + j;
+    if (f.lost) note = "这一轮的原文读不到了（Claude Code 默认只留 30 天对话记录），中间那条是台账记下的；前后是你说的话和还在的回复。";
+    if (bubOpen[id(at)] == null) bubOpen[id(at)] = true;   // 搜到的那条默认展开：❓、🧭 多写在回复末尾
+    const s = Math.max(0, at - c.before), e = Math.min(items.length, at + 1 + c.after);
+    body = (s > 0 ? '<div class="tm-more">' + btn("再往前看 " + num(Math.min(CTX_MORE, s)) + " 条（还有 " + num(s) + " 条）" + ico("up"), "ctxMore('" + k + "',-1)", "ghost sm") + "</div>" : "") +
+      items.slice(s, e).map((m, i) => {
+        const j = s + i;
+        if (j !== at) return tmHtml(m, id(j), true, "renderHistory");
+        // 状态、目标那两行看板显示时去掉了，回复正文里没有：单独列在下面。交接只是一条分隔线：把对上的那段列出来
+        const extra = !f.lost && (c.a.kind === "status" || c.a.kind === "goal" || c.a.kind === "handoff") ? '<div class="ctx-hit"><span class="tg">' +
+          (kind ? kind[0] : "交接") + '</span><p class="htext">' + esc(c.a.text) + "</p></div>" : "";
+        const m2 = Object.assign({}, m, { label: f.lost ? "台账记下的" : "搜到的" + (kind ? "「" + kind[0] + "」" : "") });
+        return '<div class="ctx-at">' + tmHtml(m2, id(j), true, "renderHistory") + extra + "</div>";
+      }).join("") +
+      (e < items.length ? '<div class="tm-more">' + btn("再往后看 " + num(Math.min(CTX_MORE, items.length - e)) + " 条（还有 " + num(items.length - e) + " 条）" + ico("down"), "ctxMore('" + k + "',1)", "ghost sm") + "</div>" : "");
+  }
+  return '<div class="ctx" id="hc-' + domId(key) + '"><div class="sec-hd"><span class="sec-t">前后对话</span>' + btn("收起" + ico("up"), "ctxClose('" + k + "')", "ghost xs") + "</div>" +
+    '<span class="sec-l">' + note + '</span><div class="thread">' + body + "</div></div>";
+}
+// 前后对话里把搜索词标出来：它的回复按 Markdown 排过，不能像别处那样先拼好字符串再标，排好以后在文字节点上标
+function markIn(root, q) {
+  const words = q.split(/\s+/).filter(Boolean).map(w => w.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
+  if (!words.length) return;
+  const one = new RegExp(words.join("|"), "i"), all = new RegExp(words.join("|"), "gi");
+  const walk = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
+    acceptNode: n => n.parentElement.closest("mark, button") || !one.test(n.data) ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_ACCEPT });
+  const nodes = [];
+  while (walk.nextNode()) nodes.push(walk.currentNode);
+  nodes.forEach(n => {
+    const f = document.createDocumentFragment();
+    let last = 0;
+    n.data.replace(all, (m, off) => {
+      f.append(n.data.slice(last, off));
+      const mk = document.createElement("mark");
+      mk.textContent = m; f.append(mk); last = off + m.length;
+      return m;
+    });
+    f.append(n.data.slice(last));
+    n.replaceWith(f);
+  });
+}
+function ctxAfterRender(list) {
+  list.querySelectorAll(".ctx").forEach(el => {
+    const key = Object.keys(hCtx).find(k => "hc-" + domId(k) === el.id), c = key && hCtx[key];
+    markIn(el.querySelector(".thread"), hq);
+    if (!c || !c.scroll || !hTr[key] || !hTr[key].items) return;
+    c.scroll = false;   // 取到以后滚一次，让搜到的那条露在屏幕中间；它问你的、替你定的多在回复末尾，滚到最后一个标亮的词
+    const at = el.querySelector(".ctx-at"), ms = at ? at.querySelectorAll("mark") : [];
+    const to = ms.length ? (c.a.kind === "ask" || c.a.kind === "call" ? ms[ms.length - 1] : ms[0]) : at;
+    if (to) to.scrollIntoView({ block: "center" });
+  });
 }
 function scard(s, si, faces) {
   const k = esc(s.key), open = hOpen[s.key], full = hFull[s.key];
@@ -2498,7 +2628,8 @@ function scard(s, si, faces) {
   return '<article class="hcard" id="hs-' + domId(s.key) + '"><div class="fc">' + (fk ? face(fk, 24, si, REASON[fk]) : "") + "</div>" +
     '<div class="hbody"><div class="htop">' + tagChip(s) + "<h3>" + hl(s.title) + '</h3>' + toolChip(s) + '<span class="hm">' + esc(meta) + "</span></div>" +
     (open ? sessExtra(full) : "") +
-    '<div class="hlines">' + items.map((it, i) => line(it, (open ? "f" : "p") + si + "_" + i)).join("") + (s.handoff ? hoLine(s.handoff) : "") + (s.notes || []).map(noteLine).join("") + "</div>" +
+    '<div class="hlines">' + items.map((it, i) => line(it, (open ? "f" : "p") + si + "_" + i, s.key)).join("") + (s.handoff ? hoLine(s.handoff, s.key) : "") +
+    (s.notes || []).map(n => noteLine(n, s.key)).join("") + "</div>" + ctxPanel(s.key) +
     '<div class="hfoot">' + btn(more, "toggleSession('" + k + "')", "ghost sm") +
     (findItem(s.key) ? btn("在看板里看", "locate('" + k + "')", "ghost sm", "回到看板，打开这个会话的详情：现状、目标、产出物、会话信息") : "") +
     btn("打开会话" + ico("open"), "openSession('" + k + "',this)", "ghost sm") +
@@ -2541,6 +2672,7 @@ function renderHistory() {
   if (hSessions.length) html += "</section>";
   if (hSessions.length < hTotal) html += btn("再加载 50 个会话", "search(hq, true)", "sec hd", "", 'style="align-self: flex-start"');
   list.innerHTML = html;
+  ctxAfterRender(list);
 }
 
 // ---------------- 产出物：AI 在回复里给你的链接和本机文件，能搜，能跳回给出它的会话
