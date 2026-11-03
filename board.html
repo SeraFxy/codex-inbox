@@ -857,6 +857,8 @@ function whyOf(it) {
   if (k === "sched_failed") return "定时唤醒没能把话发回会话。打开会话手动接着做，原因看下面的现状。";
   if (f === "stuck") return "它这一轮停在半路，超过 " + ((state && state.interruptedMin) || 30) + " 分钟没动静。可能在等一个没弹出来的确认，也可能已经中断。";
   if (f === "alarm") return k === "peer" ? "和同事约好的跟进时间到了。" : "你设的提醒到点了。到点的事排在等回话的前面。";
+  if (f === "wait" && alsoOf(it)) return alsoOf(it)[1] + "，又问了你 " + decisionsOf(it).length + " 件事要拍板，所以先排在「轮到你」。选好回复它" +
+    (it.details.alsoWait === "sched" ? "；定时唤醒照常。" : "。");
   if (f === "wait") return k === "approval" ? waitOf(it)[1] : it.details && it.details.doneAsk
     ? "它说已经达到完成标准，但还问了你 " + decisionsOf(it).length + " 件事要你拍板。选好回复它；都不用做了就点「完成」结项。"
     : "它停下来等你回话：回答它的问题、拍板，或者给下一步指示，它才能接着做。";
@@ -881,8 +883,18 @@ function ctxOf(it) { return it.details && it.details.ctxPct != null ? it.details
 function ctxHot(it) { const c = ctxOf(it); return c != null && it.group !== "hidden" && c >= ((state && state.ctxWarn) || 70); }
 function decisionsOf(it) { return it.group !== "hidden" && it.details && it.details.decisions || []; }
 function shortOf(it) {
-  const n = decisionsOf(it).length;
-  return !n ? it.headline : faceOf(it) === "review" || it.details && it.details.doneAsk ? "做完了，另有 " + n + " 件事等你决定" : n + " 件事等你决定";
+  const n = decisionsOf(it).length, a = alsoOf(it);
+  return !n ? it.headline : faceOf(it) === "review" || it.details && it.details.doneAsk ? "做完了，另有 " + n + " 件事等你决定"
+    : n + " 件事等你决定" + (a ? " · " + a[0] : "");
+}
+// 定了时、等时间点、等同事或在后台做，又问了你要拍板的事：ledger.py 把它挪到「轮到你」，原来在等什么记在 alsoWait。[行上的短句, 详情里的说明]
+function alsoOf(it) {
+  const d = it.details || {}, at = d.alsoAt ? when(d.alsoAt) : "";
+  return it.group === "need" && {
+    sched: [at ? at + " 会自己接着做" : "也定了时", "它安排了" + (at ? " " + at + " " : "到点") + "自动接着做"],
+    time: [at ? at + " 还有件事要你做" : "也在等时间点", "它说" + (at ? " " + at + " " : "到点") + "还有件事要你本人做"],
+    peer: ["也在等同事", "它在等同事回话"],
+    ai: ["后台还在做", "它说还在后台做着"] }[d.alsoWait] || null;
 }
 
 // ---------------- 数据
@@ -1797,7 +1809,7 @@ function renderDetail() {
 const INK = { wait: "needs", stuck: "needs", alarm: "needs", run: "run", review: "review", timer: "timer", peer: "peer" };
 function sumCard(it) {
   const d = it.details, f = faceOf(it), hidden = it.group === "hidden", ink = INK[f];
-  const loud = it.kind === "approval" || it.kind === "sched_failed" || f === "stuck" || (d.doneAsk && f === "wait");
+  const loud = it.kind === "approval" || it.kind === "sched_failed" || f === "stuck" || ((d.doneAsk || alsoOf(it)) && f === "wait");
   let html = '<div class="sum"><div class="sum-now"><span class="sum-st"' + (ink ? ' style="color:var(--bk-' + ink + '-ink)"' : "") + ' title="' + esc(whyOf(it)) + '">' +
     esc(badgeOf(it)) + "</span>" + (hidden ? '<p class="sum-why">' + esc(whyOf(it)) + "</p>"
       : '<p class="now">' + esc(it.headline) + "</p>" + (loud ? '<p class="sum-why">' + esc(whyOf(it)) + "</p>" : "") +

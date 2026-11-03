@@ -2842,12 +2842,17 @@ def make_item(st, now, cfg, ov, sched, titles, goals, ctx):
     if snoozed and group in ("need", "peer", "confirm", "backlog"):
         group, sort = "time", ov["until_ts"]
         headline = "推迟到 %s · %s" % (fmt_time(ov["until_ts"], now), headline)
-    done_ask = False
+    done_ask, also, also_at = False, "", 0
     if decisions and group != "hidden":
         badges.insert(0, "%d 件待你决定" % len(decisions))
         if group == "confirm":
             # 说做完了，又问了你要拍板的事：球在你这边，按「等你」排（红色），不按「待你确认完成」
             group, kind, sort, done_ask = "need", "me", 2, True
+        elif group in ("time", "peer", "ai") and not snoozed:
+            # 定了时、等时间点、等同事或说在后台做，又问了你要拍板的事：也是球在你这边，挪到「轮到你」。
+            # 定时唤醒照常；原来在等什么记在 alsoWait，行上和详情里接着写。你自己点了「推迟」的不挪
+            also, also_at = kind, sort if group in ("time", "peer") and 1e9 < sort < now + 365 * 86400 else 0
+            group, kind, sort = "need", "me", 2
     else:
         decisions = []
     # 之前问过、你还没答的 ❓：只加徽标，不挪组（最新 📌 说了算）。点了「不用答了」、会话点过完成的收起来；它再问就再列出来
@@ -2902,7 +2907,7 @@ def make_item(st, now, cfg, ov, sched, titles, goals, ctx):
             "handoffTs": ctx.get("handoffs", {}).get(key) or 0,
             "ctxPct": ctx_pct(st),   # 上下文用了百分之几，算不出来是 None   # 压缩时的交接：正文较长，详情里再按 /api/handoff 取
             "status": ("📌 " + status["label"] + ("｜" + status["desc"] if status.get("desc") else "")) if status else "",
-            "decisions": decisions, "doneAsk": done_ask, "oldAsks": old_asks,
+            "decisions": decisions, "doneAsk": done_ask, "alsoWait": also, "alsoAt": also_at, "oldAsks": old_asks,
             # 「等你」写的那件事：没有 ❓ 要拍板时，详情里单列「要你做」，做完了回它一句
             "todo": (status.get("desc") or "") if status and status.get("kind") == "me" else "",
             "calls": [{"t": c["t"], "why": c.get("why") or "", "ts": c.get("ts") or 0}   # 新的在前，同一轮的按原文顺序
