@@ -698,9 +698,7 @@ const VIEWS = {
   inbox: { label: "待整理", groups: ["backlog"], hint: "没写状态或很久没动静的会话。",
            emptyTitle: "都整理完了", emptyText: "新会话没写状态行时会先放在这里。" },
   hidden: { label: "已完成", groups: [], hint: "",
-            emptyTitle: "最近没有完成的", emptyText: "点了「完成」的会话会在这里留一阵，方便恢复。" },
-  fav: { label: "收藏", groups: [], hint: "收藏的会话，完成了也留着。",
-         emptyTitle: "还没有收藏", emptyText: "详情右上角点星标，就收进这里。" }
+            emptyTitle: "最近没有完成的", emptyText: "点了「完成」的会话会在这里留一阵，方便恢复。" }
 };
 const TABS = ["you", "ai", "wait", "inbox"];
 const ORDER = { stuck: 0, alarm: 1, wait: 2, review: 3, run: 4, timer: 5, peer: 6, inbox: 7, done: 8 };
@@ -728,6 +726,7 @@ const FAV_RED = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32"><re
 
 let state = null, failed = false, busy = false;
 let view = store("ledger.view") || "you";
+if (!TABS.includes(view) && view !== "hidden") view = "you";   // 以前有个「收藏」视图，存着它的回到「轮到你」
 if (!VIEWS[view]) view = "you";
 let selKey = null, selIdx = 0, menu = null, drag = null, iconRed = null;
 let hopNow = new Set();
@@ -843,10 +842,12 @@ function reasonOf(it) {
   if (f === "timer") return snoozed(it) ? "推迟了" : it.kind === "sched" ? "已定时" : "等时间点";
   if (f === "inbox") return it.badges[0] || "待整理";
   if (f === "done") return it.headline || "已完成";
+  if (f === "run" && it.bg && !it.bg.run) return "没在跑";
   return REASON[f];
 }
 function rowTime(it) {
   const f = faceOf(it), n = nowTs();
+  if (f === "run" && it.bg) { const s = n - it.bg.since; return it.bg.run ? (s < 60 ? "后台刚开始" : "后台等了 " + dur(s)) : (s < 60 ? "刚停" : "停了 " + dur(s)); }
   if (f === "run") return it.since && n - it.since < 86400 ? (n - it.since < 60 ? "刚开始" : "已跑 " + dur(n - it.since)) : "在跑";
   if ((f === "timer" || f === "peer") && dueOf(it)) return when(dueOf(it));
   if (f === "inbox" || f === "done") return when(it.last);
@@ -864,6 +865,7 @@ function whyOf(it) {
     : "它停下来等你回话：回答它的问题、拍板，或者给下一步指示，它才能接着做。";
   if (f === "review") return (decisionsOf(it).length ? "它说已经达到完成标准，另外问了你 " + decisionsOf(it).length + " 件事，选好回复它。" : "它说已经达到完成标准，等你验收。") +
     "看过没问题点「完成」结项；还要改就打开会话接着说。";
+  if (f === "run" && it.bg) return bgWhy(it);
   if (f === "run") return "它在处理你交代的事，还没停下来问你。需要你的时候会自己挪到「轮到你」。";
   if (f === "timer") return snoozed(it) ? "你推迟了它，到点之前不会再打扰你。" : k === "sched" ? "它安排了到点自己接着做，到时候会自动唤醒会话。" : "要你本人到点去做的事。到点会挪到「轮到你」，并弹 Mac 通知。";
   if (f === "peer") return "在等同事。到了约定再跟的时间，会挪到「轮到你」。";
@@ -878,6 +880,13 @@ function badgeOf(it) {
   else if ((f === "timer" || f === "peer") && dueOf(it)) bits.push(when(dueOf(it)) + (snoozed(it) ? " 再叫你" : ""));
   else if (f === "inbox" && it.badges[0] === "状态不明") bits.push("最后动静 " + when(it.last));
   return bits.concat(it.badges.filter((b, i) => !(f === "inbox" && i === 0) && !/待你决定$/.test(b))).join(" · ");
+}
+// 说在做、这一轮已经结束的：后台有命令在跑（跑完会叫醒它），还是什么都没在跑（它不会自己接着做）
+function bgWhy(it) {
+  const b = it.bg;
+  if (!b.run) return "这一轮已经结束，后台也没有命令在跑，它不会自己接着做。要它继续，打开会话说一句。";
+  return "这一轮已经结束，后台有" + (b.n > 1 ? " " + b.n + " 个" : "个") + "命令在跑" + (b.desc ? "，最近开的是「" + b.desc + "」" : "") +
+    "。跑完会自动叫醒它接着做；等得比预想久，打开会话看一眼。";
 }
 function ctxOf(it) { return it.details && it.details.ctxPct != null ? it.details.ctxPct : null; }   // 上下文用了百分之几
 function ctxHot(it) { const c = ctxOf(it); return c != null && it.group !== "hidden" && c >= ((state && state.ctxWarn) || 70); }
@@ -914,7 +923,6 @@ function viewItems(v, all) {
   // all = 不管左栏选了什么，整个标签页的会话（来源筛选照样生效）
   if (!state) return [];
   if (v === "hidden") return state.hidden.filter(it => srcOk(it) && (all || inScope(it)));
-  if (v === "fav") return favGroups((state.favs || []).filter(srcOk)).reduce((a, g) => a.concat(g.items), []).map(x => findItem(x.key)).filter(Boolean);   // 不管左栏选了什么
   const out = state.groups.filter(g => VIEWS[v].groups.includes(g.id)).reduce((a, g) => a.concat(g.items), []).filter(srcOk);
   // 置顶的在最上面，其余按更新时间，新的在前；「在等」按理由、到点时间排（等着的会话不会更新）
   let list = v === "wait" ? out.map((it, i) => [it, i]).sort((a, b) => ORDER[faceOf(a[0])] - ORDER[faceOf(b[0])] || a[1] - b[1]).map(x => x[0])
@@ -1214,7 +1222,7 @@ function setView(v) {
 // ---------------- 左栏：项目与主题
 function cntHtml(c) { return c.hot ? '<span class="count hot">' + c.hot + "</span>" : c.n ? '<span class="n">' + c.n + "</span>" : ""; }
 function sameScope(a, b) { return a.t === b.t && a.p === b.p && a.id === b.id; }
-function scopeData(sc) { return ' data-scope="' + esc(JSON.stringify(sc)) + '" aria-current="' + (view !== "fav" && sameScope(sc, scope)) + '"'; }
+function scopeData(sc) { return ' data-scope="' + esc(JSON.stringify(sc)) + '" aria-current="' + sameScope(sc, scope) + '"'; }
 function railItem(label, sc, c, cls, drop) {
   return '<button type="button" class="ri ' + cls + '"' + scopeData(sc) + (drop != null ? ' data-drop="' + drop + '"' : "") + ' onclick="setScope(this,event)">' +
     '<span class="nm" title="' + esc(label) + '">' + esc(label) + "</span>" + cntHtml(c) + "</button>";
@@ -1235,7 +1243,7 @@ function renderRail() {
     html += '<button type="button" class="rsec" aria-expanded="' + favOpen + '" onclick="toggleFavs()">' + ico(favOpen ? "down" : "right", 14) +
       "<span>收藏</span><span class=\"n\">" + favs.length + "</span></button>";
     if (favOpen) html += favGroups(favs).map(g => (g.label ? '<div class="rfg" title="' + esc(g.label) + '">' + esc(g.label) + "</div>" : "") + g.items.map(x => '<div class="rt">' +
-      '<button type="button" class="ri fav" data-key="' + esc(x.key) + '" aria-current="' + (view === "fav" && x.key === selKey) + '" title="' + esc(x.title) + (x.onBoard ? "" : "（点一下打开会话）") +
+      '<button type="button" class="ri fav" data-key="' + esc(x.key) + '" title="' + esc(x.title) + (x.onBoard ? "" : "（点一下打开会话）") +
       '" onclick="goFav(this.dataset.key)">' + toolChip(x) + '<span class="nm">' + esc(x.title) + "</span></button>" +
       '<button type="button" class="ra" title="打开或取消收藏" aria-label="「' + esc(x.title) + '」打开或取消收藏" aria-haspopup="menu" aria-expanded="false"' +
       ' data-key="' + esc(x.key) + '" onclick="event.stopPropagation();favMore(this,this.dataset.key)">' + ico("more", 15) + "</button></div>").join("")).join("");
@@ -1270,7 +1278,7 @@ function railGroup(p) {
 function autoSec() {
   const all = (state.autos || []).filter(srcOk), on = all.filter(x => !x.auto.paused), off = all.filter(x => x.auto.paused);
   if (!all.length) return "";
-  const row = x => '<div class="rt"><button type="button" class="ri fav' + (x.auto.paused ? " off" : "") + '" data-key="' + esc(x.key) + '" aria-current="' + (x.key === selKey) +
+  const row = x => '<div class="rt"><button type="button" class="ri fav' + (x.auto.paused ? " off" : "") + '" data-key="' + esc(x.key) +
     '" title="' + esc(x.title + "\n定时任务「" + x.auto.name + "」，" + (x.auto.paused ? "已暂停" : (x.auto.when || "定时") + " 跑") + (x.onBoard ? "" : "\n不在看板上，点一下打开会话")) +
     '" onclick="goFav(this.dataset.key)"><span class="nm">' + esc(x.title) + '</span><span class="n">' + esc(x.auto.paused ? "已暂停" : x.auto.short) + "</span></button></div>";
   let html = '<button type="button" class="rsec" aria-expanded="' + autoOpen + '" onclick="toggleAutos()" title="Codex 定时任务在跑的会话，自动列在这里">' +
@@ -1319,15 +1327,9 @@ function favMore(el, key) {
     (it ? mi("归到主题…", "openTopics(menu.el,clips[" + clip(key) + "])", it.topic ? esc(it.topic.name) : "") : "") + mi("取消收藏", "toggleFav(clips[" + clip(key) + "])"));
 }
 function goFav(key) {
-  // 中间一栏只列收藏（按主题分组），选中点的这条；不在看板上了（完成很久）就直接打开会话
-  const it = findItem(key);
-  if (!it) return openSession(key);
-  if (tab !== "board") setTab("board");
-  if (!srcOk(it)) { src = "all"; store("ledger.src", src); }
-  view = "fav"; store("ledger.view", view);
-  pick(key);
-  const r = document.getElementById("row-" + domId(key));
-  if (r) r.scrollIntoView({ block: "nearest" });
+  // 收藏、定时任务是捷径：跳到这个会话所在的标签页并选中它，左栏范围不含它就切过去；不在看板上了（完成很久）就直接打开会话。
+  // 左栏只有一处高亮，表示中间一栏列的是哪儿，所以捷径本身不高亮
+  if (!locate(key)) openSession(key);
 }
 function locate(key) {
   // 在看板上找到这个会话并打开它的详情：来源筛选、左栏范围、标签页不对就切过去。不在看板上返回 false
@@ -1362,8 +1364,8 @@ function setScope(el, e) {
     return sc.t === "p" ? renameProject(sc.p) : renameTopic(sc.id);
   }
   scope = sc; store("ledger.scope", scope);
-  // 换了项目或主题：里面有轮到你的事就先看「轮到你」；从收藏回来也一样
-  if (view === "fav" || viewItems("you").length) { view = "you"; store("ledger.view", view); }
+  // 换了项目或主题：里面有轮到你的事就先看「轮到你」
+  if (viewItems("you").length) { view = "you"; store("ledger.view", view); }
   const p = scope.t === "t" ? (topicById(scope.id) || {}).project : scope.p;
   if (p && railFold.delete(p)) store("ledger.fold", [...railFold]);
   if (((p && archivedP(p)) || (scope.t === "t" && archivedT(scope.id))) && !archOpen) { archOpen = true; store("ledger.arch", true); }
@@ -1616,31 +1618,22 @@ function renderQueue() {
   let i = 0;
   const qgroup = (label, xs) => '<div class="qgroup">' + (label ? '<span class="qlabel">' + label + " · " + xs.length + "</span>" : "") + xs.map(it => row(it, i++)).join("") + "</div>";
   const top = items.filter(pinned), rest = items.filter(it => !pinned(it));
-  if (view === "fav") {
-    favGroups((state.favs || []).filter(srcOk)).forEach(g => {
-      const on = g.items.map(x => findItem(x.key)).filter(Boolean), off = g.items.filter(x => !findItem(x.key));
-      html += '<div class="qgroup">' + (g.label ? '<span class="qlabel">' + esc(g.label) + " · " + g.items.length + "</span>" : "") + on.map(it => row(it, i++)).join("") +
-        off.map(x => '<div class="row" role="button" tabindex="0" data-key="' + esc(x.key) + '" title="不在看板上了（完成超过 ' + (state.windowDays || 14) + ' 天），点一下打开会话" onclick="openSession(this.dataset.key)">' +
-          '<span class="fc">' + face("done", 24) + '</span><span class="t">' + esc(x.title) + '</span><span class="w">' + esc(x.last ? when(x.last) : "") + "</span>" +
-          '<span class="s">' + toolChip(x) + "<span>不在看板上了，点一下打开会话</span></span></div>").join("") + "</div>";
-    });
-  } else {
-    if (top.length) html += qgroup("置顶", top);
-    if (view === "wait" || view === "hidden") {
-      // 在等、已完成：按理由分组
-      const groups = [];
-      rest.forEach(it => { const f = faceOf(it), g = groups[groups.length - 1]; if (g && g.f === f) g.items.push(it); else groups.push({ f, items: [it] }); });
-      html += groups.map(g => qgroup(REASON[g.f], g.items)).join("");
-    } else if (rest.length) html += qgroup(top.length ? "其余按更新时间" : "", rest);
-  }
-  const all = scope.t === "all" || view === "fav";   // 收藏不管左栏选了什么
-  if (!items.length && !(view === "fav" && (state.favs || []).some(srcOk)))
+  if (top.length) html += qgroup("置顶", top);
+  if (view === "wait" || view === "hidden") {
+    // 在等、已完成：按理由分组
+    const groups = [];
+    rest.forEach(it => { const f = faceOf(it), g = groups[groups.length - 1]; if (g && g.f === f) g.items.push(it); else groups.push({ f, items: [it] }); });
+    html += groups.map(g => qgroup(REASON[g.f], g.items)).join("");
+  } else if (rest.length) html += qgroup(top.length ? "其余按更新时间" : "", rest);
+
+  const all = scope.t === "all";
+  if (!items.length)
     html += '<div class="dash">' + face("logo", 32) + '<span class="tx"><b>' + v.emptyTitle + "</b><span>" +
       (all && src === "all" ? v.emptyText : (all ? "" : "左栏选的是「" + esc(scopeName(scope)) + "」，别处的会话没列出来。") +
         (src === "all" ? "" : "只看 " + TOOLS[src] + " 的会话，另一个工具的没列出来。")) + "</span></span></div>";
   document.getElementById("qlist").innerHTML = html;
   const nHidden = viewItems("hidden").length;
-  document.getElementById("qfoot").innerHTML = view === "hidden" || view === "fav" ? btn("返回「轮到你」", "setView('you')", "ghost xs")
+  document.getElementById("qfoot").innerHTML = view === "hidden" ? btn("返回「轮到你」", "setView('you')", "ghost xs")
     : nHidden ? btn("已完成 / 不再跟踪 · " + nHidden, "setView('hidden')", "ghost xs") : "";
 }
 function row(it, i) {
@@ -1652,7 +1645,7 @@ function row(it, i) {
     : ra(ico("check", 15, 2.2), "act('" + k + "','done')", (f === "review" ? "确认完成" : "完成") + "（E）") +
       ra(ico("more", 15), "openMenu(this,'" + k + "',true)", f === "run" ? "更多" : "推迟和更多（S）", ' aria-haspopup="menu" aria-expanded="false"'));
   return '<div class="row" role="button" tabindex="0" id="row-' + domId(it.key) + '" data-key="' + k + '" aria-current="' + on + '"' +
-    (hidden && view !== "fav" ? "" : ' draggable="true"') + ' onclick="pick(\'' + k + '\')">' +
+    (hidden ? "" : ' draggable="true"') + ' onclick="pick(\'' + k + '\')">' +
     '<span class="fc' + (hopNow.has(it.key) ? " bk-hop" : "") + '">' + face(f, 24, i) + "</span>" +
     '<span class="t" title="' + esc(it.title) + '">' + esc(it.title) + "</span>" +
     '<span class="w' + (f === "stuck" || f === "alarm" || f === "wait" ? " hot" : "") + '">' + esc(rowTime(it)) + "</span>" +
@@ -1812,7 +1805,7 @@ function sumCard(it) {
   const loud = it.kind === "approval" || it.kind === "sched_failed" || f === "stuck" || ((d.doneAsk || alsoOf(it)) && f === "wait");
   let html = '<div class="sum"><div class="sum-now"><span class="sum-st"' + (ink ? ' style="color:var(--bk-' + ink + '-ink)"' : "") + ' title="' + esc(whyOf(it)) + '">' +
     esc(badgeOf(it)) + "</span>" + (hidden ? '<p class="sum-why">' + esc(whyOf(it)) + "</p>"
-      : '<p class="now">' + esc(it.headline) + "</p>" + (loud ? '<p class="sum-why">' + esc(whyOf(it)) + "</p>" : "") +
+      : '<p class="now">' + esc(it.headline) + "</p>" + (loud || (f === "run" && it.bg) ? '<p class="sum-why">' + esc(whyOf(it)) + "</p>" : "") +
         (ctxHot(it) ? '<p class="sum-why">上下文已用 <span class="mono">' + ctxOf(it) + "%</span>，这件做完换个新会话接着做，省 token。</p>" : "")) + "</div>";
   if (d.goal) {
     const src = d.goalFrom === "handoff" ? "取自 " + when(d.goalTs) + " 压缩时的交接" : d.goalTs ? "写于 " + when(d.goalTs) : "";

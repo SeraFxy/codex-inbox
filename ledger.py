@@ -1166,7 +1166,31 @@ def on_final(st, text, ts):
 
 
 CLAUDE_KEYS = ('"type":"assistant"', '"type":"user"', '"type":"system"', '"type":"ai-title"',
-               '"type":"custom-title"', '"type":"last-prompt"', '"queued_command"')
+               '"type":"custom-title"', '"type":"last-prompt"', '"queued_command"', '"task_status"')
+BG_ID_RE = re.compile(r"running in background with ID: ([\w-]+)")
+TASK_ID_RE = re.compile(r"<task-id>([\w-]+)</task-id>")
+SELF_WAKE_TOOLS = ("ScheduleWakeup", "CronCreate", "Monitor")   # 这几种会自己到点叫醒会话，后台没命令在跑也不算停了
+
+
+def keep_recent(d, n=20):
+    """后台命令的记录只留最近 n 条（没收到结束通知的也不会越攒越多）。"""
+    for k in list(d)[:-n]:
+        del d[k]
+
+
+def note_bg_started(st, content, ts):
+    """后台命令（Bash 的 run_in_background）开始了：工具结果里写着它的 ID，说明取它的 description。"""
+    req = st.get("bg_req")
+    if not req:
+        return
+    for b in content:
+        if isinstance(b, dict) and b.get("type") == "tool_result" and b.get("tool_use_id") in req:
+            desc = req.pop(b["tool_use_id"])
+            m = BG_ID_RE.search(take_text(b.get("content")))
+            if m:
+                bg = st.setdefault("bg", {})
+                bg[m.group(1)] = {"d": desc, "ts": ts}
+                keep_recent(bg)
 
 
 def claude_line(st, line):
@@ -1208,6 +1232,15 @@ def claude_line(st, line):
     if typ == "attachment":
         # 它干活时你插进来的话：不算新的一轮，只看里面有没有答 ❓
         a = rec.get("attachment") or {}
+        if a.get("type") == "task_status" and a.get("taskId"):
+            # 压缩后 Claude Code 会把还在跑的后台命令重新列一遍
+            bg = st.setdefault("bg", {})
+            if a.get("status") == "running" and a.get("taskType") == "local_bash":
+                bg.setdefault(a["taskId"], {"d": clean_line(a.get("description") or "")[:120], "ts": ts})
+                keep_recent(bg)
+            elif a.get("status") != "running":
+                bg.pop(a["taskId"], None)
+            return
         if a.get("type") == "queued_command" and (a.get("origin") or {}).get("kind") == "human":
             text = unwrap_paste(a.get("prompt") if isinstance(a.get("prompt"), str) else take_text(a.get("prompt")))
             if not is_injected(text):
@@ -1224,10 +1257,16 @@ def claude_line(st, line):
         if rec.get("isMeta"):
             return
         if isinstance(content, list) and any(isinstance(b, dict) and b.get("type") == "tool_result" for b in content):
+            note_bg_started(st, content, ts)
             st["turn"] = "running"
             st["last_kind"] = "tool"
             return
         text = unwrap_paste(take_text(content))
+        if text.lstrip().startswith("<task-notification>"):
+            # 后台命令跑完（或失败、被停掉）的通知：从「后台在跑」里去掉。它会叫醒会话，但不是你说的话
+            for tid in TASK_ID_RE.findall(text):
+                (st.get("bg") or {}).pop(tid, None)
+            return
         if isinstance(content, list) and not text.lstrip().startswith(("<", "[Request interrupted")):
             note_images(st, ts, [((b.get("source") or {}).get("data"), (b.get("source") or {}).get("media_type"))
                                  for b in content if isinstance(b, dict) and b.get("type") == "image"
@@ -1261,6 +1300,18 @@ def claude_line(st, line):
         blocks = content if isinstance(content, list) else []
         text = take_text(content)
         tools = [b.get("name", "") for b in blocks if isinstance(b, dict) and b.get("type") == "tool_use"]
+        for b in blocks:
+            if not (isinstance(b, dict) and b.get("type") == "tool_use"):
+                continue
+            inp = b.get("input") if isinstance(b.get("input"), dict) else {}
+            if b.get("name") == "Bash" and inp.get("run_in_background"):
+                req = st.setdefault("bg_req", {})
+                req[b.get("id") or ""] = clean_line(inp.get("description") or inp.get("command") or "")[:120]
+                keep_recent(req)
+            elif b.get("name") in ("TaskStop", "KillShell"):
+                (st.get("bg") or {}).pop(inp.get("task_id") or inp.get("shell_id") or "", None)
+            elif b.get("name") in SELF_WAKE_TOOLS:
+                st["self_wake_ts"] = ts
         note_links(st, ts, text)
         if tools:
             st["turn"] = "running"
@@ -1537,19 +1588,54 @@ def migrate_ctx(conn, horizon):
     log("已给 %d 个会话补上上下文用量" % n)
 
 
+LINE_MAX = 32 * 1024 * 1024   # 一行最长认多长：贴了几张截图的那句话一行就有几 MB
+
+
+def line_end(f, pos, hi):
+    """pos 落在一行中间时往后找到这行结尾（换行符之后）；超过 LINE_MAX 还没找到就还是 pos（那半行丢掉）。"""
+    cur = pos
+    while cur < hi and cur - pos < LINE_MAX:
+        f.seek(cur)
+        chunk = f.read(min(1024 * 1024, hi - cur))
+        i = chunk.find(b"\n")
+        if i >= 0:
+            return cur + i + 1
+        cur += len(chunk)
+    return pos
+
+
+def line_start(f, pos, lo):
+    """pos 落在一行中间时往前找到这行开头；lo 本身是行首。返回 (从哪读, 要不要丢掉开头半行)。"""
+    cur = pos
+    while cur > lo and pos - cur < LINE_MAX:
+        a = max(lo, cur - 1024 * 1024)
+        f.seek(a)
+        i = f.read(cur - a).rfind(b"\n")
+        if i >= 0:
+            return a + i + 1, False
+        cur = a
+    return (lo, False) if cur <= lo else (pos, True)
+
+
 def parse_file(tool, path, st, offset, size):
-    """增量读取：新文件读开头 + 末尾，旧文件只读新增部分（最多末尾 2MB）。返回 (读了多少字节, 新 offset)。"""
+    """增量读取：新文件读开头 + 末尾，旧文件只读新增部分（最多末尾 2MB）。返回 (读了多少字节, 新 offset)。
+    开头、末尾的边界都挪到整行上：你贴了截图的那句话一行就有几 MB，从中间切开会整句丢掉，看板就以为你没说过话。"""
     handler = claude_line if tool == "claude" else codex_line
     segments = []
-    if offset == 0:
-        if size <= HEAD_BYTES + TAIL_BYTES:
-            segments.append((0, size, False))
+    with open(path, "rb") as f:
+        if offset == 0 and size > HEAD_BYTES + TAIL_BYTES:
+            head = line_end(f, HEAD_BYTES, size)
+            start, skip = line_start(f, max(head, size - TAIL_BYTES), head)
+            if start <= head:
+                segments.append((0, size, False))
+            else:
+                segments.append((0, head, False))
+                segments.append((start, size, skip))
         else:
-            segments.append((0, HEAD_BYTES, False))
-            segments.append((size - TAIL_BYTES, size, True))
-    else:
-        start = max(offset, size - TAIL_BYTES)
-        segments.append((start, size, start != offset))
+            start, skip = (max(offset, size - TAIL_BYTES) if offset else 0), False
+            if start > offset:
+                start, skip = line_start(f, start, offset)
+            segments.append((start, size, skip))
     total, new_offset = 0, offset
     with open(path, "rb") as f:
         for a, b, skip_head in segments:
@@ -2776,6 +2862,11 @@ def make_item(st, now, cfg, ov, sched, titles, goals, ctx):
     elif sched and sched["status"] in ("failed", "missed") and (sched["done_at"] or 0) >= last - 60:
         group, kind, sort = "need", "sched_failed", 0
         headline = "定时唤醒没执行：%s" % (sched["last_error"] or "原因不明")
+    elif (not status or not has_status) and decisions:
+        # 只写了 ❓、没写 📌：问了你要拍板的事，球就在你这边，和「等你」一样排
+        group = "stale" if idle > stale_sec else "need"
+        kind, sort = "me", 2
+        headline = ("%s没动静 · " % fmt_ago(idle) if group == "stale" else "") + "%d 件事等你决定" % len(decisions)
     elif not status or not has_status:
         if idle > stale_sec:
             group, kind = "stale", "nostatus"
@@ -2875,6 +2966,17 @@ def make_item(st, now, cfg, ov, sched, titles, goals, ctx):
     if fresh_calls and group != "hidden":
         badges.append("替你定了 %d 件" % fresh_calls)
 
+    # 说在做、这一轮却已经结束的：看它后台还有没有命令在跑（Claude Code 自己报 shell = 空闲、后台有命令）。
+    # 有就写是哪个命令、等了多久，跑完会叫醒它；没有、也没定时叫醒自己，就是停了，不会自己接着做
+    bg = None
+    if group in ("ai", "stale") and turn == "ended" and live:
+        tasks = sorted((st.get("bg") or {}).values(), key=lambda t: t.get("ts") or 0)
+        if live.get("status") == "shell":
+            t = tasks[-1] if tasks else {}
+            bg = {"run": True, "n": len(tasks), "desc": t.get("d") or "", "since": t.get("ts") or st.get("final_ts") or last}
+        elif live.get("status") == "idle" and (st.get("self_wake_ts") or 0) <= (st.get("last_user_ts") or 0):
+            bg = {"run": False, "since": st.get("final_ts") or last}
+
     if st["tool"] == "claude":
         resume = "cd %s && claude --resume %s" % (shell_quote(st.get("cwd") or HOME), st["id"])
     else:
@@ -2886,7 +2988,7 @@ def make_item(st, now, cfg, ov, sched, titles, goals, ctx):
         "headline": headline, "badges": badges, "sort": sort, "idle": idle, "last": last, "wait": wait,
         "meta": "最后动静 %s（%s前）" % (fmt_time(last, now), fmt_ago(idle)) if last else "",
         "scheduleId": sched["id"] if sched and sched["status"] == "pending" else None,
-        "since": (st.get("last_user_ts") or 0) if group == "ai" else 0, "snoozed": bool(snoozed and group == "time"),
+        "since": (st.get("last_user_ts") or 0) if group == "ai" else 0, "snoozed": bool(snoozed and group == "time"), "bg": bg,
         "statusKey": "%s|%s" % ((status or {}).get("ts"), (status or {}).get("at")),
         "details": {
             "goal": goal_text, "criteria": goal_crit, "goalTs": goal_ts, "goalFrom": goal_from,
