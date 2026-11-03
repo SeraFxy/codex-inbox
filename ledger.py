@@ -520,15 +520,38 @@ def short_head(body, q):
     return body[m.end():].strip() if len(head) >= 4 and QUOTE_RE.sub("", q).startswith(head) else ""
 
 
+_FW = str.maketrans("（）：？！，；｜", "():?!,;|")
+
+
+def cut_prefix(body, q):
+    """body 是不是以 q 开头（不管空格、大小写、全角半角的括号和标点）：是就返回后面剩下的，不是返回 None"""
+    i, n = 0, len(body)
+    for ch in q:
+        if ch.isspace():
+            continue
+        while i < n and body[i].isspace():
+            i += 1
+        if i >= n or body[i].translate(_FW).lower() != ch.translate(_FW).lower():
+            return None
+        i += 1
+    return body[i:]
+
+
 def answer_of(a, lines):
     """你这条消息里有没有答这件。认四种：「N. 事情：选项」（看板拼的格式）、把 ❓ 行抄回来改过选项、提到编号、
-    用问题开头几个字指代（「Top20 名单——ok的」）。写「待定」的不算；原样抄回来、选项一个没删的也不算。"""
-    q = Q_TAIL_RE.sub("", a.get("q") or "")
+    用问题开头几个字指代（「Top20 名单——ok的」）。写「待定」的不算；原样抄回来、选项一个没删的也不算。
+    问题后面的编号「（Q-2）」抄不抄都认；问题和答复之间用冒号、竖线、空格、下划线、破折号隔开都行。"""
+    tag = re.compile(r"\s*[（(]\s*%s\s*[)）]" % re.escape(a["id"]), re.I) if a.get("id") else None
+    q = a.get("q") or ""
+    q = Q_TAIL_RE.sub("", tag.sub("", q) if tag else q)
     pid = re.compile(r"(?<![A-Za-z0-9-])%s(?!\d)" % re.escape(a["id"]), re.I) if a.get("id") else None
     echo = "｜".join(a.get("opts") or [])
     for line in lines:
         body = NUM_HEAD_RE.sub("", line, count=1)
-        hit_q = bool(q) and body.startswith(q)
+        if tag:
+            body = tag.sub("", body, count=1)
+        cut = cut_prefix(body, q) if q else None
+        hit_q = cut is not None
         if not hit_q and not (pid and pid.search(line)):
             short = short_head(body, q)
             if short and not PENDING_RE.search(line) and short != "待定":
@@ -536,8 +559,8 @@ def answer_of(a, lines):
             continue
         if PENDING_RE.search(line):
             continue
-        rest = body[len(q):] if hit_q else body
-        rest = re.sub(r"^[？?：:。.｜|\s]+", "", rest).strip()
+        rest = cut if hit_q else body
+        rest = re.sub(r"^[？?：:。.｜|_＿—\s]+", "", rest).strip()
         # 原样抄回来的（「卡：」「荐：」那几段不算选项）不算答了
         if hit_q and (not rest or "｜".join(p for p in split_parts(rest) if not BLOCK_RE.match(p) and not REC_RE.match(p)) == echo):
             continue
@@ -1462,6 +1485,35 @@ def migrate_ai_notes(conn):
     log("已把 %d 个会话里 AI 问你的、替你定的和状态行加进搜索" % n)
 
 
+def migrate_answers(conn):
+    """认答复的办法改过（2026-11-03：问题带编号「（Q-2）」时，你只抄了问题、没抄编号也认）：
+    还没答的 ❓，拿台账存的、它问了以后你说的话重新认一次。只跑一次。"""
+    if meta_get(conn, "answers_v2"):
+        return
+    n = 0
+    for r in conn.execute("SELECT key, data FROM sessions WHERE data LIKE '%\"asks\"%'").fetchall():
+        try:
+            st = json.loads(r["data"])
+        except ValueError:
+            continue
+        todo = [a for a in st.get("asks") or [] if not a.get("done")]
+        if not todo:
+            continue
+        since = min(a.get("last") or a.get("first") or 0 for a in todo)
+        for p in conn.execute("SELECT ts, text FROM prompts WHERE session_key=? AND ts > ? ORDER BY ts", (r["key"], since)).fetchall():
+            # 只拿它问了以后你说的话去认：问之前说的不可能是在答这件
+            cand = [a for a in todo if not a.get("done") and (a.get("last") or a.get("first") or 0) < p["ts"]]
+            if cand:
+                note_answers({"asks": cand}, p["text"], p["ts"])
+        got = sum(1 for a in todo if a.get("done"))
+        if got:
+            conn.execute("UPDATE sessions SET data=? WHERE key=?", (json.dumps(st, ensure_ascii=False), r["key"]))
+            n += got
+    meta_set(conn, "answers_v2", time.time())
+    conn.commit()
+    log("按新的认法补认了 %d 件你已经答过的 ❓" % n)
+
+
 def migrate_ctx(conn, horizon):
     """上下文占用是后加的：已经读过的会话，从文件末尾补一次用量。只跑一次。"""
     if meta_get(conn, "ctx_v1"):
@@ -1578,7 +1630,7 @@ def scan(conn, cfg):
                      (key, st["last_ts"] or stt.st_mtime, json.dumps(st, ensure_ascii=False)))
         conn.execute("INSERT OR REPLACE INTO files (path, session_key, size, mtime, offset) VALUES (?, ?, ?, ?, ?)",
                      (path, key, stt.st_size, stt.st_mtime, offset))
-    for step in (lambda: migrate_ctx(conn, horizon), lambda: migrate_ai_notes(conn)):
+    for step in (lambda: migrate_ctx(conn, horizon), lambda: migrate_ai_notes(conn), lambda: migrate_answers(conn)):
         try:
             step()
         except Exception:
