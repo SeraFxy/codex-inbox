@@ -122,6 +122,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS topics_name ON topics(project, name);
 CREATE TABLE IF NOT EXISTS session_topics (session_key TEXT PRIMARY KEY, topic_id INTEGER, at REAL);
 CREATE TABLE IF NOT EXISTS handoffs (session_key TEXT PRIMARY KEY, ts REAL, text TEXT);
 CREATE TABLE IF NOT EXISTS ask_dismiss (session_key TEXT, k TEXT, at REAL, PRIMARY KEY (session_key, k));
+CREATE TABLE IF NOT EXISTS ai_notes (session_key TEXT, kind TEXT, k TEXT, ts REAL, text TEXT, PRIMARY KEY (session_key, kind, k));
 """
 
 
@@ -1428,6 +1429,39 @@ def ctx_from_tail(tool, path):
     return {}
 
 
+def sync_ai_notes(conn, key, st):
+    """AI 写给你看的几样：问你的 ❓（答过的也留着）、替你定的 🧭、📌 状态。存一份能搜的，「全部」搜索用。"""
+    rows = []
+    for a in st.get("asks") or []:
+        text = "｜".join([a.get("q") or ""] + list(a.get("opts") or []))
+        if a.get("why") or a.get("rec"):
+            text += "｜荐：" + "，".join(x for x in (a.get("rec"), a.get("why")) if x)
+        rows.append(("ask", a["k"], a.get("last") or a.get("first") or 0, text))
+    for c in st.get("calls") or []:
+        rows.append(("call", c["k"], c.get("ts") or 0, c["t"] + ("｜" + c["why"] if c.get("why") else "")))
+    s = st.get("status") or {}
+    if s.get("desc"):
+        rows.append(("status", "", s.get("ts") or st.get("final_ts") or 0, (s.get("label") or "") + "｜" + s["desc"]))
+    conn.execute("DELETE FROM ai_notes WHERE session_key=?", (key,))
+    conn.executemany("INSERT OR REPLACE INTO ai_notes VALUES (?, ?, ?, ?, ?)", [(key,) + r for r in rows])
+
+
+def migrate_ai_notes(conn):
+    """AI 写的 ❓ / 🧭 / 📌 能搜是后加的：已经读过的会话补一次。只跑一次。"""
+    if meta_get(conn, "ai_notes_v1"):
+        return
+    n = 0
+    for r in conn.execute("SELECT key, data FROM sessions").fetchall():
+        try:
+            sync_ai_notes(conn, r["key"], json.loads(r["data"]))
+            n += 1
+        except (ValueError, KeyError, TypeError):
+            continue
+    meta_set(conn, "ai_notes_v1", time.time())
+    conn.commit()
+    log("已把 %d 个会话里 AI 问你的、替你定的和状态行加进搜索" % n)
+
+
 def migrate_ctx(conn, horizon):
     """上下文占用是后加的：已经读过的会话，从文件末尾补一次用量。只跑一次。"""
     if meta_get(conn, "ctx_v1"):
@@ -1531,6 +1565,7 @@ def scan(conn, cfg):
         parsed += 1
         key = "%s:%s" % (tool, st["id"])
         flush_media(conn, key, st)
+        sync_ai_notes(conn, key, st)
         if tool == "claude":
             if skipped:
                 got = last_handoff(path)
@@ -1543,10 +1578,11 @@ def scan(conn, cfg):
                      (key, st["last_ts"] or stt.st_mtime, json.dumps(st, ensure_ascii=False)))
         conn.execute("INSERT OR REPLACE INTO files (path, session_key, size, mtime, offset) VALUES (?, ?, ?, ?, ?)",
                      (path, key, stt.st_size, stt.st_mtime, offset))
-    try:
-        migrate_ctx(conn, horizon)
-    except Exception:
-        log("migrate_ctx 出错：%s" % traceback.format_exc())
+    for step in (lambda: migrate_ctx(conn, horizon), lambda: migrate_ai_notes(conn)):
+        try:
+            step()
+        except Exception:
+            log("补数据出错：%s" % traceback.format_exc())
     for step in (sync_prompts, sync_codex_goals, sync_cmux):
         try:
             step(conn)
@@ -2070,7 +2106,8 @@ def handoff_snippet(text, q):
 def search_sessions(conn, q, limit=50, offset=0, tool="", cross=True, handoff=False):
     """按会话汇总：有命中的会话按最近一次命中排序，每个会话带最多 3 条命中预览。tool = claude / codex 时只看这个工具的。
     cross：搜第一页时顺带搜产出物，带回总数和前 3 个，页面上两边一起列（不用先想清楚是你说的还是 AI 给的）。
-    handoff：也搜 Claude 压缩时的交接（「全部」标签用）。只在交接里对上的会话，命中数记 0，排序按交接写的时间。"""
+    handoff：也搜 Claude 压缩时的交接、AI 问你的 ❓、替你定的 🧭、📌 状态和目标（「全部」标签用）。
+    只在这些里对上的会话，命中数记 0，排序按它们写的时间。"""
     now = time.time()
     conds, args = _like_where(q)
     by_tool = (" WHERE tool=?", [tool]) if tool in ("claude", "codex") else ("", [])
@@ -2080,13 +2117,19 @@ def search_sessions(conn, q, limit=50, offset=0, tool="", cross=True, handoff=Fa
     sql_where = (" WHERE " + " AND ".join(conds)) if conds else ""
     prompt_total = conn.execute("SELECT COUNT(DISTINCT session_key) FROM prompts" + sql_where, args).fetchone()[0]
     grouped, gargs = "SELECT session_key, COUNT(*) AS hits, MAX(ts) AS last_ts FROM prompts" + sql_where + " GROUP BY session_key", list(args)
-    words = [w for w in (q or "").split() if w][:6] if handoff and tool != "codex" else []
+    words = [w for w in (q or "").split() if w][:6] if handoff else []
     hwhere = " AND ".join(["text LIKE ? ESCAPE '\\'"] * len(words))
+    gwhere = " AND ".join(["(COALESCE(goal, '') || ' ' || COALESCE(criteria, '')) LIKE ? ESCAPE '\\'"] * len(words))
     hargs = ["%" + w.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%" for w in words]
+    tw, targ = (" AND session_key LIKE ?", [tool + ":%"]) if tool in ("claude", "codex") else ("", [])
     if words:
-        grouped = ("SELECT session_key, SUM(hits) AS hits, MAX(last_ts) AS last_ts FROM (" + grouped +
-                   " UNION ALL SELECT session_key, 0, ts FROM handoffs WHERE " + hwhere + ") GROUP BY session_key")
-        gargs += hargs
+        parts = [grouped]
+        if tool != "codex":
+            parts.append("SELECT session_key, 0, ts FROM handoffs WHERE " + hwhere + tw)
+            gargs += hargs + targ
+        parts += ["SELECT session_key, 0, ts FROM ai_notes WHERE " + hwhere + tw, "SELECT session_key, 0, at FROM goals WHERE " + gwhere + tw]
+        gargs += hargs + targ + hargs + targ
+        grouped = "SELECT session_key, SUM(hits) AS hits, MAX(last_ts) AS last_ts FROM (" + " UNION ALL ".join(parts) + ") GROUP BY session_key"
     total = conn.execute("SELECT COUNT(*) FROM (" + grouped + ")", gargs).fetchone()[0] if words else prompt_total
     rows = conn.execute(grouped + " ORDER BY last_ts DESC LIMIT ? OFFSET ?", gargs + [limit, offset]).fetchall()
     out = []
@@ -2102,16 +2145,21 @@ def search_sessions(conn, q, limit=50, offset=0, tool="", cross=True, handoff=Fa
         else:   # 只在交接里对上：标题、项目按这个会话最近一句取
             last = prompt_rows_to_items(conn, conn.execute("SELECT * FROM prompts WHERE session_key=? ORDER BY ts DESC LIMIT 1", (key,)).fetchall(), now)
             head = last[0] if last else dict(session_briefs(conn, [key], now)[key], resume="")
-        ho = None
+        ho, notes = None, []
         if words:
             h = conn.execute("SELECT ts, text FROM handoffs WHERE session_key=? AND " + hwhere, [key] + hargs).fetchone()
             if h:
                 ho = {"ts": h["ts"], "text": handoff_snippet(h["text"], q)}
+            notes = [{"kind": n["kind"], "ts": n["ts"] or 0, "text": n["text"]} for n in conn.execute(
+                "SELECT kind, ts, text FROM ai_notes WHERE session_key=? AND " + hwhere + " ORDER BY ts DESC LIMIT 3", [key] + hargs)]
+            g = conn.execute("SELECT goal, criteria, at FROM goals WHERE session_key=? AND " + gwhere, [key] + hargs).fetchone()
+            if g:
+                notes.append({"kind": "goal", "ts": g["at"] or 0, "text": (g["goal"] or "") + ("｜完成标准：" + g["criteria"] if g["criteria"] else "")})
         ex = session_extras(conn, key)
         out.append({"key": key, "title": head["title"], "project": head["project"], "projectKey": head["projectKey"],
                     "color": head["color"], "tool": head["tool"], "toolLabel": head["toolLabel"], "auto": head["auto"], "count": n,
                     "hits": r["hits"], "lastTs": r["last_ts"], "lastText": fmt_time(r["last_ts"], now), "resume": head["resume"],
-                    "goal": ex["goal"], "linksTotal": ex["linksTotal"], "handoff": ho,
+                    "goal": ex["goal"], "linksTotal": ex["linksTotal"], "handoff": ho, "notes": notes,
                     "preview": [{"ts": it["ts"], "timeText": it["timeText"], "text": it["text"], "images": it["images"]}
                                 for it in items]})
     first = conn.execute("SELECT MIN(ts), COUNT(*), COUNT(DISTINCT session_key) FROM prompts" + by_tool[0], by_tool[1]).fetchone()

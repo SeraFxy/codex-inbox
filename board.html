@@ -2483,6 +2483,12 @@ function hoLine(h) {
   // 搜索结果里：压缩时的交接对上的那一段
   return '<div class="hline"><span class="ht" title="' + esc(when(h.ts)) + ' 压缩时写的交接">交接</span><div class="hx"><p class="htext">' + hl(h.text) + "</p></div></div>";
 }
+// 搜索结果里：AI 问你的 ❓、替你定的 🧭、📌 状态行、🎯 目标里对上的那一句（只在「全部」里搜）
+const NOTE_KIND = { ask: ["它问你", "它问你、要你拍板的事"], call: ["替你定", "它没问你、自己定了的事"], status: ["状态", "它最后写的状态行"], goal: ["目标", "这个会话的目标和完成标准"] };
+function noteLine(n) {
+  const k = NOTE_KIND[n.kind] || ["AI", ""];
+  return '<div class="hline"><span class="ht" title="' + esc((n.ts ? when(n.ts) + " · " : "") + k[1]) + '">' + k[0] + '</span><div class="hx"><p class="htext">' + hl(n.text) + "</p></div></div>";
+}
 function scard(s, si, faces) {
   const k = esc(s.key), open = hOpen[s.key], full = hFull[s.key];
   const items = open ? (full ? full.items : []) : s.preview;
@@ -2492,7 +2498,7 @@ function scard(s, si, faces) {
   return '<article class="hcard" id="hs-' + domId(s.key) + '"><div class="fc">' + (fk ? face(fk, 24, si, REASON[fk]) : "") + "</div>" +
     '<div class="hbody"><div class="htop">' + tagChip(s) + "<h3>" + hl(s.title) + '</h3>' + toolChip(s) + '<span class="hm">' + esc(meta) + "</span></div>" +
     (open ? sessExtra(full) : "") +
-    '<div class="hlines">' + items.map((it, i) => line(it, (open ? "f" : "p") + si + "_" + i)).join("") + (s.handoff ? hoLine(s.handoff) : "") + "</div>" +
+    '<div class="hlines">' + items.map((it, i) => line(it, (open ? "f" : "p") + si + "_" + i)).join("") + (s.handoff ? hoLine(s.handoff) : "") + (s.notes || []).map(noteLine).join("") + "</div>" +
     '<div class="hfoot">' + btn(more, "toggleSession('" + k + "')", "ghost sm") +
     (findItem(s.key) ? btn("在看板里看", "locate('" + k + "')", "ghost sm", "回到看板，打开这个会话的详情：现状、目标、产出物、会话信息") : "") +
     btn("打开会话" + ico("open"), "openSession('" + k + "',this)", "ghost sm") +
