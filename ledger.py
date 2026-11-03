@@ -400,6 +400,9 @@ def parse_goal(text):
 # ❓ 的编号写在事情末尾的括号里，如（Q-031）；也认开头的【Q-031】。「BUG-0016（…）」这种正文里的编号不算
 ASK_ID_TAIL_RE = re.compile(r"[（(\[【]\s*([A-Za-z][A-Za-z0-9]*-\d+)\s*[）)\]】]\s*[？?。.]?\s*$")
 ASK_ID_HEAD_RE = re.compile(r"^\s*[\[【]\s*([A-Za-z][A-Za-z0-9]*-\d+)\s*[\]】]")
+# 编号写在开头、没加括号的也认，如「Q-029 搜索…」「1. **Q-003：…**」：AI 没照格式写，同一个编号换个说法就成了两件。
+# 只认 Q- 开头的，免得「BUG-0016 要不要修」这种把正文里的编号当成这件事的编号
+ASK_ID_LEAD_RE = re.compile(r"^\s*(?:\d+\s*[.、．)）]\s*)?(?:\*\*|__)?\s*(Q-\d+)(?:\*\*|__)?(?=[\s：:*]|$)", re.I)
 BLOCK_RE = re.compile(r"^(?:卡住?|阻塞|挡着)\s*[：:]\s*(.+)")
 REC_RE = re.compile(r"^(?:荐|推荐)\s*[：:]\s*(.+)")
 REC_SEP_RE = re.compile(r"^[\s，,：:；;。.、—–\-（(]+|[）)]+$")
@@ -407,7 +410,7 @@ Q_TAIL_RE = re.compile(r"[？?：:。.\s]+$")
 
 
 def ask_id(q):
-    m = ASK_ID_TAIL_RE.search(q) or ASK_ID_HEAD_RE.match(q)
+    m = ASK_ID_TAIL_RE.search(q) or ASK_ID_HEAD_RE.match(q) or ASK_ID_LEAD_RE.match(q)
     return m.group(1).upper() if m else ""
 
 
@@ -1742,6 +1745,7 @@ def scan(conn, cfg):
     migrate_bangs(conn)
     migrate_recaps(conn)
     migrate_ask_pages(conn)
+    migrate_ask_ids(conn)
     t0 = time.time()
     horizon = t0 - max(cfg["window_days"], 30) * 86400
     files = [("claude", p) for p in glob.glob(os.path.join(CLAUDE_PROJECTS, "*", "*.jsonl"))]
@@ -4567,6 +4571,41 @@ def migrate_ask_pages(conn):
             if a is not None and not a.get("url") and REVIEWISH_RE.search(d["q"]):
                 a["url"] = page
     replay_tails(conn, "mig_ask_pages", "❓".encode(), lambda raw: b'"type":"assistant"' in raw and b".html" in raw, handle)
+
+
+def migrate_ask_ids(conn):
+    """认编号的规则放宽了（开头没加括号的 Q-029 也认）：已经记下的 ❓ 按新规则重认编号，同一编号的合成一件。
+    合并办法同 note_asks：用最后一次问的说法和答没答，保留第一次问的时间；之后才答的，按答了算。只跑一次。"""
+    if meta_get(conn, "ask_ids_v1"):
+        return
+    n = 0
+    for r in conn.execute("SELECT key, data FROM sessions").fetchall():
+        st = json.loads(r["data"])
+        asks = st.get("asks") or []
+        out, idx = [], {}
+        for a in asks:
+            i = a.get("id") or ask_id(a.get("q") or "")
+            a = dict(a, id=i, k=i or a["k"])
+            b = idx.get(a["k"])
+            if b is None:
+                idx[a["k"]] = a
+                out.append(a)
+                continue
+            new, old = (a, b) if (a.get("last") or 0) >= (b.get("last") or 0) else (b, a)
+            m = dict(new, first=min((x for x in (a.get("first"), b.get("first"), new.get("last")) if x), default=0),
+                     url=new.get("url") or old.get("url") or "")
+            if not new.get("done") and (old.get("done") or 0) > (new.get("last") or 0):
+                m["done"], m["ans"] = old["done"], old.get("ans") or ""
+            b.clear()
+            b.update(m)
+        if out != asks:
+            st["asks"] = out
+            conn.execute("UPDATE sessions SET data=? WHERE key=?", (json.dumps(st, ensure_ascii=False), r["key"]))
+            n += 1
+    meta_set(conn, "ask_ids_v1", time.time())
+    conn.commit()
+    if n:
+        log("按新规则重认了 %d 个会话里 ❓ 的编号" % n)
 
 
 def migrate_recaps(conn):
