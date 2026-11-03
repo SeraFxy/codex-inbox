@@ -904,7 +904,7 @@ function askWhy(it) { const n = decisionsOf(it).length; return n ? "又问了你
 function shortOf(it) {
   const n = decisionsOf(it).length, a = alsoOf(it);
   return !n ? it.headline : faceOf(it) === "review" || it.details && it.details.doneAsk ? "做完了，另有 " + n + " 件事等你决定"
-    : n + " 件事等你决定" + (a ? " · " + a[0] : "");
+    : todoOf(it) ? "有事要你做，另有 " + n + " 件等你决定" : n + " 件事等你决定" + (a ? " · " + a[0] : "");
 }
 // 定了时、等时间点、等同事或在后台做，又问了你要拍板的事：ledger.py 把它挪到「轮到你」，原来在等什么记在 alsoWait。[行上的短句, 详情里的说明]
 function alsoOf(it) {
@@ -1823,7 +1823,7 @@ function renderDetail() {
     '<div class="dacts">' + acts + "</div></div>";
   html += sumCard(it);
   const secs = [
-    ["reply", decisionsOf(it).length ? "待你决定" : todoOf(it) ? "要你做" : oldAsksOf(it).length ? "没答的" : "推它一下", replyBox(it)],
+    ["reply", decisionsOf(it).length ? (todoOf(it) ? "要你做、待你决定" : "待你决定") : todoOf(it) ? "要你做" : oldAsksOf(it).length ? "没答的" : "推它一下", replyBox(it)],
     ["calls", "替你定的", callsSec(it)],
     ["convo", "对话", convo(it)],
     ["handoff", "上下文压缩", handoffSec(it)],
@@ -2370,7 +2370,8 @@ function oldAsksOf(it) { return it.group !== "hidden" && it.details && it.detail
 function asksOf(it) { return decisionsOf(it).concat(oldAsksOf(it)); }
 // 「等你」但这一轮没有 ❓ 要拍板：它是要你去做一件事（批准、登录、看稿……），做完回它一句它才接着做
 const TODO_NUDGES = ["做完了，你接着做", "做不了，卡在这里："];
-function todoOf(it) { return it.kind === "me" && it.group !== "hidden" && !decisionsOf(it).length && it.details && it.details.todo || ""; }
+// 📌 等你 里要你做的事。同一轮还问了 ❓ 时也列出来：只列 ❓ 的话，要你动手的那件会被当成没有
+function todoOf(it) { return it.kind === "me" && it.group !== "hidden" && it.details && it.details.todo || ""; }
 function nudgesOf(it) {
   if (faceOf(it) === "stuck" && it.kind === "interrupted" && !decisionsOf(it).length) return NUDGES;
   return todoOf(it) ? TODO_NUDGES : [];
@@ -2461,16 +2462,14 @@ function replyBox(it) {
   const p = pickOf(it), k = esc(it.key), text = replyText(it), n = ds.length;
   let html = "";
   const recs = ds.filter(d => recOf(d) >= 0), allRec = recs.every(d => p.sel[d.k] === recOf(d));
+  if (todoOf(it)) html += todoPart(it, p, nudges);
   if (ds.length)
     html += '<div class="part"><div class="sec-hd"><span class="sec-t">待你决定 · ' + n + '</span><span class="hd-r">' +
       (recs.length && !allRec ? btn("全按推荐", "pickRecs('" + k + "')", "ghost xs", "有推荐的 " + recs.length + " 件都选它推荐的，别的不动") : "") +
       '<span class="mono">已选 ' + ds.filter(d => p.sel[d.k] != null).length + " / " + n + "</span></span></div>" +
       '<div class="dlist">' + ds.map((d, i) => askRow(it, d, i, false)).join("") + "</div></div>";
-  else if (nudges.length)
-    html += '<div class="part">' + (todoOf(it) ? '<span class="sec-t">要你做</span><p class="todo">' + mdInline(todoOf(it)) + "</p>" +
-      '<span class="sec-l">它停在这里等你。做完了回它一句，它才会接着做；不用它接着做了，点右上角「完成」。</span>'
-      : '<span class="sec-t">推它一下</span>') + '<div class="opts-row">' + nudges.map((t, j) =>
-      '<button type="button" class="opt lg" aria-pressed="' + (p.quick === j) + '" onclick="pickQuick(\'' + k + "'," + j + ')">' + esc(t) + "</button>").join("") + "</div></div>";
+  else if (nudges.length && !todoOf(it))
+    html += '<div class="part"><span class="sec-t">推它一下</span>' + quickRow(it, p, nudges) + "</div>";
   if (olds.length)
     html += '<div class="part"><div class="sec-hd"><span class="sec-t">之前问过、还没答 · ' + olds.length + "</span>" +
       btn("都不用答了", "dropAsk('" + k + "')", "ghost xs", "这几件都不再列出；它以后再问会重新列出来") + "</div>" +
@@ -2483,6 +2482,52 @@ function replyBox(it) {
     btn("复制", "copyReply('" + k + "')", "sec hd") +
     btn("复制并打开会话" + ico("send"), "copyReply('" + k + "',true)", "pri hd", "复制到剪贴板并打开这个会话，你在输入框按 ⌘V 再回车") +
     "</span></div></div>";
+}
+function quickRow(it, p, nudges) {
+  const k = esc(it.key);
+  return '<div class="opts-row">' + nudges.map((t, j) =>
+    '<button type="button" class="opt lg" aria-pressed="' + (p.quick === j) + '" onclick="pickQuick(\'' + k + "'," + j + ')">' + esc(t) + "</button>").join("") + "</div>";
+}
+function todoPart(it, p, nudges) {
+  const k = esc(it.key), on = !!askOpen[it.key + "\ntodo"], ds = decisionsOf(it).length;
+  return '<div class="part"><div class="sec-hd"><span class="sec-t">要你做</span>' +
+    btn((on ? "收起" : "它怎么说") + ico(on ? "up" : "down"), "togTodo('" + k + "')", "ghost xs dtog",
+      on ? "" : "看它在回复里怎么讲这件事，不用往下翻对话", 'aria-expanded="' + on + '"') + "</div>" +
+    '<p class="todo">' + mdInline(todoOf(it)) + "</p>" +
+    (on ? '<div class="dctx">' + todoCtxHtml(it) + "</div>" : "") +
+    '<span class="sec-l">它停在这里等你' + (ds ? "做这件事，同时等你拍板下面 " + ds + " 件" : "") +
+    "。做完了回它一句，它才会接着做；不用它接着做了，点右上角「完成」。</span>" + quickRow(it, p, nudges) + "</div>";
+}
+function togTodo(key) { const ck = key + "\ntodo"; askOpen[ck] = !askOpen[ck]; renderDetail(); }
+const TODO_HEAD = /要你|你要做|需要你|请你|你来做|你本人/;
+function todoCtx(text) {
+  // 回复里讲「要你做」的那一节：小标题里有「要你做」这类词的；没有小标题就找提到它的那一段；都没有给整段回复
+  const L = ctxLines(text);
+  for (let k = 0; k < L.length; k++) {
+    if (!L[k].head || L[k].mark || !TODO_HEAD.test(L[k].t)) continue;
+    const [a, b] = ctxSection(L, k);
+    if (b - a > 1 && L.slice(a + 1, b).some(x => x.t.trim())) return { text: ctxText(L, a, b), whole: false };
+  }
+  const k = L.findIndex(x => !x.fence && !x.mark && !x.head && /要你做|你要做|需要你做/.test(x.t));
+  if (k >= 0) { const [a, b] = ctxBlock(L, k); return { text: ctxText(L, a, b), whole: false }; }
+  return { text: ctxText(L, 0, L.length), whole: true };
+}
+const todoQuote = {};   // 会话 key -> 「要你做」那节里引用（> 开头）的话，常是要你转给别人的问题
+function todoCtxHtml(it) {
+  const r = todoCtx(replyOf(it)), id = "t" + domId(it.key), open = bubOpen[id], k = esc(it.key);
+  if (!r.text.trim()) return '<span class="lmore">这一轮除了状态行没写别的说明。</span>';
+  const quote = r.text.split("\n").filter(l => /^\s*>/.test(l)).map(l => l.replace(/^\s*>\s?/, "")).join("\n").trim();
+  todoQuote[it.key] = quote;
+  const long = r.text.split("\n").length > 24 || r.text.length > 1400;
+  return (r.whole ? '<span class="sec-l">没找到专讲这件的一段，这是它这一轮的整段回复</span>' : "") +
+    '<div class="md' + (long && !open ? " fold" : "") + '">' + mdHtml(r.text) + "</div>" +
+    ((long || quote) ? '<div class="tm-a">' + (quote ? btn(ico("copy", 13) + "复制引用的话", "copyQuote('" + k + "')", "ghost xs", "复制上面 > 开头的那几行，比如要你转给别人的问题") : "") +
+      (long ? btn(open ? "收起" + ico("up") : "展开全文" + ico("down"), "bubOpen['" + id + "']=!bubOpen['" + id + "'];renderDetail()", "ghost xs") : "") + "</div>" : "");
+}
+async function copyQuote(key) {
+  const q = todoQuote[key];
+  if (!q) return;
+  try { await writeClip(q); toast("已复制引用的话" + clipPeek(q)); } catch (e) { toast("没复制成：浏览器不让写剪贴板，手动选中复制"); }
 }
 function fitText(el) { if (el) { el.style.height = "auto"; el.style.height = el.scrollHeight + 2 + "px"; } }
 function pickOpt(key, i, j) {
