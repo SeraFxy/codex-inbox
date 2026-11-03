@@ -321,6 +321,10 @@ kbd.k.lg { min-width: 22px; height: 22px; padding: 0 6px; border-radius: 6px; fo
 .dq .qm { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 4px; }
 .dq .age { font: 12px/16px var(--bk-mono); color: var(--bk-ink-3); }
 .dq .qw { display: block; margin-top: 4px; font-size: 13px; line-height: 20px; color: var(--bk-ink-2); }   /* 它为什么推荐这个 / 为什么这么定 */
+/* 「它怎么说」：它在回复里讲这件的那一段，展开在问题下面，左边一道竖线表示是引它的原话 */
+.dq .dctx { display: flex; flex-direction: column; gap: 6px; flex: 1 1 100%; min-width: 0; margin: 0 0 4px 28px; padding: 2px 0 2px 14px; border-left: 2px solid var(--bk-line-strong); }
+.dq .dctx .fold { max-height: 320px; }
+.dq .dtog { margin-left: -8px; }   /* 字和问题对齐 */
 .sec-hd .hd-r { display: inline-flex; align-items: baseline; gap: 8px; }
 .chip.ask { background: var(--bk-needs-tint); color: var(--bk-needs-ink); }   /* 之前问过、你还没答的 ❓：红字，球在你这边 */
 .opt {
@@ -588,6 +592,7 @@ mark { background: var(--bk-lime-mark); color: #1B2026; border-radius: 3px; box-
 
 @media (max-width: 640px) {
   .btn, .tab, .opt, .seg.src button, .dnav button { min-height: 40px; }
+  .dq .dctx { margin-left: 0; }
   .kbd-hints, kbd.k { display: none !important; }
   .btn.sec.searchbtn { width: auto; flex: 1; }
   .hline { flex-wrap: wrap; }
@@ -2181,6 +2186,139 @@ async function setProjectDir(key, id, remove) {
   load();
 }
 
+// 「它怎么说」：在它的回复里找讲这件 ❓ 的那一段，挂在问题下面，不用往下翻对话。纯正则，不调模型：
+// 先认编号（Q-4）所在的小标题，再认提到编号的那条/那段，都没有就拿问题里的词对小标题；还对不上，给它这一轮的整段回复
+const CTX_MARK = /^\s*(?:[-*]\s+)?(?:❓|🧭|📌|🎯)/;
+const CTX_STOP = new Set("怎么 么办 什么 要不 不要 是否 可以 一下 哪个 哪天 还是 如果 处理 确认 我们 这个 那个 现在 是不 不是".split(" "));
+function idRe(id) { return new RegExp("(?<![A-Za-z0-9-])" + id.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "(?!\\d)", "i"); }
+function ctxHead(l) {
+  // 小标题的级别：# 标题按 # 数；「一、」开头、整行加粗的算同一级（7）；不是标题 = 0
+  const m = /^(#{1,6})\s+\S/.exec(l);
+  if (m) return m[1].length;
+  if (/^\*\*[^*].*\*\*\s*[:：]?\s*$/.test(l) || /^(?:\*\*)?[一二三四五六七八九十]+[、.．]/.test(l)) return 7;
+  return 0;
+}
+function ctxLines(text) {
+  let fence = false;
+  return String(text || "").replace(/\r/g, "").split("\n").map(t => {
+    const f = /^\s*```/.test(t), inF = fence || f;
+    if (f) fence = !fence;
+    return { t, fence: inF, mark: !inF && CTX_MARK.test(t), head: inF ? 0 : ctxHead(t), ind: t.length - t.trimStart().length };
+  });
+}
+function ctxSection(L, i) {
+  // 小标题 i 下面那一节：到下一个同级或更高的小标题、分隔线、❓ 行为止
+  const lv = L[i].head;
+  let j = i + 1;
+  while (j < L.length && !(L[j].head && L[j].head <= lv) && !L[j].mark && !(!L[j].fence && /^\s*(?:-{3,}|\*{3,})\s*$/.test(L[j].t))) j++;
+  return [i, j];
+}
+function ctxBlock(L, i) {
+  // 提到编号的那一条：列表项连同缩进的下级；普通段落到空行为止
+  const li = /^\s*(?:[-*•]|\d+[.、．)）])\s+/.test(L[i].t);
+  let j = i + 1;
+  while (j < L.length && !L[j].mark && !L[j].head) {
+    const blank = !L[j].t.trim();
+    if (!li && blank) break;
+    if (li && !blank && L[j].ind <= L[i].ind) break;
+    if (li && blank && !(L[j + 1] && L[j + 1].t.trim() && L[j + 1].ind > L[i].ind)) break;
+    j++;
+  }
+  return [i, j];
+}
+function ctxToks(s) {
+  const out = new Map();
+  (s.match(/[A-Za-z0-9][A-Za-z0-9_.\-]*[A-Za-z0-9]/g) || []).forEach(w => out.set(w.toLowerCase(), 2));
+  (s.match(/[\u4e00-\u9fff]+/g) || []).forEach(r => { for (let i = 0; i + 1 < r.length; i++) { const b = r.slice(i, i + 2); if (!CTX_STOP.has(b)) out.set(b, 1); } });
+  return out;
+}
+function ctxText(L, a, b) {
+  return L.slice(a, b).filter(x => !x.mark).map(x => x.t).join("\n").replace(/^\n+|\n+$/g, "");
+}
+// 这件的编号：❓ 末尾括号里的（台账已经取好）；没有就认开头的「1. Q-003：」
+function ctxId(d) { const m = /^\s*(?:\d+\s*[.、．]\s*)?\**([A-Za-z][A-Za-z0-9]*-\d+)\s*[：:]/.exec(d.q); return d.id || (m ? m[1].toUpperCase() : ""); }
+// text：它那一轮的回复；d：这件 ❓；ids：同一轮所有 ❓ 的编号（没编号的写 ""）。返回 { text, whole }，whole = 给的是整段回复
+function askCtx(text, d, ids) {
+  const L = ctxLines(text), id = ctxId(d), others = (ids || []).filter(x => x && x !== id).map(idRe);
+  const hitOther = x => others.some(r => r.test(x.t));
+  const sec = k => { const [a, b] = ctxSection(L, k); return b - a > 1 && L.slice(a + 1, b).some(x => x.t.trim()) ? ctxText(L, a, b) : ""; };
+  if (id) {
+    const me = idRe(id);
+    const hits = L.map((x, k) => k).filter(k => !L[k].fence && !L[k].mark && me.test(L[k].t) && !hitOther(L[k]));
+    const h = hits.find(k => L[k].head && sec(k));
+    if (h != null) return { text: sec(h), whole: false };
+    if (hits.length) {
+      // 小标题下面第一句就提到编号、整节没提别的 ❓：整节都是讲它的
+      const k = hits[0];
+      let p = k - 1;
+      while (p >= 0 && !L[p].head && !L[p].t.trim()) p--;
+      if (p >= 0 && L[p].head) {
+        const [a, b] = ctxSection(L, p);
+        if (!L.slice(a, b).some(hitOther) && ctxText(L, a, b).length <= 3000) return { text: ctxText(L, a, b), whole: false };
+      }
+      const parts = [];
+      hits.slice(0, 3).forEach(x => { if (!parts.some(q => q[0] <= x && x < q[1])) parts.push(ctxBlock(L, x)); });
+      return { text: parts.map(q => ctxText(L, q[0], q[1])).join("\n\n"), whole: false };
+    }
+  }
+  // 一轮问了好几件、正文没提编号：拿问题里的词对小标题，别的 ❓ 认领了的不算。只问了一件的，整段回复都是讲它的
+  if ((ids || []).length > 1) {
+    const qt = ctxToks(d.q.replace(id ? idRe(id) : /$^/, "")), scored = [];
+    L.forEach((x, k) => {
+      if (!x.head || hitOther(x) || !sec(k)) return;
+      let s = 0;
+      ctxToks(x.t).forEach((w, t) => { if (qt.has(t)) s += w; });
+      if (s >= 3) scored.push([s, k]);
+    });
+    scored.sort((a, b) => b[0] - a[0]);
+    if (scored.length && !(scored[1] && scored[1][0] === scored[0][0])) return { text: sec(scored[0][1]), whole: false };
+  }
+  return { text: ctxText(L, 0, L.length), whole: true };
+}
+// 它在哪一轮问的这件：那一轮回复里有这件的 ❓ 行（有编号按编号认，没编号按问题原文认，不管加粗、反引号和空格）
+const ctxFlat = s => s.replace(/[\s*`]+/g, "");
+function askedIn(text, d) {
+  const id = ctxId(d), q = ctxFlat(d.q.replace(/[？?：:。.\s]+$/, ""));
+  return ctxLines(text).some(x => x.mark && /❓/.test(x.t) && (id ? idRe(id).test(x.t) : ctxFlat(x.t).includes(q)));
+}
+function askIds(text) {
+  return ctxLines(text).filter(x => x.mark && /❓/.test(x.t)).map(x => {
+    const m = /[（(\[【]\s*([A-Za-z][A-Za-z0-9]*-\d+)\s*[）)\]】]/.exec(x.t) || /❓️?\s*(?:\d+\s*[.、．]\s*)?\**([A-Za-z][A-Za-z0-9]*-\d+)\s*[：:]/.exec(x.t);
+    return m ? m[1].toUpperCase() : "";
+  });
+}
+// 展开着的「它怎么说」：会话 key + 问题 k。之前几轮问的，去对话记录里找它问这件的那一轮（和「看全部对话」共用 dAll）
+const askOpen = {};
+function togAsk(key, i) {
+  const it = findItem(key), d = it && asksOf(it)[i];
+  if (!d) return;
+  const ck = key + "\n" + d.k;
+  askOpen[ck] = !askOpen[ck];
+  if (askOpen[ck] && i >= decisionsOf(it).length) {
+    const g = dAll[key] = dAll[key] || { only: false, show: 40, open: false };
+    if (!g.items && !g.loading) { loadAll(key); return; }
+  }
+  renderDetail();
+}
+function askCtxHtml(it, d, i, old) {
+  let text, ids, ts = 0;
+  if (!old) { text = replyOf(it); ids = decisionsOf(it).map(ctxId); }
+  else {
+    const g = dAll[it.key];
+    if (!g || g.loading) return '<span class="lmore">读取中…</span>';
+    const m = (g.items || []).filter(x => x.kind === "it" && askedIn(x.text, d)).pop();
+    if (!m) return '<span class="lmore">' + (g.items ? "对话记录里没找到它问这件的那一轮。" : "没读到对话记录。") + "</span>";
+    text = m.text; ids = askIds(m.text); ts = m.ts;
+  }
+  const r = askCtx(text, d, ids), id = "q" + domId(it.key) + "_" + i, open = bubOpen[id];
+  const lab = (r.whole ? ids.length > 1 ? "没找到专讲这件的一段，这是它那一轮的整段回复" : "它问这件时的整段回复" : "") +
+    (ts ? (r.whole ? " · " : "") + when(ts) + " 问的" : "");
+  if (!r.text.trim()) return '<span class="lmore">' + (lab ? esc(lab) + "：" : "") + "那一轮除了 ❓ 没写别的说明。</span>";
+  const long = r.text.split("\n").length > 24 || r.text.length > 1400;
+  return (lab ? '<span class="sec-l">' + esc(lab) + "</span>" : "") +
+    '<div class="md' + (long && !open ? " fold" : "") + '">' + mdHtml(r.text) + "</div>" +
+    (long ? '<div class="tm-a">' + btn(open ? "收起" + ico("up") : "展开全文" + ico("down"), "bubOpen['" + id + "']=!bubOpen['" + id + "'];renderDetail()", "ghost xs") + "</div>" : "");
+}
 // ---------------- 待你决定 / 推它一下：选项拼成一条回复，框里能直接改，只复制并打开会话
 // 「之前问过、还没答」：台账记着的、它前几轮问过你还没答的 ❓（这一轮又问的不重复列）
 function oldAsksOf(it) { return it.group !== "hidden" && it.details && it.details.oldAsks || []; }
@@ -2246,13 +2384,17 @@ function replyHint(it) {
 function recOf(d) { return d.rec ? d.opts.indexOf(d.rec) : -1; }   // 它推荐的是第几个选项；没推荐或对不上 = -1
 function askRow(it, d, i, old) {
   const p = pickOf(it), k = esc(it.key), ri = recOf(d);
-  const meta = (d.block ? '<span class="chip sm" title="这件没定，卡着：' + esc(d.block) + '">卡 ' + esc(d.block) + "</span>" : "") +
+  const on = !!askOpen[it.key + "\n" + d.k];
+  const meta = btn((on ? "收起" : "它怎么说") + ico(on ? "up" : "down"), "togAsk('" + k + "'," + i + ")", "ghost xs dtog",
+      on ? "" : "看它在回复里怎么讲这件，不用往下翻对话", 'aria-expanded="' + on + '"') +
+    (d.block ? '<span class="chip sm" title="这件没定，卡着：' + esc(d.block) + '">卡 ' + esc(d.block) + "</span>" : "") +
     (old ? '<span class="age">问了 ' + esc(dur(nowTs() - d.first)) + "</span>" : "");
   const why = d.why ? '<span class="qw">' + (ri >= 0 ? "推荐「" + esc(d.rec) + "」：" : "推荐：") + esc(d.why) + "</span>" : "";
   return '<div class="dq"><span class="n">' + (i + 1) + '</span><span class="q">' + esc(d.q) + why + (meta ? '<span class="qm">' + meta + "</span>" : "") +
     '</span><span class="opts">' + d.opts.map((o, j) => '<button type="button" class="opt' + (j === ri ? ' rec" title="它推荐这个' : "") + '" aria-pressed="' + (p.sel[d.k] === j) +
       '" onclick="pickOpt(\'' + k + "'," + i + "," + j + ')">' + esc(o) + (j === ri ? '<span class="rk">荐</span>' : "") + "</button>").join("") +
-    (old ? btn("不用答了", "dropAsk('" + k + "'," + i + ")", "ghost xs", "这件不再列出；它以后再问会重新列出来") : "") + "</span></div>";
+    (old ? btn("不用答了", "dropAsk('" + k + "'," + i + ")", "ghost xs", "这件不再列出；它以后再问会重新列出来") : "") + "</span>" +
+    (on ? '<div class="dctx">' + askCtxHtml(it, d, i, old) + "</div>" : "") + "</div>";
 }
 function replyBox(it) {
   const ds = decisionsOf(it), olds = oldAsksOf(it), nudges = nudgesOf(it);
