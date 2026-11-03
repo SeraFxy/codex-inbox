@@ -1120,21 +1120,27 @@ function tagChip(x) {
 function outLink(l, cls, inner) {
   // 产出物的名字：链接新标签页打开；本机文件让服务用默认应用打开（浏览器开不了本机文件）
   const c = cls ? ' class="' + cls + '"' : "", t = inner || esc(l.text);
-  if (l.cat === "file") return '<a href="#"' + c + ' title="' + esc(l.path || l.url) + (l.gone ? "（已经不在了）" : "") +
+  if (l.cat === "file") return '<a href="#"' + c + ' title="' + esc(l.path || l.url) + (l.gone ? (l.arch ? "（原文件已经不在了，点开是看板留档的副本）" : "（已经不在了）") : "") +
     '" onclick="event.preventDefault();event.stopPropagation();openFile(clips[' + clip(l.url) + '])">' + t + "</a>";
   return '<a href="' + esc(l.url) + '"' + c + ' target="_blank" rel="noopener" title="' + esc(l.url) + '">' + t + "</a>";
 }
 function linkList(links) {
   return '<ul class="links">' + links.map(l => '<li' + (l.cat === "mr" && !mrLive(l) ? ' class="done"' : "") + '><span class="lk">' + esc(l.text !== l.name ? l.name : "") +
-    "</span>" + outLink(l) + (MR_STATE[l.state] ? '<span class="chip sm lst">' + MR_STATE[l.state] + "</span>" : "") +
+    "</span>" + outLink(l, l.gone && !l.arch ? "gone" : "") + (MR_STATE[l.state] ? '<span class="chip sm lst">' + MR_STATE[l.state] + "</span>" : "") + archMark(l) +
     '<span class="lt">' + esc(l.timeText) + "</span></li>").join("") + "</ul>";
 }
 // MR 和流水线：临时的，开着的 MR 列出来，合并了、关了的和流水线、提交收起来
 const MR_STATE = { opened: "待合并", locked: "待合并", merged: "已合并", closed: "已关闭" };
 function mrLive(l) { return l.state === "opened" || l.state === "locked" || (!l.state && /^MR /.test(l.name)); }
-async function openFile(path, reveal) {
+// 看板留了档的本机文件：留了几版，点一下打开最近一版的副本
+function archMark(l) {
+  if (!l.arch) return "";
+  return '<button type="button" class="chip sm" title="看板 ' + esc(when(l.arch.ts)) + " 留了最近一版" + (l.arch.n > 1 ? "，共 " + l.arch.n + " 版" : "") +
+    '，点一下打开留档的副本" onclick="event.stopPropagation();openFile(clips[' + clip(l.url) + '],false,true)">留档' + (l.arch.n > 1 ? " " + l.arch.n + " 版" : "") + "</button>";
+}
+async function openFile(path, reveal, archive) {
   try {
-    const res = await post("openfile", "", { path, reveal: !!reveal });
+    const res = await post("openfile", "", { path, reveal: !!reveal, archive: !!archive });
     toast(res.message || (res.ok ? "已打开" : "没打开"));
   } catch (e) { toast("打开失败：本机服务没响应"); }
 }
@@ -2397,7 +2403,9 @@ function recOf(d) { return d.rec ? d.opts.indexOf(d.rec) : -1; }   // 它推荐�
 function askRow(it, d, i, old) {
   const p = pickOf(it), k = esc(it.key), ri = recOf(d);
   const on = !!askOpen[it.key + "\n" + d.k];
-  const meta = btn((on ? "收起" : "它怎么说") + ico(on ? "up" : "down"), "togAsk('" + k + "'," + i + ")", "ghost xs dtog",
+  // 要你去审阅页上逐条标的：一点就开，不用往对话里找链接
+  const page = d.url ? '<a class="btn sec xs" href="' + esc(d.url) + '" target="_blank" rel="noopener" title="' + esc(d.url) + '">打开审阅页' + ico("open", 12) + "</a>" : "";
+  const meta = page + btn((on ? "收起" : "它怎么说") + ico(on ? "up" : "down"), "togAsk('" + k + "'," + i + ")", "ghost xs dtog",
       on ? "" : "看它在回复里怎么讲这件，不用往下翻对话", 'aria-expanded="' + on + '"') +
     (d.block ? '<span class="chip sm" title="这件没定，卡着：' + esc(d.block) + '">卡 ' + esc(d.block) + "</span>" : "") +
     (old ? '<span class="age">问了 ' + esc(dur(nowTs() - d.first)) + "</span>" : "");
@@ -2896,8 +2904,8 @@ function orow(o, q) {
   const more = o.nSessions > o.sessions.length ? "<span>等 " + num(o.nSessions) + " 个会话都给过</span>" : "";
   return '<div class="orow' + (o.cat === "mr" && !mrLive(o) ? " done" : "") + '"><span class="ok" title="' + esc(o.name) + '">' +
     esc(o.text !== o.name ? o.name : CAT_NAME[o.cat] || "") + "</span>" +
-    '<div class="om">' + outLink(o, "ot" + (o.gone ? " gone" : ""), hl(o.text, q)) +
-    (o.cat === "file" ? '<span class="op">' + hl(o.path || o.url, q) + (o.gone ? "　已经不在了" : o.twin === "file" ? "　原 worktree 已清理，这是主工作区里的同名文件"
+    '<div class="om">' + outLink(o, "ot" + (o.gone && !o.arch ? " gone" : ""), hl(o.text, q)) + archMark(o) +
+    (o.cat === "file" ? '<span class="op">' + hl(o.path || o.url, q) + (o.gone ? (o.arch ? "　原文件已经不在了，点开是看板留档的副本" : "　已经不在了") : o.twin === "file" ? "　原 worktree 已清理，这是主工作区里的同名文件"
       : o.twin === "web" ? "　原 worktree 已清理，点开是仓库默认分支上的版本" : "") + "</span>" : "") +
     (o.ctx ? '<p class="oc" title="AI 给出它时说的话">「' + hl(o.ctx, q) + "」</p>" : "") +
     '<div class="os">' + (MR_STATE[o.state] ? '<span class="chip sm">' + MR_STATE[o.state] + "</span>" : "") + o.sessions.map(x => sessLink(x, q)).join("") + more + "</div></div>" +

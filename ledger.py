@@ -40,6 +40,9 @@ BASE = os.path.dirname(os.path.realpath(__file__))
 DATA_DIR = os.path.join(BASE, "data")
 LOG_DIR = os.path.join(BASE, "logs")
 DB_PATH = os.path.join(DATA_DIR, "ledger.db")
+ARCHIVE_DIR = os.path.join(DATA_DIR, "archive")              # 产出物留档：AI 给过你的本机文件，各版本存一份
+ARCHIVE_INDEX = os.path.join(ARCHIVE_DIR, "index.jsonl")     # 每留一份记一行；钩子只往这里追加，服务读它入库
+ARCHIVE_MAX = 50 * 1024 * 1024                               # 单个文件超过 50 MB 不留（大视频、Keynote）
 TOKEN_PATH = os.path.join(DATA_DIR, "token")
 CONFIG_PATH = os.path.join(BASE, "config.json")
 BOARD_HTML = os.path.join(BASE, "board.html")
@@ -123,6 +126,9 @@ CREATE TABLE IF NOT EXISTS session_topics (session_key TEXT PRIMARY KEY, topic_i
 CREATE TABLE IF NOT EXISTS handoffs (session_key TEXT PRIMARY KEY, ts REAL, text TEXT);
 CREATE TABLE IF NOT EXISTS ask_dismiss (session_key TEXT, k TEXT, at REAL, PRIMARY KEY (session_key, k));
 CREATE TABLE IF NOT EXISTS ai_notes (session_key TEXT, kind TEXT, k TEXT, ts REAL, text TEXT, PRIMARY KEY (session_key, kind, k));
+CREATE TABLE IF NOT EXISTS archives (path TEXT, sha TEXT, size INTEGER, mtime REAL, ts REAL, session_key TEXT, file TEXT,
+  title TEXT DEFAULT '', text TEXT DEFAULT '', PRIMARY KEY (path, sha));
+CREATE INDEX IF NOT EXISTS archives_ts ON archives(path, ts);
 """
 
 
@@ -505,12 +511,16 @@ def note_asks(st, text, ts):
         return
     asks = st.setdefault("asks", [])
     idx = {a["k"]: a for a in asks}
+    page = page_link(text)
     for d in items:
+        if page and REVIEWISH_RE.search(d["q"]):
+            d["url"] = page
         a = idx.get(d["k"])
         if a is None:
             a = idx[d["k"]] = {"k": d["k"], "first": ts}
             asks.append(a)
-        a.update(q=d["q"], opts=d["opts"], id=d["id"], block=d["block"], rec=d["rec"], why=d["why"], last=ts, done=0, ans="")
+        a.update(q=d["q"], opts=d["opts"], id=d["id"], block=d["block"], rec=d["rec"], why=d["why"], last=ts, done=0, ans="",
+                 url=d.get("url") or a.get("url") or "")
     if len(asks) > ASKS_MAX:
         # 先丢最早答掉的，再丢最早问的
         drop = sorted(asks, key=lambda a: (not a.get("done"), a.get("last") or 0))[:len(asks) - ASKS_MAX]
@@ -577,6 +587,15 @@ def answer_of(a, lines):
         return (rest or line)[:80]
     return ""
 
+
+# ❓ 让你去审阅页上逐条标的（审核页、判定页…）：回复里只给了一个网页链接时，把它挂在这件上，看板上一点就开
+REVIEWISH_RE = re.compile(r"审核页|审阅页|判定页|审核|审阅|判对错|复制反馈|逐条")
+PAGE_LINK_RE = re.compile(r"https?://[^\s<>()（）「」\[\]`'\"]+?\.html?(?![\w.])")
+
+
+def page_link(text):
+    links = list(dict.fromkeys(PAGE_LINK_RE.findall(re.sub(r"```.*?(```|$)", "", text or "", flags=re.S))))
+    return links[0] if len(links) == 1 else ""
 
 def note_answers(st, text, ts):
     """你发的消息：把答了的 ❓ 标成已答。"""
@@ -1722,6 +1741,7 @@ def scan(conn, cfg):
     migrate_asks(conn, cfg)
     migrate_bangs(conn)
     migrate_recaps(conn)
+    migrate_ask_pages(conn)
     t0 = time.time()
     horizon = t0 - max(cfg["window_days"], 30) * 86400
     files = [("claude", p) for p in glob.glob(os.path.join(CLAUDE_PROJECTS, "*", "*.jsonl"))]
@@ -1773,7 +1793,7 @@ def scan(conn, cfg):
             step()
         except Exception:
             log("补数据出错：%s" % traceback.format_exc())
-    for step in (sync_prompts, sync_codex_goals, sync_cmux):
+    for step in (sync_prompts, sync_codex_goals, sync_cmux, sync_archives):
         try:
             step(conn)
         except Exception:
@@ -2414,8 +2434,9 @@ def _out_where(q, cat="", key="", tool=""):
         conds.append("(l.url LIKE ? ESCAPE '\\' OR l.label LIKE ? ESCAPE '\\' OR l.ctx LIKE ? ESCAPE '\\' OR d.title LIKE ? ESCAPE '\\' OR m.title LIKE ? ESCAPE '\\' "
                      "OR l.session_key IN (SELECT session_key FROM names WHERE title LIKE ? ESCAPE '\\') "
                      "OR l.session_key IN (SELECT session_key FROM prompts WHERE title LIKE ? ESCAPE '\\' OR project LIKE ? ESCAPE '\\' "
-                     "OR project IN (SELECT project FROM tags WHERE label LIKE ? ESCAPE '\\')))")
-        args += [like] * 9
+                     "OR project IN (SELECT project FROM tags WHERE label LIKE ? ESCAPE '\\'))"
+                     " OR l.url IN (SELECT path FROM archives WHERE title LIKE ? ESCAPE '\\' OR text LIKE ? ESCAPE '\\'))")
+        args += [like] * 11
     if key:
         conds.append("l.session_key=?")
         args.append(key)
@@ -2504,6 +2525,12 @@ def search_outputs(conn, q, cat="", key="", tool="", limit=100, offset=0):
                 it["gone"], it["twin"] = False, fb[0]
                 if fb[0] == "file":
                     it["path"] = home_rel(fb[1])
+            ar = archive_info(conn, [url]).get(url)
+            if ar:   # 看板留了档：留了几版、最近一次几点；原文件不在了点开的是留档
+                it["arch"] = {"n": ar["n"], "ts": ar["ts"]}
+                if ar["title"] and not it["title"]:
+                    it["title"] = ar["title"]
+                    it["text"] = out_text(url, label, ar["title"])
         items.append(it)
         keys += [x["key"] for x in sess[:3]]
     briefs = session_briefs(conn, list(dict.fromkeys(keys)), now)
@@ -2878,6 +2905,10 @@ def make_item(st, now, cfg, ov, sched, titles, goals, ctx):
     elif turn == "ended" and (st.get("final_ts") or 0) >= (st.get("last_user_ts") or 0):
         # 中断的那一轮不更新 final_ts，last_text 还是上一轮的，里面的选项已经过时
         decisions = parse_decisions(st.get("last_text"))
+        page = page_link(st.get("last_text"))
+        for d in decisions if page else []:
+            if REVIEWISH_RE.search(d["q"]):
+                d["url"] = page
     # 最后一条回复之后、你还没说话时 Claude Code 写的回顾：只在两种时候用它的 📌——最后一条回复没写 📌；写了「待你确认完成」、
     # 回顾却说还要你做事（审稿、拍板，它才能接着做）。11 月 3 日对过 224 份回顾：别的状态两边一份不差，只有这两种回顾更准
     recap, status_note = st.get("recap") or {}, ""
@@ -2990,7 +3021,8 @@ def make_item(st, now, cfg, ov, sched, titles, goals, ctx):
             group = "stale" if idle > stale_sec else "need"
             kind, sort = "me", 2
             # 「要你做」不写「下一步」：下一步是谁的看不出来，容易当成它自己的计划略过去
-            headline = ("%s没动静 · 要你做：%s" % (fmt_ago(idle), desc)) if group == "stale" else "要你做：" + desc
+            short = re.sub(r"[\s：:]*https?://\S+", "", desc).strip() or desc   # 链接放在详情里，行上只写要做什么
+            headline = ("%s没动静 · 要你做：%s" % (fmt_ago(idle), short)) if group == "stale" else "要你做：" + short
         elif k == "peer":
             kind = "peer"
             if at and at <= now:
@@ -3062,7 +3094,7 @@ def make_item(st, now, cfg, ov, sched, titles, goals, ctx):
         gone = ctx["ask_dismiss"].get(key, {})
         closed = (ov["at"] or 0) if ov and ov["action"] in ("done", "closed") else 0
         old_asks = sorted(({"k": a["k"], "q": a["q"], "opts": a.get("opts") or [], "id": a.get("id") or "", "block": a.get("block") or "",
-                            "rec": a.get("rec") or "", "why": a.get("why") or "", "first": a.get("first") or 0}
+                            "rec": a.get("rec") or "", "why": a.get("why") or "", "first": a.get("first") or 0, "url": a.get("url") or ""}
                            for a in st.get("asks") or []
                            if not a.get("done") and a["k"] not in cur and max(gone.get(a["k"], 0), closed) < (a.get("last") or 0)),
                           key=lambda a: a["first"])[:20]
@@ -3262,6 +3294,15 @@ def build_board(conn, cfg, now=None):
             continue   # 同一篇飞书文档的别的写法（带锚点等），只留最近一次
         seen_out.add((r["session_key"], r["doc"] or r["url"]))
         ctx["links"].setdefault(r["session_key"], []).append(out_brief(r["url"], r["label"], r["title"], r["ts"], now, r["state"]))
+    arch = archive_info(conn, list({l["url"] for ls in ctx["links"].values() for l in ls if l["cat"] == "file"}))
+    for ls in ctx["links"].values():
+        for l in ls:
+            a = arch.get(l["url"])
+            if a:
+                l["arch"] = {"n": a["n"], "ts": a["ts"]}
+                l["gone"] = not os.path.exists(l["url"])
+                if a["title"] and l["text"] == l["name"]:
+                    l["text"] = a["title"]
     for r in conn.execute("SELECT data FROM sessions WHERE last_activity >= ?", (now - 30 * 86400,)):
         st = json.loads(r["data"])
         if not include_session(st):
@@ -3954,7 +3995,7 @@ class App:
             with self.lock:
                 return open_session(self.conn, key)
         if action == "openfile" and isinstance(arg, dict):
-            return open_output_file(self.conn, self.lock, str(arg.get("path") or ""), bool(arg.get("reveal")))
+            return open_output_file(self.conn, self.lock, str(arg.get("path") or ""), bool(arg.get("reveal")), bool(arg.get("archive")))
         if action == "rename" and isinstance(arg, dict):
             title = re.sub(r"\s+", " ", str(arg.get("title") or "")).strip()[:80]
             if not title:
@@ -4216,13 +4257,24 @@ class Handler(BaseHTTPRequestHandler):
         return self._send(404, '{"error":"not found"}')
 
 
-def open_output_file(conn, lock, path, reveal):
-    """打开 AI 给过的本机文件（或在访达里显示）。只开台账记过的；不认识的类型只在访达里显示，不直接运行。"""
+def open_output_file(conn, lock, path, reveal, archive=False):
+    """打开 AI 给过的本机文件（或在访达里显示）。只开台账记过的；不认识的类型只在访达里显示，不直接运行。
+    archive：打开看板留档的最近一版；原文件不在了、也找不到替身时，也打开留档。"""
     with lock:
         known = path.startswith("/") and conn.execute("SELECT alt FROM links WHERE url=? ORDER BY alt DESC LIMIT 1", (path,)).fetchone()
         remotes = codex_remotes(conn, known_roots(conn)) if known and known["alt"] and not os.path.exists(path) else {}
+        arch = conn.execute("SELECT file, ts FROM archives WHERE path=? ORDER BY ts DESC LIMIT 1", (path,)).fetchone() if known else None
     if not known:
         return False, "看板没记过这个文件"
+    copy = os.path.join(ARCHIVE_DIR, arch["file"]) if arch and arch["file"] else ""
+    if archive or (copy and not os.path.exists(path) and not file_fallback(path, known["alt"], remotes, resolve=False)):
+        if not copy or not os.path.isfile(copy):
+            return False, "这个文件没有留档"
+        reveal = reveal or file_kind(copy) in ("文件", "文件夹")
+        r = run(["open", "-R", copy] if reveal else ["open", copy], timeout=15)
+        if r.returncode != 0:
+            return False, "没打开：" + (r.stderr or r.stdout or "").strip()[-200:]
+        return True, ("原文件已经不在了，" if not os.path.exists(path) else "") + "打开的是看板 %s 留档的副本" % fmt_time(arch["ts"])
     note = ""
     if not os.path.exists(path):
         fb = file_fallback(path, known["alt"], remotes)   # 可能要用 glab 查默认分支，不占锁
@@ -4238,6 +4290,228 @@ def open_output_file(conn, lock, path, reveal):
     if r.returncode != 0:
         return False, "没打开：" + (r.stderr or r.stdout or "").strip()[-200:]
     return True, note + ("已在访达里找到 " if reveal else "已打开 ") + os.path.basename(path.rstrip("/"))
+
+
+# ---------------------------------------------------------------- 产出物留档
+# 看板服务是后台服务，macOS 不让它读「桌面」「文稿」「下载」里的文件内容（能看到在不在，读不了）。
+# 所以留档由 AI 那边做：Claude Code、Codex 每轮结束时跑 Stop 钩子 `ledger archive --hook claude|codex`，
+# 它跑在终端或 Codex 里，读得到文件，把这一轮提到的产出物复制进 data/archive/，再往 index.jsonl 记一行；服务读这些副本建索引。
+
+def archive_seen():
+    """每个文件最近一次留档时的（大小，修改时间）：没变就不再算哈希、不再复制。"""
+    seen = {}
+    try:
+        with open(ARCHIVE_INDEX, encoding="utf-8") as f:
+            for line in f:
+                try:
+                    r = json.loads(line)
+                except ValueError:
+                    continue
+                seen[r.get("path")] = (r.get("size"), r.get("mtime"))
+    except OSError:
+        pass
+    return seen
+
+
+def archive_file(path, session_key, seen, now):
+    """留一份：按内容哈希存 data/archive/files/<哈希前 16 位>/<原文件名>，同样的内容只存一次。留了返回 True。"""
+    try:
+        stt = os.stat(path)
+    except OSError:
+        return False
+    if not os.path.isfile(path) or stt.st_size > ARCHIVE_MAX or seen.get(path) == (stt.st_size, stt.st_mtime):
+        return False
+    h = hashlib.sha256()
+    try:
+        with open(path, "rb") as f:
+            for chunk in iter(lambda: f.read(1 << 20), b""):
+                h.update(chunk)
+        sha = h.hexdigest()
+        dest_dir = os.path.join(ARCHIVE_DIR, "files", sha[:16])
+        dest = os.path.join(dest_dir, os.path.basename(path))
+        if not os.path.exists(dest):
+            os.makedirs(dest_dir, mode=0o700, exist_ok=True)
+            shutil.copyfile(path, dest + ".part")
+            os.chmod(dest + ".part", 0o600)
+            os.replace(dest + ".part", dest)
+    except OSError:
+        return False
+    rec = {"path": path, "sha": sha, "size": stt.st_size, "mtime": stt.st_mtime, "ts": now, "session": session_key,
+           "file": os.path.relpath(dest, ARCHIVE_DIR)}
+    with open(ARCHIVE_INDEX, "a", encoding="utf-8") as f:
+        f.write(json.dumps(rec, ensure_ascii=False) + "\n")
+    seen[path] = (stt.st_size, stt.st_mtime)
+    return True
+
+
+def transcript_texts(tool, path, tail=2 * 1024 * 1024):
+    """对话记录末尾一段里 AI 对你说的话：[(cwd, 原文)]。子代理的不算。"""
+    try:
+        with open(path, "rb") as f:
+            f.seek(0, os.SEEK_END)
+            size = f.tell()
+            f.seek(max(0, size - tail))
+            data = f.read()
+    except OSError:
+        return []
+    if size > tail:
+        data = data[data.find(b"\n") + 1:]
+    out, cwd, sub = [], "", False
+    for raw in data.split(b"\n"):
+        if tool == "claude":
+            if b'"type":"assistant"' not in raw:
+                continue
+            try:
+                rec = json.loads(raw.decode("utf-8", "replace"))
+            except ValueError:
+                continue
+            if rec.get("type") == "assistant" and not rec.get("isSidechain"):
+                out.append((rec.get("cwd") or "", take_text((rec.get("message") or {}).get("content"))))
+            continue
+        if not (b'"turn_context"' in raw or b'"session_meta"' in raw or b'"role":"assistant"' in raw):
+            continue
+        try:
+            rec = json.loads(raw.decode("utf-8", "replace"))
+        except ValueError:
+            continue
+        p = rec.get("payload") or {}
+        if rec.get("type") in ("turn_context", "session_meta"):
+            cwd = p.get("cwd") or cwd
+            sub = sub or str(p.get("thread_source")) == "subagent"
+        elif rec.get("type") == "response_item" and p.get("type") == "message" and p.get("role") == "assistant" and not sub:
+            out.append((cwd, take_text(p.get("content"))))
+    return out
+
+
+def archive_transcript(tool, path, session_key, cwd="", seen=None):
+    """对话记录末尾一段里 AI 提到的本机产出物，各留一份。返回留了几份。"""
+    seen = archive_seen() if seen is None else seen
+    now, n = time.time(), 0
+    for c, text in transcript_texts(tool, path):
+        if not text or "/" not in text:
+            continue
+        for url, _, _ in extract_links(text, c or cwd):
+            if url.startswith("/") and archive_file(url, session_key, seen, now):
+                n += 1
+    return n
+
+
+def find_codex_rollout(sid):
+    hits = sorted(glob.glob(os.path.join(CODEX_HOME, "sessions", "*", "*", "*", "*%s*.jsonl" % sid)), key=lambda p: os.path.getmtime(p))
+    return hits[-1] if hits else ""
+
+
+def cmd_archive(args):
+    """产出物留档。--hook：Stop 钩子调用，从标准输入读会话信息；--backfill：把看板记过的本机文件全部留一份（在终端里跑）。
+    钩子模式出什么错都不报、不拦，免得影响会话。"""
+    if args.hook:
+        try:
+            info = json.loads(sys.stdin.read() or "{}")
+            sid = info.get("session_id") or info.get("sessionId") or ""
+            path = info.get("transcript_path") or (find_codex_rollout(sid) if args.hook == "codex" and sid else "")
+            key, n, seen = "%s:%s" % (args.hook, sid), 0, archive_seen()
+            last = info.get("last_assistant_message")
+            if isinstance(last, str) and "/" in last:   # 有的版本直接给最后一条回复，先按它留
+                n += sum(1 for url, _, _ in extract_links(last, info.get("cwd") or "")
+                         if url.startswith("/") and archive_file(url, key, seen, time.time()))
+            if path and os.path.isfile(path):
+                n += archive_transcript(args.hook, path, key, info.get("cwd") or "", seen)
+            if n:
+                log("留档 %d 份（%s:%s）" % (n, args.hook, sid[:8]))
+        except Exception:
+            log("留档钩子出错：%s" % traceback.format_exc()[-800:])
+        return
+    seen, now, n = archive_seen(), time.time(), 0
+    paths = list(args.paths or [])
+    if args.backfill:
+        conn = open_db()
+        paths += [r[0] for r in conn.execute("SELECT url, MAX(ts) FROM links WHERE cat='file' GROUP BY url ORDER BY MAX(ts) DESC")]
+        sess = {r[0]: r[1] for r in conn.execute("SELECT url, session_key FROM links WHERE cat='file' ORDER BY ts")}
+    else:
+        sess = {}
+    for p in paths:
+        p = os.path.abspath(os.path.expanduser(p))
+        if archive_file(p, sess.get(p, ""), seen, now):
+            n += 1
+    print("留了 %d 份，存在 %s" % (n, home_rel(ARCHIVE_DIR)))
+    if n:
+        poke(load_config())
+
+
+TITLE_MD_RE = re.compile(r"^\s{0,3}#{1,3}\s+(.+?)\s*#*\s*$", re.M)
+TITLE_HTML_RE = re.compile(r"<title[^>]*>(.*?)</title>|<h1[^>]*>(.*?)</h1>", re.I | re.S)
+TAG_RE = re.compile(r"<(script|style)\b.*?</\1>|<[^>]+>", re.I | re.S)
+
+
+def archive_digest(path):
+    """留档副本的标题和正文开头（给搜索用）：Markdown 取第一个标题，网页取 <title>，表格取表头，其余只记文件名。"""
+    ext = path.rsplit(".", 1)[-1].lower() if "." in os.path.basename(path) else ""
+    if ext not in ("md", "markdown", "txt", "html", "htm", "csv", "tsv", "json"):
+        return "", ""
+    try:
+        with open(path, "rb") as f:
+            raw = f.read(256 * 1024).decode("utf-8", "replace")
+    except OSError:
+        return "", ""
+    title = ""
+    if ext in ("html", "htm"):
+        m = TITLE_HTML_RE.search(raw)
+        title = TAG_RE.sub("", (m.group(1) or m.group(2) or "") if m else "")
+        raw = TAG_RE.sub(" ", raw)
+    elif ext in ("md", "markdown", "txt"):
+        m = TITLE_MD_RE.search(raw)
+        title = m.group(1) if m else ""
+    elif ext in ("csv", "tsv"):
+        title = raw.split("\n", 1)[0][:120]
+    return " ".join(title.split())[:120], " ".join(raw.split())[:40000]
+
+
+def sync_archives(conn):
+    """把钩子新记的留档读进库（index.jsonl 从上次读到的地方接着读），顺便取标题和正文开头。"""
+    try:
+        size = os.path.getsize(ARCHIVE_INDEX)
+    except OSError:
+        return 0
+    off = int(float(meta_get(conn, "arch_off", 0) or 0))
+    if size < off:
+        off = 0
+    if size == off:
+        return 0
+    with open(ARCHIVE_INDEX, "rb") as f:
+        f.seek(off)
+        data = f.read(size - off)
+    end = data.rfind(b"\n")
+    data = data[:end + 1] if end >= 0 else b""
+    n = 0
+    for raw in data.split(b"\n"):
+        try:
+            r = json.loads(raw.decode("utf-8", "replace")) if raw else None
+        except ValueError:
+            r = None
+        if not r or not r.get("path") or not r.get("sha"):
+            continue
+        title, text = archive_digest(os.path.join(ARCHIVE_DIR, r.get("file") or ""))
+        n += conn.execute("INSERT OR IGNORE INTO archives (path, sha, size, mtime, ts, session_key, file, title, text) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                          (r["path"], r["sha"], r.get("size") or 0, r.get("mtime") or 0, r.get("ts") or 0, r.get("session") or "",
+                           r.get("file") or "", title, text)).rowcount
+    meta_set(conn, "arch_off", off + len(data))
+    if n:
+        log("留档入库 %d 份" % n)
+    return n
+
+
+def archive_info(conn, paths):
+    """这些文件留了几版、最近一版是哪份：{path: {n, ts, file, title}}"""
+    out = {}
+    paths = [p for p in paths if p.startswith("/")]
+    for i in range(0, len(paths), 500):
+        chunk = paths[i:i + 500]
+        for r in conn.execute("SELECT path, COUNT(*), MAX(ts) FROM archives WHERE path IN (%s) GROUP BY path" % ",".join("?" * len(chunk)), chunk):
+            out[r[0]] = {"n": r[1], "ts": r[2]}
+    for p, a in out.items():
+        row = conn.execute("SELECT file, title FROM archives WHERE path=? ORDER BY ts DESC LIMIT 1", (p,)).fetchone()
+        a["file"], a["title"] = (row[0], row[1]) if row else ("", "")
+    return out
 
 
 def replay_tails(conn, flag, needle, keep, handle):
@@ -4278,6 +4552,21 @@ def migrate_bangs(conn):
             note_shell(st, unwrap_paste(take_text((rec.get("message") or {}).get("content"))), parse_iso(rec.get("timestamp")) or 0)
     replay_tails(conn, "mig_bangs", b"<bash-input>",
                  lambda raw: b'"type":"user"' in raw and (b"<bash-" in raw or b"<task-notification>" in raw), handle)
+
+
+def migrate_ask_pages(conn):
+    """之前问过的 ❓ 补上审阅页链接（只补链接，不改答没答）。"""
+    def handle(st, rec):
+        if rec.get("type") != "assistant":
+            return
+        text = take_text((rec.get("message") or {}).get("content"))
+        page = page_link(text)
+        idx = {a["k"]: a for a in st.get("asks") or []}
+        for d in parse_decisions(text) if page else []:
+            a = idx.get(d["k"])
+            if a is not None and not a.get("url") and REVIEWISH_RE.search(d["q"]):
+                a["url"] = page
+    replay_tails(conn, "mig_ask_pages", "❓".encode(), lambda raw: b'"type":"assistant"' in raw and b".html" in raw, handle)
 
 
 def migrate_recaps(conn):
@@ -5262,8 +5551,12 @@ def main():
     p.add_argument("--dry-run", action="store_true", help="只打印会做什么，不写文件也不发消息")
     p = sub.add_parser("cmux-setup", help="把 cmux 改成密码模式，让看板服务能控制它（定时唤醒要用）")
     p.add_argument("--dry-run", action="store_true", help="只打印会改什么，不写文件也不重新加载")
+    p = sub.add_parser("archive", help="产出物留档：Stop 钩子每轮调用，或在终端里补留看板记过的文件")
+    p.add_argument("--hook", choices=["claude", "codex"], help="钩子模式：从标准输入读会话信息，出错不报")
+    p.add_argument("--backfill", action="store_true", help="把看板记过的本机文件都留一份")
+    p.add_argument("paths", nargs="*", help="要留档的文件")
     args = ap.parse_args()
-    handlers = {"serve": cmd_serve, "scan": cmd_scan, "schedule": cmd_schedule, "schedules": cmd_schedules,
+    handlers = {"archive": cmd_archive, "serve": cmd_serve, "scan": cmd_scan, "schedule": cmd_schedule, "schedules": cmd_schedules,
                 "cancel": cmd_cancel, "digest": cmd_digest, "rules": cmd_rules, "doctor": cmd_doctor,
                 "feishu-setup": cmd_feishu_setup, "cmux-setup": cmd_cmux_setup}
     if args.cmd not in handlers:
