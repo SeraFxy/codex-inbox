@@ -562,7 +562,8 @@ def cut_prefix(body, q):
 
 def answer_of(a, lines):
     """你这条消息里有没有答这件。认四种：「N. 事情：选项」（看板拼的格式）、把 ❓ 行抄回来改过选项、提到编号、
-    用问题开头几个字指代（「Top20 名单——ok的」）。写「待定」的不算；原样抄回来、选项一个没删的也不算。
+    用问题开头几个字指代（「Top20 名单——ok的」）。写「待定」的算答了，答复记成「待定」：你看过了、这次先不定，不再挂在「轮到你」；
+    它之后还要你定，会再用 ❓ 问，那时重新记上。原样抄回来、选项一个没删的不算。
     问题后面的编号「（Q-2）」抄不抄都认；问题和答复之间用冒号、竖线、空格、下划线、破折号隔开都行。"""
     tag = re.compile(r"\s*[（(]\s*%s\s*[)）]" % re.escape(a["id"]), re.I) if a.get("id") else None
     q = a.get("q") or ""
@@ -577,11 +578,11 @@ def answer_of(a, lines):
         hit_q = cut is not None
         if not hit_q and not (pid and pid.search(line)):
             short = short_head(body, q)
-            if short and not PENDING_RE.search(line) and short != "待定":
-                return short[:80]
+            if short:
+                return "待定" if PENDING_RE.search(line) or short == "待定" else short[:80]
             continue
         if PENDING_RE.search(line):
-            continue
+            return "待定"
         rest = cut if hit_q else body
         rest = re.sub(r"^[？?：:。.｜|_＿—\s]+", "", rest).strip()
         # 原样抄回来的（「卡：」「荐：」那几段不算选项）不算答了
@@ -1637,9 +1638,9 @@ def migrate_ai_notes(conn):
 
 
 def migrate_answers(conn):
-    """认答复的办法改过（2026-11-03：问题带编号「（Q-2）」时，你只抄了问题、没抄编号也认）：
-    还没答的 ❓，拿台账存的、它问了以后你说的话重新认一次。只跑一次。"""
-    if meta_get(conn, "answers_v2"):
+    """认答复的办法改过（2026-11-03：问题带编号「（Q-2）」时，你只抄了问题、没抄编号也认；回「待定」的也算答了）：
+    还没答的 ❓，拿台账存的、它问了以后你说的话重新认一次。每改一次认法跑一次。"""
+    if meta_get(conn, "answers_v3"):
         return
     n = 0
     for r in conn.execute("SELECT key, data FROM sessions WHERE data LIKE '%\"asks\"%'").fetchall():
@@ -1660,7 +1661,7 @@ def migrate_answers(conn):
         if got:
             conn.execute("UPDATE sessions SET data=? WHERE key=?", (json.dumps(st, ensure_ascii=False), r["key"]))
             n += got
-    meta_set(conn, "answers_v2", time.time())
+    meta_set(conn, "answers_v3", time.time())
     conn.commit()
     log("按新的认法补认了 %d 件你已经答过的 ❓" % n)
 
