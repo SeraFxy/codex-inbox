@@ -1091,7 +1091,7 @@ def new_state(tool, sid, path):
         "thread_source": "", "source": "", "ai_title": "", "custom_title": "", "first_prompt": "", "last_prompt": "",
         "n_prompts": 0, "last_text": "", "progress_text": "", "turn_text": "", "turn": "ended",
         "last_kind": "", "status": None, "goal": None, "final_has_status": False,
-        "last_ts": 0, "final_ts": 0,
+        "last_ts": 0, "final_ts": 0, "ctx_used": 0, "ctx_model": "", "ctx_window": 0,
     }
 
 
@@ -1176,6 +1176,8 @@ def claude_line(st, line):
     if typ == "system":
         if rec.get("subtype") == "turn_duration" and st["turn"] != "ended":
             on_final(st, st["turn_text"], ts)
+        elif rec.get("subtype") == "compact_boundary":
+            st["ctx_used"] = 0   # 压缩过了，等下一条回复再算
         return
     if rec.get("isSidechain"):
         return
@@ -1229,6 +1231,9 @@ def claude_line(st, line):
         st["turn_text"] = ""
         return
     if typ == "assistant":
+        used, model = claude_usage(rec)
+        if used:
+            st["ctx_used"], st["ctx_model"] = used, model
         blocks = content if isinstance(content, list) else []
         text = take_text(content)
         tools = [b.get("name", "") for b in blocks if isinstance(b, dict) and b.get("type") == "tool_use"]
@@ -1249,7 +1254,7 @@ def claude_line(st, line):
 
 
 CODEX_KEYS = ('"session_meta"', '"task_started"', '"task_complete"', '"turn_aborted"', '"turn_context"',
-              '"role":"user"', '"role":"assistant"')
+              '"role":"user"', '"role":"assistant"', '"token_count"')
 
 
 def codex_line(st, line):
@@ -1288,6 +1293,8 @@ def codex_line(st, line):
         elif pt == "turn_aborted":
             st["turn"] = "ended"
             st["last_kind"] = "final"
+        elif pt == "token_count":
+            note_codex_ctx(st, p)
         return
     if typ == "response_item" and p.get("type") == "message":
         text = strip_ambient(take_text(p.get("content")))
@@ -1304,6 +1311,144 @@ def codex_line(st, line):
             st["progress_text"] = text[-1500:]
             if st.get("thread_source") != "subagent":   # 子代理的回复是给主会话的，不是给你的（Claude 的 isSidechain 同理）
                 note_links(st, ts, text)
+
+
+# ---------------------------------------------------------------- 上下文占用：按对话记录里每次回复的用量算，不调模型
+
+CTX_WARN_PCT = 70          # 用到这么多，行上标出来、详情里提醒一句（用户让按经验定）
+CODEX_BASELINE = 12000     # Codex 算「还剩多少上下文」时先扣掉的固定开销；照它的算法，和 Codex 界面上的数对得上
+CTX_TAIL_BYTES = 1024 * 1024
+CLAUDE_SETTINGS = os.path.join(HOME, ".claude", "settings.json")
+_claude_win = {"mtime": None, "data": {}}
+
+
+def claude_usage(rec):
+    """Claude 一条回复的用量 → 那时上下文里有多少 token（输入 + 缓存读 + 缓存写），和用的模型。"""
+    msg = rec.get("message") or {}
+    u = msg.get("usage") if isinstance(msg, dict) else None
+    if not isinstance(u, dict) or msg.get("model") == "<synthetic>":
+        return 0, ""
+    try:
+        used = sum(int(u.get(k) or 0) for k in ("input_tokens", "cache_read_input_tokens", "cache_creation_input_tokens"))
+    except (TypeError, ValueError):
+        return 0, ""
+    return used, msg.get("model") or ""
+
+
+def note_codex_ctx(st, p):
+    info = p.get("info")
+    if isinstance(info, dict):
+        last = info.get("last_token_usage") or {}
+        try:
+            if last.get("total_tokens"):
+                st["ctx_used"] = int(last["total_tokens"])
+                st["ctx_window"] = int(info.get("model_context_window") or 0)
+        except (TypeError, ValueError):
+            pass
+
+
+def claude_window(model):
+    """Claude 会话按多大的上下文算：settings.json 里给这个模型设了 autoCompactWindow（到这么多就压缩）就用它，没设按 20 万。"""
+    try:
+        mt = os.stat(CLAUDE_SETTINGS).st_mtime
+    except OSError:
+        mt = None
+    if mt != _claude_win["mtime"]:
+        try:
+            with open(CLAUDE_SETTINGS, encoding="utf-8") as f:
+                data = json.load(f)
+        except (OSError, ValueError):
+            data = {}
+        _claude_win.update(mtime=mt, data=data if isinstance(data, dict) else {})
+    s = _claude_win["data"]
+    ms = s.get("modelSettings") if isinstance(s.get("modelSettings"), dict) else {}
+    one = ms.get(model) if isinstance(ms.get(model), dict) else {}
+    try:
+        win = int(one.get("autoCompactWindow") or s.get("autoCompactWindow") or 0)
+    except (TypeError, ValueError):
+        win = 0
+    return win if win > 0 else (1000000 if "[1m]" in model else 200000)
+
+
+def ctx_pct(st):
+    """上下文用了百分之几；算不出来是 None。"""
+    used = st.get("ctx_used") or 0
+    if not used:
+        return None
+    if st["tool"] == "codex":
+        win = st.get("ctx_window") or 0
+        if win <= CODEX_BASELINE:
+            return None
+        return max(0, min(100, round((used - CODEX_BASELINE) * 100 / (win - CODEX_BASELINE))))
+    win = claude_window(st.get("ctx_model") or "")
+    if used > win:   # 比设的还多：这个会话开着更大的窗口（如 100 万）
+        win = max(used, 1000000)
+    return min(100, round(used * 100 / win))
+
+
+def ctx_from_tail(tool, path):
+    """从文件末尾往前找最后一次用量，给还没记过用量的会话补上。返回要并进 st 的字段。"""
+    try:
+        with open(path, "rb") as f:
+            size = f.seek(0, 2)
+            f.seek(max(0, size - CTX_TAIL_BYTES))
+            lines = f.read().split(b"\n")
+    except OSError:
+        return {}
+    if size > CTX_TAIL_BYTES:
+        lines = lines[1:]
+    for raw in reversed(lines):
+        if tool == "codex":
+            if b'"token_count"' not in raw:
+                continue
+            try:
+                rec = json.loads(raw)
+            except ValueError:
+                continue
+            got = {}
+            if isinstance(rec, dict) and (rec.get("payload") or {}).get("type") == "token_count":
+                note_codex_ctx(got, rec["payload"])
+            if got:
+                return got
+            continue
+        if b'"compact_boundary"' not in raw and (b'"usage"' not in raw or b'"type":"assistant"' not in raw):
+            continue
+        try:
+            rec = json.loads(raw)
+        except ValueError:
+            continue
+        if not isinstance(rec, dict) or rec.get("isSidechain"):
+            continue
+        if rec.get("type") == "system" and rec.get("subtype") == "compact_boundary":
+            return {}
+        if rec.get("type") == "assistant":
+            used, model = claude_usage(rec)
+            if used:
+                return {"ctx_used": used, "ctx_model": model}
+    return {}
+
+
+def migrate_ctx(conn, horizon):
+    """上下文占用是后加的：已经读过的会话，从文件末尾补一次用量。只跑一次。"""
+    if meta_get(conn, "ctx_v1"):
+        return
+    n = 0
+    rows = conn.execute("SELECT f.path, f.session_key, s.data FROM files f JOIN sessions s ON s.key = f.session_key "
+                        "WHERE s.last_activity >= ?", (horizon,)).fetchall()
+    for r in rows:
+        try:
+            st = json.loads(r["data"])
+        except ValueError:
+            continue
+        if "ctx_used" in st:
+            continue
+        st.update({"ctx_used": 0, "ctx_model": "", "ctx_window": 0})
+        st.update(ctx_from_tail(st.get("tool") or r["session_key"].split(":")[0], r["path"]))
+        n += bool(st["ctx_used"])
+        conn.execute("UPDATE sessions SET data=? WHERE key=?", (json.dumps(st, ensure_ascii=False), r["session_key"]))
+    meta_set(conn, "ctx_v1", time.time())
+    conn.commit()
+    log("已给 %d 个会话补上上下文用量" % n)
 
 
 def parse_file(tool, path, st, offset, size):
@@ -1398,6 +1543,10 @@ def scan(conn, cfg):
                      (key, st["last_ts"] or stt.st_mtime, json.dumps(st, ensure_ascii=False)))
         conn.execute("INSERT OR REPLACE INTO files (path, session_key, size, mtime, offset) VALUES (?, ?, ?, ?, ?)",
                      (path, key, stt.st_size, stt.st_mtime, offset))
+    try:
+        migrate_ctx(conn, horizon)
+    except Exception:
+        log("migrate_ctx 出错：%s" % traceback.format_exc())
     for step in (sync_prompts, sync_codex_goals, sync_cmux):
         try:
             step(conn)
@@ -2649,7 +2798,8 @@ def make_item(st, now, cfg, ov, sched, titles, goals, ctx):
             "lastReply": head_text(reply_text(st.get("last_text") or st.get("progress_text"))),
             "replyLen": len(reply_text(st.get("last_text") or st.get("progress_text"))),
             "replyTs": st.get("final_ts") or last,
-            "handoffTs": ctx.get("handoffs", {}).get(key) or 0,   # 压缩时的交接：正文较长，详情里再按 /api/handoff 取
+            "handoffTs": ctx.get("handoffs", {}).get(key) or 0,
+            "ctxPct": ctx_pct(st),   # 上下文用了百分之几，算不出来是 None   # 压缩时的交接：正文较长，详情里再按 /api/handoff 取
             "status": ("📌 " + status["label"] + ("｜" + status["desc"] if status.get("desc") else "")) if status else "",
             "decisions": decisions, "doneAsk": done_ask, "oldAsks": old_asks,
             "calls": [{"t": c["t"], "why": c.get("why") or "", "ts": c.get("ts") or 0}   # 新的在前，同一轮的按原文顺序
@@ -2847,7 +2997,7 @@ def build_board(conn, cfg, now=None):
         "build": board_build(), "now": now, "nowText": "%d月%d日 周%s %s" % (clock(now).month, clock(now).day, WEEK[clock(now).weekday()], clock(now).strftime("%H:%M")),
         "lastScan": last_scan, "lastScanText": fmt_time(last_scan, now) if last_scan else "从未",
         "tzOffsetMin": int(clock(now).astimezone(WORK_TZ).utcoffset().total_seconds() // 60),
-        "staleHours": cfg["stale_hours"], "interruptedMin": cfg["interrupted_min"], "windowDays": cfg["window_days"],
+        "staleHours": cfg["stale_hours"], "interruptedMin": cfg["interrupted_min"], "ctxWarn": CTX_WARN_PCT, "windowDays": cfg["window_days"],
         "scanMs": int(meta_get(conn, "last_scan_ms", 0) or 0), "scanIntervalMin": cfg["scan_interval_min"],
         "groups": groups, "hidden": hidden, "order": load_order(conn), "pins": pins, "archived": archived, "archivedTopics": archived_topics, "favs": board_favs(conn, items + hidden, now), "autos": board_autos(conn, items + hidden, now), "digestTime": cfg["digest_time"], "tzText": tz_text(cfg), "home": HOME, "projectDirs": USER_DIRS,
         "topics": [{"id": t["id"], "name": t["name"], "project": t["project"], "projectLabel": tag_of(ctx["tags"], t["project"])[0]}

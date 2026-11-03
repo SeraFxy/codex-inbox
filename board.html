@@ -864,6 +864,8 @@ function badgeOf(it) {
   else if (f === "inbox" && it.badges[0] === "状态不明") bits.push("最后动静 " + when(it.last));
   return bits.concat(it.badges.filter((b, i) => !(f === "inbox" && i === 0) && !/待你决定$/.test(b))).join(" · ");
 }
+function ctxOf(it) { return it.details && it.details.ctxPct != null ? it.details.ctxPct : null; }   // 上下文用了百分之几
+function ctxHot(it) { const c = ctxOf(it); return c != null && it.group !== "hidden" && c >= ((state && state.ctxWarn) || 70); }
 function decisionsOf(it) { return it.group !== "hidden" && it.details && it.details.decisions || []; }
 function shortOf(it) {
   const n = decisionsOf(it).length;
@@ -1631,6 +1633,7 @@ function row(it, i) {
     '<span class="w' + (f === "stuck" || f === "alarm" || f === "wait" ? " hot" : "") + '">' + esc(rowTime(it)) + "</span>" +
     '<span class="s">' + toolChip(it) + '<span class="chip sm">' + esc(chipText(it)) + "</span>" +
     (oldAsksOf(it).length ? '<span class="chip sm ask" title="它之前问过、你还没答的事，详情里能接着选">' + oldAsksOf(it).length + " 件没答</span>" : "") +
+    (ctxHot(it) ? '<span class="chip sm" title="上下文快满了：这件做完换个新会话，省 token">上下文 ' + ctxOf(it) + "%</span>" : "") +
     "<span>" + esc(shortOf(it)) + "</span></span>" +
     '<span class="racts">' + acts + "</span></div>";
 }
@@ -1784,7 +1787,8 @@ function sumCard(it) {
   const loud = it.kind === "approval" || it.kind === "sched_failed" || f === "stuck" || (d.doneAsk && f === "wait");
   let html = '<div class="sum"><div class="sum-now"><span class="sum-st"' + (ink ? ' style="color:var(--bk-' + ink + '-ink)"' : "") + ' title="' + esc(whyOf(it)) + '">' +
     esc(badgeOf(it)) + "</span>" + (hidden ? '<p class="sum-why">' + esc(whyOf(it)) + "</p>"
-      : '<p class="now">' + esc(it.headline) + "</p>" + (loud ? '<p class="sum-why">' + esc(whyOf(it)) + "</p>" : "")) + "</div>";
+      : '<p class="now">' + esc(it.headline) + "</p>" + (loud ? '<p class="sum-why">' + esc(whyOf(it)) + "</p>" : "") +
+        (ctxHot(it) ? '<p class="sum-why">上下文已用 <span class="mono">' + ctxOf(it) + "%</span>，这件做完换个新会话接着做，省 token。</p>" : "")) + "</div>";
   if (d.goal) {
     const src = d.goalFrom === "handoff" ? "取自 " + when(d.goalTs) + " 压缩时的交接" : d.goalTs ? "写于 " + when(d.goalTs) : "";
     html += '<dl class="sum-goal"><div><dt>目标' + (d.goalStatus ? '<span class="pill">' + esc(d.goalStatus) + "</span>" : "") + "</dt><dd>" + mdInline(d.goal) +
@@ -2126,7 +2130,7 @@ function infoSec(it) {
   const d = it.details, k = esc(it.key);
   const rows = [
     ["原标题", d.originalTitle], ["位置", d.cwd, "path", d.projectDirMine ? btn("恢复默认", "setProjectDir('" + k + "'," + clip(d.projectDir) + ",true)", "ghost xs", "去掉你点的这一层，回到默认的取法") : ""],
-    ["分支", d.branch], ["状态行", d.status, "wrap"],
+    ["分支", d.branch], ["上下文", ctxOf(it) != null ? "已用 " + ctxOf(it) + "%" : "", "mono"], ["状态行", d.status, "wrap"],
     ["恢复命令", d.resume, "mono", btn(ico("copy", 13) + "复制", "copyClip(" + clip(d.resume) + ",'恢复命令已复制')", "ghost xs")]
   ].filter(r => r[1]);
   let foot = "";
@@ -2175,7 +2179,12 @@ function nudgesOf(it) { return faceOf(it) === "stuck" && it.kind === "interrupte
 function pickOf(it) {
   const sig = JSON.stringify(decisionsOf(it));
   // AI 又回了一轮，旧的选择和改过的回复作废；sel 按问题的 k 记，「不用答了」收掉一件不影响别的
-  if (!picks[it.key] || picks[it.key].sig !== sig) picks[it.key] = { sig, sel: {}, quick: null, text: null };
+  // 它推荐了的默认就选上（只管这一轮问的；之前问过、没答的不自动写进回复）
+  if (!picks[it.key] || picks[it.key].sig !== sig) {
+    const sel = {};
+    decisionsOf(it).forEach(d => { const j = recOf(d); if (j >= 0) sel[d.k] = j; });
+    picks[it.key] = { sig, sel, quick: null, text: null };
+  }
   return picks[it.key];
 }
 function qText(d) { return d.q.replace(/[？?：:。.\s]+$/, ""); }
