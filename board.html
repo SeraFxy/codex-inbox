@@ -2359,11 +2359,11 @@ function ansOf(it, p, d, i) {
   return p.sel[d.k] != null ? d.opts[p.sel[d.k]] : i < decisionsOf(it).length ? "待定" : null;
 }
 function replyLines(it) {
-  const p = pickOf(it), all = asksOf(it);
-  if (!all.length) return p.quick != null ? nudgesOf(it)[p.quick] || "" : "";
-  const out = [];
-  all.forEach((d, i) => { const a = ansOf(it, p, d, i); if (a != null) out.push((out.length + 1) + ". " + qText(d) + "：" + a); });
-  return out.join("\n");
+  // 「要你做」点的那句（做完了…）在前，下面是选了的 ❓；要你做和之前没答的 ❓ 同时在时，两样都要写进回复
+  const p = pickOf(it), out = [];
+  asksOf(it).forEach((d, i) => { const a = ansOf(it, p, d, i); if (a != null) out.push((out.length + 1) + ". " + qText(d) + "：" + a); });
+  const quick = p.quick != null ? nudgesOf(it)[p.quick] || "" : "";
+  return [quick, out.join("\n")].filter(Boolean).join("\n\n");
 }
 function replyText(it) { const p = pickOf(it); return p.text != null ? p.text : replyLines(it); }
 const NUM_LINE = /^\s*\d+\s*[.、．]\s*/;
