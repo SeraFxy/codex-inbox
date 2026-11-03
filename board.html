@@ -742,7 +742,7 @@ let autoOff = false;                                     // 「定时任务」�
 let picker = null;      // 「归到主题」「移到项目」菜单：{ key, q, list }
 const prevFace = {};    // 会话 key -> 上次的表情，用来发现「AI 在做 → 待你确认完成」，跳一下
 const bubOpen = {};     // 展开全文的气泡
-const picks = {};       // 会话 key -> { sig: 这一轮的选项, sel: { 第几件: 第几个选项 }, quick: 第几句, note: 补充 }
+const picks = {};       // 会话 key -> { sig: 这一轮的选项, sel: { 第几件: 第几个选项 }, quick: 第几句, text: 改过的回复, touched: 动过没有 }
 const clips = {}; let clipN = 0;
 
 function store(k, v) {
@@ -1077,23 +1077,46 @@ async function act(key, action, arg) {
   load();
 }
 async function openSession(key, el) {
+  // 回复框里已经拼好回复的，先复制过去：不然点「打开会话」再按 ⌘V，粘进去的是剪贴板里上一次的东西
+  const it = findItem(key), reply = it ? replyReady(it) : "";
+  if (reply) {
+    try { await writeClip(reply); } catch (e) { toast("复制失败，请手动选中"); return; }
+  }
   const html = el ? el.innerHTML : "";
   if (el) { el.classList.add("loading"); el.innerHTML = face("load", 16) + (el.classList.contains("ra") ? "" : "打开中…"); }
   try {
     const res = await post("open", key);
-    toast(res.message || (res.ok ? "已打开" : "没打开"));
-  } catch (e) { toast("打开失败：本机服务没响应"); }
+    toast(reply ? (res.ok ? "已复制你的回复" + clipPeek(reply) + "。" + res.message + "，在输入框按 ⌘V 再回车"
+        : "已复制你的回复，但没打开会话：" + (res.message || "没成功"))
+      : res.message || (res.ok ? "已打开" : "没打开"));
+  } catch (e) { toast(reply ? "已复制你的回复，但没打开会话：本机服务没响应" : "打开失败：本机服务没响应"); }
   if (el && el.isConnected) { el.classList.remove("loading"); el.innerHTML = html; }
 }
+// 写剪贴板：先用 Clipboard API；浏览器不给（页面没焦点、不算安全来源）就退回 execCommand；都不行才报错
+async function writeClip(text) {
+  try { await navigator.clipboard.writeText(text); return; } catch (e) {}
+  const was = document.activeElement, ta = document.createElement("textarea");
+  ta.value = text; ta.setAttribute("readonly", ""); ta.style.cssText = "position:fixed;top:-1000px;opacity:0";
+  document.body.appendChild(ta); ta.select();
+  let ok = false;
+  try { ok = document.execCommand("copy"); } catch (e) {}
+  ta.remove();
+  if (was && was.focus) was.focus();
+  if (!ok) throw new Error("copy failed");
+}
+function clipPeek(text) {   // 提示条里给看一眼复制了什么：长的只留结尾（选的答复在最后）
+  const s = text.replace(/\s+/g, " ").trim();
+  return "「" + (s.length > 30 ? "…" + s.slice(-28) : s) + "」";
+}
 async function copyClip(id, msg) {
-  try { await navigator.clipboard.writeText(clips[id]); toast(msg || "已复制"); } catch (e) { toast("复制失败，请手动选中"); }
+  try { await writeClip(clips[id]); toast(msg || "已复制"); } catch (e) { toast("复制失败，请手动选中"); }
 }
 async function copyOpen(text, key, tail) {
-  try { await navigator.clipboard.writeText(text); } catch (e) { toast("复制失败，请手动选中"); return; }
-  if (!key) return toast("已复制");
+  try { await writeClip(text); } catch (e) { toast("复制失败，请手动选中"); return; }
+  if (!key) return toast("已复制" + clipPeek(text));
   try {
     const res = await post("open", key);
-    toast(res.ok ? "已复制。" + res.message + "，" + (tail || "在输入框按 ⌘V 再回车") : "已复制，但没打开会话：" + (res.message || "没成功"));
+    toast(res.ok ? "已复制" + clipPeek(text) + "。" + res.message + "，" + (tail || "在输入框按 ⌘V 再回车") : "已复制，但没打开会话：" + (res.message || "没成功"));
   } catch (e) { toast("已复制，但没打开会话：本机服务没响应"); }
 }
 
@@ -2372,6 +2395,18 @@ function replyLines(it) {
   return [quick, out.join("\n")].filter(Boolean).join("\n\n");
 }
 function replyText(it) { const p = pickOf(it); return p.text != null ? p.text : replyLines(it); }
+function replyNow(it) {
+  // 复制的就是框里看到的：刷新时你在打字、选字，页面先不重画，框里的字可能和现算的不一样
+  const el = selKey === it.key && document.getElementById("rtext");
+  return el ? el.value : replyText(it);
+}
+function replyReady(it) {
+  // 拼好、可以直接发的回复：详情里开着回复框、框里有字，而且你动过选项或改过字，或这一轮问的都已经选上（多半是它推荐的）
+  if (selKey !== it.key || !document.getElementById("rtext")) return "";
+  const p = pickOf(it), ds = decisionsOf(it), text = replyNow(it);
+  if (!text.trim()) return "";
+  return p.touched || p.text != null || (ds.length && ds.every(d => !d.opts.length || p.sel[d.k] != null)) ? text : "";
+}
 const NUM_LINE = /^\s*\d+\s*[.、．]\s*/;
 function setLine(text, d, ans) {
   // 改过回复后再点选项：只改这件对应的那一行（按问题原文认），别的字不动；ans = null 删掉这行
@@ -2452,6 +2487,7 @@ function pickOpt(key, i, j) {
   const p = pickOf(it), d = asksOf(it)[i];
   if (!d) return;
   if (p.sel[d.k] === j) delete p.sel[d.k]; else p.sel[d.k] = j;
+  p.touched = true;
   if (p.text != null) p.text = setLine(p.text, d, ansOf(it, p, d, i));
   renderDetail();
 }
@@ -2459,6 +2495,7 @@ function pickRecs(key) {
   const it = findItem(key);
   if (!it) return;
   const p = pickOf(it);
+  p.touched = true;
   decisionsOf(it).forEach((d, i) => {
     const j = recOf(d);
     if (j < 0 || p.sel[d.k] === j) return;
@@ -2472,6 +2509,7 @@ function pickQuick(key, j) {
   if (!it) return;
   const p = pickOf(it), nudges = nudgesOf(it), was = p.quick != null ? nudges[p.quick] : "";
   p.quick = p.quick === j ? null : j;
+  p.touched = true;
   const now = p.quick != null ? nudges[p.quick] : "";
   if (p.text != null) p.text = was && p.text.includes(was) ? p.text.replace(was, now) : now ? now + (p.text.trim() ? "\n\n" + p.text : "") : p.text;
   renderDetail();
@@ -2481,6 +2519,7 @@ function setText(key, el) {
   if (!it) return;
   const p = pickOf(it), was = p.text;
   p.text = el.value === replyLines(it) ? null : el.value;   // 改回和选项拼的一样，就当没改
+  p.touched = true;
   fitText(el);
   if ((was == null) !== (p.text == null)) {
     // 「按选项重写」出现或消失：只重画底栏，不动输入框（光标还在）
@@ -2526,7 +2565,7 @@ function objectCall(key, i) {
 function copyReply(key, open) {
   const it = findItem(key);
   if (!it) return;
-  const text = replyText(it);
+  const text = replyNow(it);
   if (!text.trim()) return toast("先选一下要回什么");
   copyOpen(text, open ? key : null);
 }
