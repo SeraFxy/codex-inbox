@@ -843,6 +843,7 @@ function reasonOf(it) {
   if (f === "inbox") return it.badges[0] || "待整理";
   if (f === "done") return it.headline || "已完成";
   if (f === "run" && it.bg && !it.bg.run) return "没在跑";
+  if (f === "run" && it.bang) return "在跑你的命令";
   return REASON[f];
 }
 function rowTime(it) {
@@ -866,6 +867,9 @@ function whyOf(it) {
   if (f === "review") return (decisionsOf(it).length ? "它说已经达到完成标准，另外问了你 " + decisionsOf(it).length + " 件事，选好回复它。" : "它说已经达到完成标准，等你验收。") +
     "看过没问题点「完成」结项；还要改就打开会话接着说。";
   if (f === "run" && it.bg) return bgWhy(it);
+  if (f === "run" && it.bang) return it.bang.bg
+    ? "你用 ! 跑的命令跑满 2 分钟还没完，Claude Code 把它挪到了后台。跑完会叫醒它接着看结果；等得比预想久，打开会话看一眼。"
+    : "你在会话里用 ! 跑的命令还没跑完，没什么要你现在做的。跑满 2 分钟会挪到后台，跑完叫醒它接着做；2 分钟内跑完的，要你回它一句它才接着做。";
   if (f === "run") return "它在处理你交代的事，还没停下来问你。需要你的时候会自己挪到「轮到你」。";
   if (f === "timer") return snoozed(it) ? "你推迟了它，到点之前不会再打扰你。" : k === "sched" ? "它安排了到点自己接着做，到时候会自动唤醒会话。" : "要你本人到点去做的事。到点会挪到「轮到你」，并弹 Mac 通知。";
   if (f === "peer") return "在等同事。到了约定再跟的时间，会挪到「轮到你」。";
@@ -1807,7 +1811,7 @@ function sumCard(it) {
   const loud = it.kind === "approval" || it.kind === "sched_failed" || f === "stuck" || ((d.doneAsk || alsoOf(it)) && f === "wait");
   let html = '<div class="sum"><div class="sum-now"><span class="sum-st"' + (ink ? ' style="color:var(--bk-' + ink + '-ink)"' : "") + ' title="' + esc(whyOf(it)) + '">' +
     esc(badgeOf(it)) + "</span>" + (hidden ? '<p class="sum-why">' + esc(whyOf(it)) + "</p>"
-      : '<p class="now">' + esc(it.headline) + "</p>" + (loud || (f === "run" && it.bg) ? '<p class="sum-why">' + esc(whyOf(it)) + "</p>" : "") +
+      : '<p class="now">' + esc(it.headline) + "</p>" + (loud || (f === "run" && (it.bg || it.bang)) ? '<p class="sum-why">' + esc(whyOf(it)) + "</p>" : "") +
         (ctxHot(it) ? '<p class="sum-why">上下文已用 <span class="mono">' + ctxOf(it) + "%</span>，这件做完换个新会话接着做，省 token。</p>" : "")) + "</div>";
   if (d.goal) {
     const src = d.goalFrom === "handoff" ? "取自 " + when(d.goalTs) + " 压缩时的交接" : d.goalTs ? "写于 " + when(d.goalTs) : "";

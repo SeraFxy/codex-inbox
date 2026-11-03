@@ -1169,6 +1169,9 @@ CLAUDE_KEYS = ('"type":"assistant"', '"type":"user"', '"type":"system"', '"type"
                '"type":"custom-title"', '"type":"last-prompt"', '"queued_command"', '"task_status"')
 BG_ID_RE = re.compile(r"running in background with ID: ([\w-]+)")
 TASK_ID_RE = re.compile(r"<task-id>([\w-]+)</task-id>")
+BANG_IN_RE = re.compile(r"<bash-input>(.*?)</bash-input>", re.S)
+BANG_BG_RE = re.compile(r"moved to the background \(ID: ([\w-]+)\)")
+LONG_PATH_RE = re.compile(r"(?<![\w.:/])(?:~|\.)?(?:/[^\s/]+){2,}/([^\s/]+)")   # 命令里的长路径只留文件名：zsh …/retry.sh
 SELF_WAKE_TOOLS = ("ScheduleWakeup", "CronCreate", "Monitor")   # 这几种会自己到点叫醒会话，后台没命令在跑也不算停了
 
 
@@ -1191,6 +1194,33 @@ def note_bg_started(st, content, ts):
                 bg = st.setdefault("bg", {})
                 bg[m.group(1)] = {"d": desc, "ts": ts}
                 keep_recent(bg)
+
+
+def note_shell(st, text, ts):
+    """命令相关的几种记录，都不是你对 AI 说的话，认出来就返回 True：
+    后台命令跑完的通知（会叫醒会话）；你在会话里用 ! 跑的命令（跑完、或跑满 2 分钟被挪到后台时才写进来，时间是开始跑的时间）和它的输出。"""
+    t = text.lstrip()
+    if t.startswith("<task-notification>"):
+        for tid in TASK_ID_RE.findall(text):
+            (st.get("bg") or {}).pop(tid, None)
+        return True
+    if t.startswith("<bash-input>"):
+        m = BANG_IN_RE.search(text)
+        st["bang"] = {"ts": ts, "cmd": " ".join((m.group(1) if m else "").split())[:200], "done": 0, "bg": ""}
+        return True
+    if t.startswith(("<bash-stdout>", "<bash-stderr>")):
+        b = st.get("bang")
+        if b and not b.get("done"):
+            b["done"] = ts
+            m = BANG_BG_RE.search(text)
+            if m:
+                # 跑满 2 分钟挪到后台了：和 AI 开的后台命令一样，跑完会发通知叫醒它
+                b["bg"] = m.group(1)
+                bg = st.setdefault("bg", {})
+                bg[m.group(1)] = {"d": b["cmd"][:120], "ts": b["ts"]}
+                keep_recent(bg)
+        return True
+    return False
 
 
 def claude_line(st, line):
@@ -1262,10 +1292,7 @@ def claude_line(st, line):
             st["last_kind"] = "tool"
             return
         text = unwrap_paste(take_text(content))
-        if text.lstrip().startswith("<task-notification>"):
-            # 后台命令跑完（或失败、被停掉）的通知：从「后台在跑」里去掉。它会叫醒会话，但不是你说的话
-            for tid in TASK_ID_RE.findall(text):
-                (st.get("bg") or {}).pop(tid, None)
+        if note_shell(st, text, ts):
             return
         if isinstance(content, list) and not text.lstrip().startswith(("<", "[Request interrupted")):
             note_images(st, ts, [((b.get("source") or {}).get("data"), (b.get("source") or {}).get("media_type"))
@@ -1670,6 +1697,7 @@ def scan(conn, cfg):
     migrate_project_parents(conn)
     migrate_handoffs(conn)
     migrate_asks(conn, cfg)
+    migrate_bangs(conn)
     t0 = time.time()
     horizon = t0 - max(cfg["window_days"], 30) * 86400
     files = [("claude", p) for p in glob.glob(os.path.join(CLAUDE_PROJECTS, "*", "*.jsonl"))]
@@ -2725,6 +2753,33 @@ def claude_live():
     return found
 
 
+def claude_bangs(tail=256 * 1024):
+    """每个会话最近一次用 ! 跑的命令（开始时间、命令）。对话记录要等命令跑完才写，输入框历史（history.jsonl）一回车就写，
+    看板靠它知道你正在跑命令。只读文件末尾一段：要的只是最后一条回复之后跑的。"""
+    found = {}
+    try:
+        with open(CLAUDE_HISTORY, "rb") as f:
+            f.seek(0, os.SEEK_END)
+            size = f.tell()
+            f.seek(max(0, size - tail))
+            data = f.read()
+    except OSError:
+        return found
+    if size > tail:
+        data = data[data.find(b"\n") + 1:]   # 第一行多半从中间切开
+    for raw in data.split(b"\n"):
+        if b'"display":"!' not in raw:
+            continue
+        try:
+            r = json.loads(raw.decode("utf-8", "replace"))
+        except ValueError:
+            continue
+        sid, ts = r.get("sessionId") or "", (r.get("timestamp") or 0) / 1000.0
+        if sid and ts >= found.get(sid, {}).get("ts", 0):
+            found[sid] = {"ts": ts, "cmd": " ".join((r.get("display") or "")[1:].split())[:200]}
+    return found
+
+
 WAITING_FOR = {
     # Claude Code 把 input needed 归为提问：AskUserQuestion 弹出的选项、MCP 要你填的表单都是它。
     # 提问那一条 tool_use 要等你回答后才写进对话记录，pending_tool 这时还是上一个工具，只能靠它认
@@ -2823,11 +2878,29 @@ def make_item(st, now, cfg, ov, sched, titles, goals, ctx):
     busy = bool(live) and live.get("status") == "busy"   # 命令跑得久，不是卡住了
     waiting = bool(live) and live.get("status") == "waiting" and (
         live.get("waitingFor") != "dialog open" or turn == "running")   # 你自己在空闲时打开的对话框不算
+    # 最后一条回复之后你在会话里用 ! 跑的命令：这一轮已经结束，回复里多半写着「等你」去跑它。
+    # 前 2 分钟对话记录里还没有（跑完才写），Claude Code 报 busy，从输入框历史认出来；跑满 2 分钟挪到后台，报 shell，跑完会叫醒它。
+    # 2 分钟内跑完的不会叫醒它，还要你回一句
+    you_run, bang_done = None, 0
+    if live and turn == "ended":
+        bang, hb = st.get("bang") or {}, ctx["bangs"].get(st["id"])
+        ref = max(st.get("final_ts") or 0, st.get("last_user_ts") or 0)
+        if busy and hb and hb["ts"] > ref and (bang.get("ts") or 0) < hb["ts"] - 1:
+            you_run = {"cmd": hb["cmd"], "since": hb["ts"], "bg": False}
+        elif (bang.get("ts") or 0) > ref:
+            if bang.get("bg") and bang["bg"] in (st.get("bg") or {}) and live.get("status") in ("shell", "busy"):
+                you_run = {"cmd": bang["cmd"], "since": bang["ts"], "bg": True}
+            elif bang.get("done") and not bang.get("bg"):
+                bang_done = bang["done"]
 
     if ov and ov["action"] == "untrack":
         group, headline = "hidden", "不再跟踪"
     elif ov and ov["action"] in ("done", "closed") and last <= (ov["at"] or 0) + 120:
         group, headline = "hidden", "已完成" if ov["action"] == "done" else "关了 cmux 标签页，自动标为完成"
+    elif you_run:
+        # 你在跑，没什么要你现在做的：放进「AI 在做」，写是哪条命令
+        group, kind = "ai", "ai"
+        headline = ("后台在跑你的命令：" if you_run["bg"] else "在跑你的命令：") + LONG_PATH_RE.sub(r"…/\1", you_run["cmd"])
     elif waiting:
         group, kind, sort = "need", "approval", 0
         tool = st.get("pending_tool") if turn == "running" else ""
@@ -2939,7 +3012,7 @@ def make_item(st, now, cfg, ov, sched, titles, goals, ctx):
         if group == "confirm":
             # 说做完了，又问了你要拍板的事：球在你这边，按「等你」排（红色），不按「待你确认完成」
             group, kind, sort, done_ask = "need", "me", 2, True
-        elif group in ("time", "peer", "ai") and not snoozed:
+        elif group in ("time", "peer", "ai") and not snoozed and not you_run:
             # 定了时、等时间点、等同事或说在后台做，又问了你要拍板的事：也是球在你这边，挪到「轮到你」。
             # 定时唤醒照常；原来在等什么记在 alsoWait，行上和详情里接着写。你自己点了「推迟」的不挪
             also, also_at = kind, sort if group in ("time", "peer") and 1e9 < sort < now + 365 * 86400 else 0
@@ -2960,7 +3033,7 @@ def make_item(st, now, cfg, ov, sched, titles, goals, ctx):
                           key=lambda a: a["first"])[:20]
         if old_asks:
             badges.append("%d 件没答" % len(old_asks))
-            if turn == "ended" and not snoozed and not also and group in ("confirm", "time", "peer", "ai"):
+            if turn == "ended" and not snoozed and not also and not you_run and group in ("confirm", "time", "peer", "ai"):
                 if group == "confirm":
                     group, kind, sort, done_ask = "need", "me", 2, True
                 else:
@@ -2976,7 +3049,10 @@ def make_item(st, now, cfg, ov, sched, titles, goals, ctx):
     # 说在做、这一轮却已经结束的：看它后台还有没有命令在跑（Claude Code 自己报 shell = 空闲、后台有命令）。
     # 有就写是哪个命令、等了多久，跑完会叫醒它；没有、也没定时叫醒自己，就是停了，不会自己接着做
     bg = None
-    if group in ("ai", "stale") and turn == "ended" and live:
+    if bang_done and group == "need" and kind == "me":
+        # 等你去做的事，你用 ! 跑了命令、2 分钟内跑完了：它不会自己接着做，要你回一句
+        headline = "你的命令 %s 跑完了，回它一句它才会接着做" % fmt_hm(bang_done, now)
+    if group in ("ai", "stale") and turn == "ended" and live and not you_run:
         tasks = sorted((st.get("bg") or {}).values(), key=lambda t: t.get("ts") or 0)
         if live.get("status") == "shell":
             t = tasks[-1] if tasks else {}
@@ -2995,7 +3071,8 @@ def make_item(st, now, cfg, ov, sched, titles, goals, ctx):
         "headline": headline, "badges": badges, "sort": sort, "idle": idle, "last": last, "wait": wait,
         "meta": "最后动静 %s（%s前）" % (fmt_time(last, now), fmt_ago(idle)) if last else "",
         "scheduleId": sched["id"] if sched and sched["status"] == "pending" else None,
-        "since": (st.get("last_user_ts") or 0) if group == "ai" else 0, "snoozed": bool(snoozed and group == "time"), "bg": bg,
+        "since": you_run["since"] if you_run else (st.get("last_user_ts") or 0) if group == "ai" else 0,
+        "snoozed": bool(snoozed and group == "time"), "bg": bg, "bang": you_run,
         "statusKey": "%s|%s" % ((status or {}).get("ts"), (status or {}).get("at")),
         "details": {
             "goal": goal_text, "criteria": goal_crit, "goalTs": goal_ts, "goalFrom": goal_from,
@@ -3137,7 +3214,7 @@ def build_board(conn, cfg, now=None):
         if cur is None or (r["status"] == "pending" and cur["status"] != "pending"):
             scheds[r["session_key"]] = r
     items, hidden, hashtags = [], [], {}
-    ctx = {"names": name_map(conn), "tags": tag_map(conn), "moved": load_moved(conn), "links": {}, "live": claude_live(),
+    ctx = {"names": name_map(conn), "tags": tag_map(conn), "moved": load_moved(conn), "links": {}, "live": claude_live(), "bangs": claude_bangs(),
            "goals": {r["session_key"]: dict(r) for r in conn.execute("SELECT * FROM goals")},
            "handoffs": {r["session_key"]: r["ts"] for r in conn.execute("SELECT session_key, ts FROM handoffs")},
            "ho_goals": {r["session_key"]: handoff_goal(r["head"]) for r in conn.execute("SELECT session_key, substr(text, 1, 3000) AS head FROM handoffs")},
@@ -4125,6 +4202,36 @@ def open_output_file(conn, lock, path, reveal):
     if r.returncode != 0:
         return False, "没打开：" + (r.stderr or r.stdout or "").strip()[-200:]
     return True, note + ("已在访达里找到 " if reveal else "已打开 ") + os.path.basename(path.rstrip("/"))
+
+
+def migrate_bangs(conn):
+    """一次性：老版本读对话记录时没认你用 ! 跑的命令。最近一天有动静的 Claude 会话，从文件末尾补读这几种记录。"""
+    if meta_get(conn, "mig_bangs"):
+        return
+    rows = conn.execute("SELECT f.path, f.session_key, s.data FROM files f JOIN sessions s ON s.key = f.session_key "
+                        "WHERE f.session_key LIKE 'claude:%' AND f.mtime > ?", (time.time() - 86400,)).fetchall()
+    for row in rows:
+        try:
+            with open(row["path"], "rb") as f:
+                f.seek(0, os.SEEK_END)
+                f.seek(max(0, f.tell() - 4 * 1024 * 1024))
+                data = f.read()
+        except OSError:
+            continue
+        if b"<bash-input>" not in data:
+            continue
+        st = json.loads(row["data"])
+        for raw in data.split(b"\n"):
+            if b'"type":"user"' not in raw or (b"<bash-" not in raw and b"<task-notification>" not in raw):
+                continue
+            try:
+                rec = json.loads(raw.decode("utf-8", "replace"))
+            except ValueError:
+                continue
+            if rec.get("type") == "user" and not rec.get("isSidechain") and not rec.get("isMeta"):
+                note_shell(st, unwrap_paste(take_text((rec.get("message") or {}).get("content"))), parse_iso(rec.get("timestamp")) or 0)
+        conn.execute("UPDATE sessions SET data=? WHERE key=?", (json.dumps(st, ensure_ascii=False), row["session_key"]))
+    meta_set(conn, "mig_bangs", 1)
 
 
 def migrate_tz(conn):
