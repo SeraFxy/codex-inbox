@@ -5041,6 +5041,110 @@ def apply_rules(path, action, block):
     return "已新建文件并加上规则" if state == "missing" else "已在文件末尾加上规则"
 
 
+# ---------------------------------------------------------------- 产出物留档钩子：Claude Code 和 Codex 每轮结束调用 ledger archive
+
+ARCHIVE_HOOK_NAME = "产出物留档到任务台账"
+ARCHIVE_HOOK_RE = re.compile(r"ledger\.py[\"']?\s+archive\s+--hook\s+(claude|codex)\b")
+
+
+def hook_targets():
+    """[(工具名, 钩子配置文件, --hook 参数, 这一条另加的字段)]：工具的目录在（装过）才往里加。
+    Codex 设置页里钩子的名字取 statusMessage。"""
+    return [("Claude Code", os.path.join(HOME, ".claude", "settings.json"), "claude", {}),
+            ("Codex", os.path.join(CODEX_HOME, "hooks.json"), "codex", {"statusMessage": ARCHIVE_HOOK_NAME})]
+
+
+def hook_command(which):
+    """钩子要跑的命令。装在家目录下的写成 "$HOME/…"，配置文件里不留用户名。"""
+    script = os.path.join(BASE, "ledger.py")
+    rel = os.path.relpath(script, HOME)
+    if not rel.startswith("..") and not re.search(r"[\"$`\\]", rel):
+        path = '"$HOME/%s"' % rel
+    else:
+        path = "'%s'" % script.replace("'", "'\\''")
+    return "/usr/bin/python3 -I %s archive --hook %s" % (path, which)
+
+
+def load_hooks_conf(path):
+    """读钩子配置：(dict 或 None, 错误)。文件不在当空配置。"""
+    try:
+        with open(path, encoding="utf-8") as f:
+            d = json.load(f)
+    except FileNotFoundError:
+        return {}, ""
+    except (OSError, ValueError) as e:
+        return None, str(e)[:80]
+    return (d, "") if isinstance(d, dict) else (None, "最外层不是对象")
+
+
+def find_archive_hook(d, which):
+    """配置里已有的留档钩子：(第几组, 组里第几条, 命令)；装在别的目录的也认。没有返回 None。"""
+    for i, e in enumerate(((d.get("hooks") or {}).get("Stop")) or []):
+        for j, h in enumerate((e or {}).get("hooks") or []):
+            m = ARCHIVE_HOOK_RE.search(str(h.get("command") or ""))
+            if m and m.group(1) == which:
+                return i, j, h["command"]
+    return None
+
+
+def codex_hook_trusted(path, i, j):
+    """Codex 记信任的地方：config.toml 的 [hooks.state."<文件>:stop:<组>:<条>"]。只能看有没有记，记的哈希对不对得上算不出来。"""
+    try:
+        with open(os.path.join(CODEX_HOME, "config.toml"), encoding="utf-8") as f:
+            return '[hooks.state."%s:stop:%d:%d"]' % (path, i, j) in f.read()
+    except OSError:
+        return False
+
+
+def hooks_status(path, which):
+    """(ok / stale / missing / broken, 说明, 位置)"""
+    d, err = load_hooks_conf(path)
+    if d is None:
+        return "broken", "不是合法 JSON（%s）" % err, None
+    hit = find_archive_hook(d, which)
+    if not hit:
+        return "missing", "还没加留档钩子", None
+    if hit[2] != hook_command(which):
+        return "stale", "有留档钩子，但指向别的安装：%s" % hit[2][:100], hit[:2]
+    return "ok", "已加留档钩子", hit[:2]
+
+
+def apply_hooks(path, which, action, extra):
+    """对一个配置文件执行 install / remove，返回做了什么。只动留档这一条，别的钩子和设置原样留着；改之前备份成 .bak-codex-inbox。"""
+    d, err = load_hooks_conf(path)
+    if d is None:
+        return "跳过：不是合法 JSON（%s），修好再运行" % err
+    hit, cmd = find_archive_hook(d, which), hook_command(which)
+    if action == "remove":
+        if not hit:
+            return "没有留档钩子，不用删"
+        stop = d["hooks"]["Stop"]
+        del stop[hit[0]]["hooks"][hit[1]]
+        if not stop[hit[0]]["hooks"]:
+            del stop[hit[0]]
+        if not stop:
+            del d["hooks"]["Stop"]
+        done = "已删掉留档钩子，别的设置没动"
+    elif hit and hit[2] == cmd:
+        return "已是最新，没改"
+    elif hit:
+        d["hooks"]["Stop"][hit[0]]["hooks"][hit[1]].update(dict(extra, command=cmd))
+        done = "已原地更新（原来指向别的安装）"
+    else:
+        hooks = d.get("hooks") if isinstance(d.get("hooks"), dict) else None
+        if hooks is None:
+            hooks = d["hooks"] = {}
+        hooks.setdefault("Stop", []).append({"hooks": [dict({"type": "command", "command": cmd, "timeout": 30}, **extra)]})
+        done = "已加上留档钩子，别的钩子和设置没动"
+    try:
+        if os.path.exists(path):
+            shutil.copy2(path, path + ".bak-codex-inbox")
+        write_text(path, json.dumps(d, ensure_ascii=False, indent=2) + "\n")
+    except OSError as e:
+        return "写不进去：%s。被沙箱或权限拦了的话，请你在终端里运行 %s" % (e.strerror or e, ledger_cmd("hooks", action))
+    return done
+
+
 def board_up(port):
     try:
         urlopen("http://127.0.0.1:%s/" % port, timeout=3).read(64)
@@ -5216,6 +5320,25 @@ def doctor_items():
     if block and not seen:
         add("必做", "fail", "Codex / Claude Code", "没找到 ~/.codex 和 ~/.claude，看板没有会话可读", "先装 Codex 或 Claude Code 并至少用一次")
 
+    # 产出物留档钩子：可选，没装看板照常用，只是 AI 给的文件不存副本、搜不到正文
+    for tool, path, which, extra in hook_targets():
+        name = "%s 的留档钩子" % tool
+        if not os.path.isdir(os.path.dirname(path)):
+            continue
+        code, text, at = hooks_status(path, which)
+        where = "%s：%s" % (home_rel(path), text)
+        if code == "missing":
+            add("可选", "off", name, where + "。AI 给的本机文件不存副本，原文件改了、删了就找不回，也搜不到正文", "运行 " + ledger_cmd("hooks", "install"))
+        elif code == "broken":
+            add("可选", "fail", name, where, "打开 %s 修好 JSON，再运行 %s" % (home_rel(path), ledger_cmd("hooks", "install")))
+        elif code == "stale":
+            add("可选", "fail", name, where, "运行 " + ledger_cmd("hooks", "install"))
+        elif tool == "Codex" and not codex_hook_trusted(path, *at):
+            add("可选", "warn", name, where + "，但 Codex 里还没点信任，不会运行",
+                "桌面版 Codex 打开「设置 → Hooks」，终端版在对话框里输入 /hooks，找到「%s」点 Trust" % ARCHIVE_HOOK_NAME)
+        else:
+            add("可选", "ok", name, where, note="Codex 改过钩子要重新点信任" if tool == "Codex" else "")
+
     # 通知小程序
     app = notifier_app()
     perm = "通知权限没法自动检测：没收到通知时，去「系统设置 → 通知 → AI 任务台账」打开「允许通知」"
@@ -5387,6 +5510,30 @@ def cmd_rules(args):
             print("%s %s：%s" % (tool, home_rel(path), apply_rules(path, args.action, block)))
     if args.action == "install":
         print("新开的会话才会按规则写状态行；正在跑的会话要重开才生效。")
+
+
+def cmd_hooks(args):
+    seen = []
+    for tool, path, which, extra in hook_targets():
+        if not os.path.isdir(os.path.dirname(path)):
+            print("➖ %s：没有 %s，没装就不加" % (tool, home_rel(os.path.dirname(path))))
+            continue
+        seen.append(tool)
+        if args.action == "show":
+            code, text, at = hooks_status(path, which)
+            if tool == "Codex" and code == "ok":
+                text += "，" + ("Codex 里点过信任" if codex_hook_trusted(path, *at) else "Codex 里还没点信任，不会运行")
+            print("%s %s：%s" % (tool, home_rel(path), text))
+        else:
+            print("%s %s：%s" % (tool, home_rel(path), apply_hooks(path, which, args.action, extra)))
+    if args.action == "show":
+        print("钩子命令：" + hook_command("claude"))
+    elif args.action == "install":
+        if "Claude Code" in seen:
+            print("Claude Code：新开的会话生效；正在跑的会话在 /hooks 里打开看一次才生效。")
+        if "Codex" in seen:
+            print("Codex：要你本人点一次信任才会运行：桌面版在「设置 → Hooks」，终端版在对话框里输入 /hooks，找到「%s」点 Trust。" % ARCHIVE_HOOK_NAME)
+        print("以前给过的文件想补一份，运行 " + ledger_cmd("archive", "--backfill"))
 
 
 def cmd_doctor(args):
@@ -5584,6 +5731,8 @@ def main():
     p.add_argument("--sample", action="store_true", help="标为示意，并把今天记为已发")
     p = sub.add_parser("rules", help="把状态行规则加进（或移出）Codex 和 Claude Code 的全局规则文件")
     p.add_argument("action", choices=["install", "remove", "show"])
+    p = sub.add_parser("hooks", help="把产出物留档钩子加进（或移出）Claude Code 和 Codex 的配置")
+    p.add_argument("action", choices=["install", "remove", "show"])
     p = sub.add_parser("doctor", help="只读体检：逐项检查安装是否完整，并给出下一步")
     p.add_argument("--json", action="store_true", help="输出 JSON，给脚本或 AI 代理读")
     p = sub.add_parser("feishu-setup", help="把 lark-cli 当前登录的人写进 config.json，并发一条测试汇总")
@@ -5596,7 +5745,7 @@ def main():
     p.add_argument("paths", nargs="*", help="要留档的文件")
     args = ap.parse_args()
     handlers = {"archive": cmd_archive, "serve": cmd_serve, "scan": cmd_scan, "schedule": cmd_schedule, "schedules": cmd_schedules,
-                "cancel": cmd_cancel, "digest": cmd_digest, "rules": cmd_rules, "doctor": cmd_doctor,
+                "cancel": cmd_cancel, "digest": cmd_digest, "rules": cmd_rules, "hooks": cmd_hooks, "doctor": cmd_doctor,
                 "feishu-setup": cmd_feishu_setup, "cmux-setup": cmd_cmux_setup}
     if args.cmd not in handlers:
         ap.print_help()

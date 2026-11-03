@@ -48,12 +48,13 @@ fi
 - 输出「服务还没起来」：等 10 秒运行 `curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:47800/`，应为 `200`。还不行就看 `tail -20 ~/codex-inbox/logs/launchd.err`。里面有 `Address already in use`：**停下来问用户**要不要换端口；同意就把 `~/codex-inbox/config.json` 里的 `"port"` 改成别的数（如 `47801`），再运行一次 `install.sh`。
 - 输出「通知小程序没建成」：看板照常能用，只是通知改由系统脚本弹出。把 `tail -20 ~/codex-inbox/logs/notifier-build.log` 告诉用户。
 
-## 3. 加状态行规则
+## 3. 加状态行规则和留档钩子
 
-看板靠 AI 每条回复最后一行的 📌 状态行来分组，所以要把规则加进 Codex 和 Claude Code 的全局规则文件。先预览：
+看板靠 AI 每条回复最后一行的 📌 状态行来分组，所以要把规则加进 Codex 和 Claude Code 的全局规则文件；再各加一个留档钩子，把 AI 给的本机文件存一份。先预览：
 
 ```sh
 ~/codex-inbox/ledger rules show
+~/codex-inbox/ledger hooks show
 ```
 
 **停下来问用户**，把下面这段话和预览结果告诉用户，同意了再加：
@@ -63,9 +64,12 @@ fi
 > - `~/.claude/CLAUDE.md`（Claude Code 的全局规则；没装 Claude Code 就不加）
 >
 > 文件里已经有你自己写的状态行规则的话会跳过，不会重复加。文件的其他内容不动。
+>
+> 另外往 `~/.claude/settings.json` 和 `~/.codex/hooks.json` 的 Stop 钩子里各加一条「产出物留档」：每轮结束时，把 AI 这一轮提到的本机文件复制一份到 `~/codex-inbox/data/archive/`（按内容去重，单个超过 50 MB 的不存）。这样原文件改了、删了，看板里还能打开老版本，也能按正文搜到。别的钩子和设置不动，改之前各备份成 `.bak-codex-inbox`。不想存副本可以只加规则。
 
 ```sh
 ~/codex-inbox/ledger rules install
+~/codex-inbox/ledger hooks install
 ```
 
 - 成功：每个文件打印一行结果：已新建 / 已在末尾加上 / 已原地更新 / 已是最新 / 没装就不加。
@@ -73,6 +77,14 @@ fi
 - 「跳过：codex-inbox 标记不成对」：把文件路径告诉用户，请他删掉残缺的标记行后再运行。
 - 告诉用户：**规则只对新开的会话生效**，正在跑的会话要重开才会写状态行。包括你自己这个会话。
 - 想撤销：`~/codex-inbox/ledger rules remove`（只删标记之间的内容）。
+- `hooks install` 成功：每个配置文件打印一行：已加上 / 已是最新 / 已原地更新（原来指向别的安装）/ 没装就不加。
+- `hooks install` 被权限拦下：Claude Code 的 auto mode 会拦「改自己的配置」，Codex 的沙箱可能不让写 `~/.claude`、`~/.codex`。不要换个写法绕过去：
+  - 你是 Claude Code：请用户在输入框里输入 `! ~/codex-inbox/ledger hooks install` 回车。`!` 开头的命令由用户本人运行，输出会回到对话里，你看输出确认成功。
+  - 你是 Codex：按 Codex 的提示申请在沙箱外运行，等用户批准；批准不了就请用户在终端里运行 `~/codex-inbox/ledger hooks install`，把输出贴给你。
+- 「跳过：不是合法 JSON」：把文件路径告诉用户，请他修好（或经他同意由你修）再运行。不要整个覆盖他的配置。
+- **要用户本人做**（装了 Codex 才有）：Codex 的新钩子要本人点一次信任才会运行。桌面版打开「设置 → Hooks」，终端版在对话框里输入 `/hooks`，找到「产出物留档到任务台账」点 Trust。用户说点好了，运行 `~/codex-inbox/ledger hooks show`，Codex 那行是「Codex 里点过信任」才算好。
+- Claude Code 的钩子在新开的会话里生效，不用用户再做什么。
+- 想撤销：`~/codex-inbox/ledger hooks remove`（只删留档这一条）。
 
 ## 4. 飞书每日汇总（可选）
 
@@ -168,6 +180,6 @@ fi
 用几句话告诉用户：
 
 - 看板地址：`http://127.0.0.1:47800`（以 doctor 最后一行为准），建议固定在浏览器标签栏。
-- 还剩哪些要本人做的事，比如：没收到通知的去「系统设置 → 通知 → AI 任务台账」打开；飞书或 cmux 的授权还没做完的；**正在跑的会话要重开才会写状态行**。
-- 以后更新：`git -C ~/codex-inbox pull && ~/codex-inbox/install.sh && ~/codex-inbox/ledger rules install`。
-- 卸载：`~/codex-inbox/uninstall.sh` 停掉服务；`~/codex-inbox/ledger rules remove` 删掉加进去的规则；不要数据了再删掉 `~/codex-inbox` 整个目录。
+- 还剩哪些要本人做的事，比如：没收到通知的去「系统设置 → 通知 → AI 任务台账」打开；Codex 里还没给「产出物留档到任务台账」点 Trust 的；飞书或 cmux 的授权还没做完的；**正在跑的会话要重开才会写状态行**。
+- 以后更新：`git -C ~/codex-inbox pull && ~/codex-inbox/install.sh && ~/codex-inbox/ledger rules install && ~/codex-inbox/ledger hooks install`。
+- 卸载：`~/codex-inbox/uninstall.sh` 停掉服务；`~/codex-inbox/ledger rules remove` 删掉加进去的规则；`~/codex-inbox/ledger hooks remove` 删掉留档钩子；不要数据了再删掉 `~/codex-inbox` 整个目录。
