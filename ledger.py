@@ -967,6 +967,13 @@ def extract_links(text, cwd=""):
     return out
 
 
+def note_queued(st, rec, ts):
+    text = rec.get("content")
+    text = unwrap_paste(text if isinstance(text, str) else take_text(text))
+    if text.strip() and not is_injected(text):
+        note_answers(st, text, ts)
+
+
 def note_pr_link(st, ts, rec):
     """Claude Code 自己记下的 MR / PR（本会话用 glab、gh 建过、看过的，带完整地址），记进这个会话的「MR 和流水线」。
     AI 在回复里只写「MR !964」不带链接时，靠它也能对上。"""
@@ -1208,7 +1215,7 @@ def on_final(st, text, ts):
 
 
 CLAUDE_KEYS = ('"type":"assistant"', '"type":"user"', '"type":"system"', '"type":"ai-title"',
-               '"type":"custom-title"', '"type":"last-prompt"', '"queued_command"', '"task_status"', '"type":"pr-link"')
+               '"type":"custom-title"', '"type":"last-prompt"', '"queued_command"', '"task_status"', '"type":"pr-link"', '"type":"queue-operation"')
 BG_ID_RE = re.compile(r"running in background with ID: ([\w-]+)")
 TASK_ID_RE = re.compile(r"<task-id>([\w-]+)</task-id>")
 BANG_IN_RE = re.compile(r"<bash-input>(.*?)</bash-input>", re.S)
@@ -1311,6 +1318,11 @@ def claude_line(st, line):
         st["entrypoint"] = rec["entrypoint"]
     if typ == "pr-link":
         note_pr_link(st, ts, rec)
+        return
+    if typ == "queue-operation":
+        # 会话在干活或压缩上下文时你发的话先排队，等它空下来才变成正式消息（可能要好几分钟）。排队那一刻你就已经答了，先认 ❓
+        if rec.get("operation") == "enqueue":
+            note_queued(st, rec, ts)
         return
     if typ == "ai-title":
         st["ai_title"] = rec.get("aiTitle") or st["ai_title"]
@@ -1666,6 +1678,45 @@ def migrate_answers(conn):
     log("按新的认法补认了 %d 件你已经答过的 ❓" % n)
 
 
+def migrate_queued_answers(conn):
+    """排队的话（queue-operation）以前不认：还没答的 ❓，拿对话记录里它问了以后你排队发的话重新认一次。只跑一次。"""
+    if meta_get(conn, "queued_answers_v1"):
+        return
+    n = 0
+    for r in conn.execute("SELECT key, data FROM sessions WHERE key LIKE 'claude:%' AND data LIKE '%\"asks\"%'").fetchall():
+        try:
+            st = json.loads(r["data"])
+        except ValueError:
+            continue
+        todo = [a for a in st.get("asks") or [] if not a.get("done")]
+        if not todo or not st.get("path"):
+            continue
+        try:
+            with open(st["path"], encoding="utf-8", errors="replace") as f:
+                for line in f:
+                    if '"queue-operation"' not in line or '"enqueue"' not in line:
+                        continue
+                    try:
+                        rec = json.loads(line)
+                    except ValueError:
+                        continue
+                    if not isinstance(rec, dict):
+                        continue
+                    ts = parse_iso(rec.get("timestamp")) or 0
+                    cand = [a for a in todo if not a.get("done") and (a.get("last") or a.get("first") or 0) < ts]
+                    if cand and rec.get("operation") == "enqueue":
+                        note_queued({"asks": cand}, rec, ts)
+        except OSError:
+            continue
+        got = sum(1 for a in todo if a.get("done"))
+        if got:
+            conn.execute("UPDATE sessions SET data=? WHERE key=?", (json.dumps(st, ensure_ascii=False), r["key"]))
+            n += got
+    meta_set(conn, "queued_answers_v1", time.time())
+    conn.commit()
+    log("补认了 %d 件你排队发的话里答过的 ❓" % n)
+
+
 def migrate_ctx(conn, horizon):
     """上下文占用是后加的：已经读过的会话，从文件末尾补一次用量。只跑一次。"""
     if meta_get(conn, "ctx_v1"):
@@ -1822,7 +1873,8 @@ def scan(conn, cfg):
                      (key, st["last_ts"] or stt.st_mtime, json.dumps(st, ensure_ascii=False)))
         conn.execute("INSERT OR REPLACE INTO files (path, session_key, size, mtime, offset) VALUES (?, ?, ?, ?, ?)",
                      (path, key, stt.st_size, stt.st_mtime, offset))
-    for step in (lambda: migrate_ctx(conn, horizon), lambda: migrate_ai_notes(conn), lambda: migrate_answers(conn)):
+    for step in (lambda: migrate_ctx(conn, horizon), lambda: migrate_ai_notes(conn), lambda: migrate_answers(conn),
+                 lambda: migrate_queued_answers(conn)):
         try:
             step()
         except Exception:
