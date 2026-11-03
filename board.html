@@ -1812,6 +1812,7 @@ function sumCard(it) {
   let html = '<div class="sum"><div class="sum-now"><span class="sum-st"' + (ink ? ' style="color:var(--bk-' + ink + '-ink)"' : "") + ' title="' + esc(whyOf(it)) + '">' +
     esc(badgeOf(it)) + "</span>" + (hidden ? '<p class="sum-why">' + esc(whyOf(it)) + "</p>"
       : '<p class="now">' + esc(it.headline) + "</p>" + (loud || (f === "run" && (it.bg || it.bang)) ? '<p class="sum-why">' + esc(whyOf(it)) + "</p>" : "") +
+        (d.statusNote ? '<p class="sum-why">' + esc(d.statusNote) + "</p>" : "") +
         (ctxHot(it) ? '<p class="sum-why">上下文已用 <span class="mono">' + ctxOf(it) + "%</span>，这件做完换个新会话接着做，省 token。</p>" : "")) + "</div>";
   if (d.goal) {
     const src = d.goalFrom === "handoff" ? "取自 " + when(d.goalTs) + " 压缩时的交接" : d.goalTs ? "写于 " + when(d.goalTs) : "";

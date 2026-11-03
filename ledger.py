@@ -1234,6 +1234,16 @@ def note_shell(st, text, ts):
     return False
 
 
+RECAP_TAIL_RE = re.compile(r"\s*\(disable recaps in /config\)\s*$")
+
+
+def note_recap(st, content, ts):
+    """Claude Code 在你离开时写的回顾（recap，终端里 ※ 开头那段）：它也照状态行规则写 📌，记下最近一份。用不用见 make_item。"""
+    s = parse_status(RECAP_TAIL_RE.sub("", content if isinstance(content, str) else ""), ts)
+    if s:
+        st["recap"] = {"ts": ts, "status": s}
+
+
 def claude_line(st, line):
     if not any(k in line for k in CLAUDE_KEYS):
         return
@@ -1267,6 +1277,8 @@ def claude_line(st, line):
             on_final(st, st["turn_text"], ts)
         elif rec.get("subtype") == "compact_boundary":
             st["ctx_used"] = 0   # 压缩过了，等下一条回复再算
+        elif rec.get("subtype") == "away_summary":
+            note_recap(st, rec.get("content"), ts)
         return
     if rec.get("isSidechain"):
         return
@@ -1709,6 +1721,7 @@ def scan(conn, cfg):
     migrate_handoffs(conn)
     migrate_asks(conn, cfg)
     migrate_bangs(conn)
+    migrate_recaps(conn)
     t0 = time.time()
     horizon = t0 - max(cfg["window_days"], 30) * 86400
     files = [("claude", p) for p in glob.glob(os.path.join(CLAUDE_PROJECTS, "*", "*.jsonl"))]
@@ -2865,6 +2878,17 @@ def make_item(st, now, cfg, ov, sched, titles, goals, ctx):
     elif turn == "ended" and (st.get("final_ts") or 0) >= (st.get("last_user_ts") or 0):
         # 中断的那一轮不更新 final_ts，last_text 还是上一轮的，里面的选项已经过时
         decisions = parse_decisions(st.get("last_text"))
+    # 最后一条回复之后、你还没说话时 Claude Code 写的回顾：只在两种时候用它的 📌——最后一条回复没写 📌；写了「待你确认完成」、
+    # 回顾却说还要你做事（审稿、拍板，它才能接着做）。11 月 3 日对过 224 份回顾：别的状态两边一份不差，只有这两种回顾更准
+    recap, status_note = st.get("recap") or {}, ""
+    if turn == "ended" and recap.get("status") and (recap.get("ts") or 0) > max(st.get("final_ts") or 0, st.get("last_user_ts") or 0):
+        rs = recap["status"]
+        if not (status and has_status):
+            status, has_status = rs, True
+            status_note = "最后一条回复没写状态行，这是 Claude Code 离开时写的回顾里的状态。"
+        elif status.get("kind") == "confirm" and rs.get("kind") == "me":
+            status_note = "它最后一条回复写的是「待你确认完成：%s」；Claude Code 离开时写的回顾说还要你做这件。" % (status.get("desc") or "")[:120]
+            status, has_status = rs, True
     goal_obj = st.get("goal") or {}
     codex_goal = goals.get(st["id"], {}) if st["tool"] == "codex" else {}
     title = (ctx["names"].get(key) or st.get("custom_title") or readable(titles.get(st["id"])) or readable(st.get("ai_title")) or goal_obj.get("goal")
@@ -3104,6 +3128,7 @@ def make_item(st, now, cfg, ov, sched, titles, goals, ctx):
             "handoffTs": ctx.get("handoffs", {}).get(key) or 0,
             "ctxPct": ctx_pct(st),   # 上下文用了百分之几，算不出来是 None   # 压缩时的交接：正文较长，详情里再按 /api/handoff 取
             "status": ("📌 " + status["label"] + ("｜" + status["desc"] if status.get("desc") else "")) if status else "",
+            "statusNote": status_note,   # 状态取自 Claude Code 的回顾时，说明为什么
             "decisions": decisions, "doneAsk": done_ask, "alsoWait": also, "alsoAt": also_at, "oldAsks": old_asks,
             # 「等你」写的那件事：没有 ❓ 要拍板时，详情里单列「要你做」，做完了回它一句
             "todo": (status.get("desc") or "") if status and status.get("kind") == "me" else "",
@@ -4215,9 +4240,10 @@ def open_output_file(conn, lock, path, reveal):
     return True, note + ("已在访达里找到 " if reveal else "已打开 ") + os.path.basename(path.rstrip("/"))
 
 
-def migrate_bangs(conn):
-    """一次性：老版本读对话记录时没认你用 ! 跑的命令。最近一天有动静的 Claude 会话，从文件末尾补读这几种记录。"""
-    if meta_get(conn, "mig_bangs"):
+def replay_tails(conn, flag, needle, keep, handle):
+    """一次性补读：老版本读对话记录时没认的几种记录。最近一天有动静的 Claude 会话，从文件末尾 4 MB 里挑出来按顺序重放。
+    needle：文件里有它才读；keep(raw)：这一行要不要解析；handle(st, rec)：处理一条记录。"""
+    if meta_get(conn, flag):
         return
     rows = conn.execute("SELECT f.path, f.session_key, s.data FROM files f JOIN sessions s ON s.key = f.session_key "
                         "WHERE f.session_key LIKE 'claude:%' AND f.mtime > ?", (time.time() - 86400,)).fetchall()
@@ -4229,20 +4255,37 @@ def migrate_bangs(conn):
                 data = f.read()
         except OSError:
             continue
-        if b"<bash-input>" not in data:
+        if needle not in data:
             continue
         st = json.loads(row["data"])
         for raw in data.split(b"\n"):
-            if b'"type":"user"' not in raw or (b"<bash-" not in raw and b"<task-notification>" not in raw):
+            if not keep(raw):
                 continue
             try:
                 rec = json.loads(raw.decode("utf-8", "replace"))
             except ValueError:
                 continue
-            if rec.get("type") == "user" and not rec.get("isSidechain") and not rec.get("isMeta"):
-                note_shell(st, unwrap_paste(take_text((rec.get("message") or {}).get("content"))), parse_iso(rec.get("timestamp")) or 0)
+            if not rec.get("isSidechain"):
+                handle(st, rec)
         conn.execute("UPDATE sessions SET data=? WHERE key=?", (json.dumps(st, ensure_ascii=False), row["session_key"]))
-    meta_set(conn, "mig_bangs", 1)
+    meta_set(conn, flag, 1)
+
+
+def migrate_bangs(conn):
+    """你用 ! 跑的命令、后台命令跑完的通知。"""
+    def handle(st, rec):
+        if rec.get("type") == "user" and not rec.get("isMeta"):
+            note_shell(st, unwrap_paste(take_text((rec.get("message") or {}).get("content"))), parse_iso(rec.get("timestamp")) or 0)
+    replay_tails(conn, "mig_bangs", b"<bash-input>",
+                 lambda raw: b'"type":"user"' in raw and (b"<bash-" in raw or b"<task-notification>" in raw), handle)
+
+
+def migrate_recaps(conn):
+    """Claude Code 离开时写的回顾。"""
+    def handle(st, rec):
+        if rec.get("type") == "system" and rec.get("subtype") == "away_summary":
+            note_recap(st, rec.get("content"), parse_iso(rec.get("timestamp")) or 0)
+    replay_tails(conn, "mig_recaps", b'"away_summary"', lambda raw: b'"away_summary"' in raw, handle)
 
 
 def migrate_tz(conn):
