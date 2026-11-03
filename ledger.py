@@ -966,6 +966,14 @@ def extract_links(text, cwd=""):
     return out
 
 
+def note_pr_link(st, ts, rec):
+    """Claude Code 自己记下的 MR / PR（本会话用 glab、gh 建过、看过的，带完整地址），记进这个会话的「MR 和流水线」。
+    AI 在回复里只写「MR !964」不带链接时，靠它也能对上。"""
+    url = rec.get("prUrl")
+    if isinstance(url, str) and url.startswith("https://") and out_cat(url) == "mr":
+        st.setdefault("new_links", []).append([ts, url[:1000], "", ""])
+
+
 def note_links(st, ts, text):
     if text and ("http" in text or "/" in text):
         found = extract_links(text, st.get("cwd") or "")
@@ -1199,7 +1207,7 @@ def on_final(st, text, ts):
 
 
 CLAUDE_KEYS = ('"type":"assistant"', '"type":"user"', '"type":"system"', '"type":"ai-title"',
-               '"type":"custom-title"', '"type":"last-prompt"', '"queued_command"', '"task_status"')
+               '"type":"custom-title"', '"type":"last-prompt"', '"queued_command"', '"task_status"', '"type":"pr-link"')
 BG_ID_RE = re.compile(r"running in background with ID: ([\w-]+)")
 TASK_ID_RE = re.compile(r"<task-id>([\w-]+)</task-id>")
 BANG_IN_RE = re.compile(r"<bash-input>(.*?)</bash-input>", re.S)
@@ -1266,6 +1274,21 @@ def note_recap(st, content, ts):
         st["recap"] = {"ts": ts, "status": s}
 
 
+QUIET_SYSTEM = ("compact_boundary", "away_summary", "informational")
+
+
+def quiet_rec(rec):
+    """Claude Code 自己写、不是你也不是 AI 在干活的记录：上下文压缩、你离开时写的回顾、压缩后重新附上的文件和工具列表。"""
+    typ = rec.get("type")
+    if typ == "system":
+        return rec.get("subtype") in QUIET_SYSTEM
+    if typ == "user":
+        return bool(rec.get("isCompactSummary"))
+    if typ == "attachment":
+        return (rec.get("attachment") or {}).get("type") != "queued_command"
+    return typ == "pr-link"
+
+
 def claude_line(st, line):
     if not any(k in line for k in CLAUDE_KEYS):
         return
@@ -1275,7 +1298,9 @@ def claude_line(st, line):
         return
     typ = rec.get("type")
     ts = parse_iso(rec.get("timestamp")) or 0
-    if ts > st["last_ts"]:
+    # 这一轮已经结束时，Claude Code 自己写的记录不算「动静」：闲着时自动压缩一次，「等了多久」「最后动静」就被清零了。
+    # 正在跑的一轮里照旧算，免得压缩那一两分钟被当成卡住
+    if ts > st["last_ts"] and not (st.get("turn") == "ended" and quiet_rec(rec)):
         st["last_ts"] = ts
     if rec.get("cwd"):
         st["cwd"] = rec["cwd"]
@@ -1283,6 +1308,9 @@ def claude_line(st, line):
         st["branch"] = rec["gitBranch"]
     if rec.get("entrypoint"):
         st["entrypoint"] = rec["entrypoint"]
+    if typ == "pr-link":
+        note_pr_link(st, ts, rec)
+        return
     if typ == "ai-title":
         st["ai_title"] = rec.get("aiTitle") or st["ai_title"]
         return
@@ -1746,6 +1774,7 @@ def scan(conn, cfg):
     migrate_recaps(conn)
     migrate_ask_pages(conn)
     migrate_ask_ids(conn)
+    migrate_quiet_ts(conn)
     t0 = time.time()
     horizon = t0 - max(cfg["window_days"], 30) * 86400
     files = [("claude", p) for p in glob.glob(os.path.join(CLAUDE_PROJECTS, "*", "*.jsonl"))]
@@ -2889,10 +2918,14 @@ def include_session(st):
     return st.get("n_prompts", 0) > 0
 
 
+WAKE_GRACE = 600   # 定时唤醒发出后，会话这么久还没接上就挪进「轮到你」
+
+
 def make_item(st, now, cfg, ov, sched, titles, goals, ctx):
     key = "%s:%s" % (st["tool"], st["id"])
     last = st.get("last_ts") or 0
     idle = now - last
+    due = 0
     if idle > cfg["window_days"] * 86400 and not sched:
         status = st.get("status") or {}
         if status.get("kind") not in ("peer", "time", "sched"):
@@ -3002,6 +3035,15 @@ def make_item(st, now, cfg, ov, sched, titles, goals, ctx):
         group, kind = "time", "sched"
         headline = "%s 自动唤醒会话：%s" % (fmt_time(sched["at"], now), sched["note"] or sched["prompt"][:60])
         sort = sched["at"]
+    elif sched and sched["status"] == "sent" and (sched["done_at"] or 0) > last:
+        # 唤醒的话已经发进会话，它还没接上（可能先在压缩上下文）。这时 📌 里约好的时间多半也到了，但跟进的是它自己，不是你
+        what = sched["note"] or sched["prompt"][:60]
+        if now - sched["done_at"] < WAKE_GRACE:
+            group, kind = "ai", "ai"
+            headline = "%s 唤醒了会话，等它接着做：%s" % (fmt_hm(sched["done_at"], now), what)
+        else:
+            group, kind, sort = "need", "wake_stuck", 0
+            headline = "%s 发出了定时唤醒，会话 %s没接上：%s" % (fmt_hm(sched["done_at"], now), fmt_ago(now - sched["done_at"]), what)
     elif sched and sched["status"] in ("failed", "missed") and (sched["done_at"] or 0) >= last - 60:
         group, kind, sort = "need", "sched_failed", 0
         headline = "定时唤醒没执行：%s" % (sched["last_error"] or "原因不明")
@@ -3030,7 +3072,7 @@ def make_item(st, now, cfg, ov, sched, titles, goals, ctx):
         elif k == "peer":
             kind = "peer"
             if at and at <= now:
-                group, sort = "need", 1
+                group, sort, due = "need", 1, at
                 headline = "该跟进了：等%s · %s" % (who, desc)
             else:
                 group, sort = "peer", at or (now + 1e9)
@@ -3139,7 +3181,7 @@ def make_item(st, now, cfg, ov, sched, titles, goals, ctx):
         "key": key, "tool": st["tool"], "toolLabel": "Claude" if st["tool"] == "claude" else "Codex",
         "title": title, "project": project_label, "projectKey": project, "color": project_color, "group": group, "kind": kind,
         "moved": {"from": home, "label": tag_of(ctx["tags"], home)[0]} if project != home else None, "auto": auto_of(key),
-        "headline": headline, "badges": badges, "sort": sort, "idle": idle, "last": last, "wait": wait,
+        "headline": headline, "badges": badges, "sort": sort, "idle": idle, "last": last, "wait": wait, "due": due,
         "meta": "最后动静 %s（%s前）" % (fmt_time(last, now), fmt_ago(idle)) if last else "",
         "scheduleId": sched["id"] if sched and sched["status"] == "pending" else None,
         "since": you_run["since"] if you_run else (st.get("last_user_ts") or 0) if group == "ai" else 0,
@@ -3280,10 +3322,12 @@ def build_board(conn, cfg, now=None):
     titles, goals = codex_extras()
     overrides = {r["key"]: r for r in conn.execute("SELECT * FROM overrides")}
     scheds = {}
-    for r in conn.execute("SELECT * FROM schedules WHERE status='pending' OR (status IN ('failed','missed') AND done_at > ?) ORDER BY at",
-                          (now - 3 * 86400,)):
+    # 还没到点的排最前；其次是最近一次发过、没发成的（刚发出的要看会话接上了没有，见 make_item）
+    for r in conn.execute("SELECT * FROM schedules WHERE status='pending' OR (status IN ('failed','missed') AND done_at > ?) "
+                          "OR (status='sent' AND done_at > ?) ORDER BY at", (now - 3 * 86400, now - 6 * 3600)):
         cur = scheds.get(r["session_key"])
-        if cur is None or (r["status"] == "pending" and cur["status"] != "pending"):
+        if cur is None or (r["status"] == "pending") > (cur["status"] == "pending") or (
+                r["status"] != "pending" and cur["status"] != "pending" and (r["done_at"] or 0) > (cur["done_at"] or 0)):
             scheds[r["session_key"]] = r
     items, hidden, hashtags = [], [], {}
     ctx = {"names": name_map(conn), "tags": tag_map(conn), "moved": load_moved(conn), "links": {}, "live": claude_live(), "bangs": claude_bangs(),
@@ -4608,6 +4652,47 @@ def migrate_ask_ids(conn):
         log("按新规则重认了 %d 个会话里 ❓ 的编号" % n)
 
 
+def migrate_quiet_ts(conn):
+    """「最后动静」不再算闲着时 Claude Code 自己写的记录：最近 7 天、这一轮已结束的 Claude 会话，从文件末尾 4 MB 重算一遍。只跑一次。"""
+    if meta_get(conn, "quiet_ts_v1"):
+        return
+    n = 0
+    rows = conn.execute("SELECT f.path, f.session_key, s.data FROM files f JOIN sessions s ON s.key = f.session_key "
+                        "WHERE f.session_key LIKE 'claude:%' AND f.mtime > ?", (time.time() - 7 * 86400,)).fetchall()
+    for row in rows:
+        st = json.loads(row["data"])
+        if st.get("turn") != "ended":
+            continue
+        try:
+            with open(row["path"], "rb") as f:
+                f.seek(0, os.SEEK_END)
+                f.seek(max(0, f.tell() - 4 * 1024 * 1024))
+                data = f.read()
+        except OSError:
+            continue
+        best = 0
+        for raw in data.split(b"\n"):
+            if not any(k.encode() in raw for k in CLAUDE_KEYS):
+                continue
+            try:
+                rec = json.loads(raw.decode("utf-8", "replace"))
+            except ValueError:
+                continue
+            if not isinstance(rec, dict):
+                continue
+            ts = parse_iso(rec.get("timestamp")) or 0
+            if ts > best and not quiet_rec(rec):
+                best = ts
+        if best and best < (st.get("last_ts") or 0):
+            st["last_ts"] = best
+            conn.execute("UPDATE sessions SET data=?, last_activity=? WHERE key=?", (json.dumps(st, ensure_ascii=False), best, row["session_key"]))
+            n += 1
+    meta_set(conn, "quiet_ts_v1", time.time())
+    conn.commit()
+    if n:
+        log("按新规则重算了 %d 个会话的最后动静" % n)
+
+
 def migrate_recaps(conn):
     """Claude Code 离开时写的回顾。"""
     def handle(st, rec):
@@ -4853,6 +4938,38 @@ def backfill_media():
     log("回填完成：%d 个文件，图片 %d 张（约 %d MB），用时 %d 秒" % (n_files, n_img, size // 1048576, time.time() - t0))
 
 
+def backfill_pr_links():
+    """看板开始读 Claude Code 记下的 MR（pr-link）之前的对话补一遍，只跑一次。先用 grep 挑出有这种记录的文件。"""
+    conn = open_db()
+    if meta_get(conn, "pr_links_v1"):
+        return
+    files = glob.glob(os.path.join(CLAUDE_PROJECTS, "*", "*.jsonl"))
+    hit = []
+    for i in range(0, len(files), 200):
+        r = run(["grep", "-l", '"type":"pr-link"'] + files[i:i + 200], timeout=600)
+        hit += (r.stdout or "").splitlines()
+    for path in hit:
+        st = {}
+        try:
+            with open(path, encoding="utf-8", errors="replace") as f:
+                for line in f:
+                    if '"type":"pr-link"' not in line:
+                        continue
+                    try:
+                        rec = json.loads(line)
+                    except ValueError:
+                        continue
+                    if isinstance(rec, dict) and rec.get("type") == "pr-link":
+                        note_pr_link(st, parse_iso(rec.get("timestamp")) or 0, rec)
+        except OSError:
+            continue
+        flush_media(conn, "claude:" + session_id_from_path("claude", path), st)
+        conn.commit()
+    meta_set(conn, "pr_links_v1", time.time())
+    conn.commit()
+    log("补 Claude Code 记下的 MR：%d 个对话" % len(hit))
+
+
 def backfill_outputs():
     """产出物加了「原话」和本机文件后补一遍：重读还在的 Claude 对话记录和 Codex 的全部回复，只跑一次。"""
     conn = open_db()
@@ -4927,7 +5044,7 @@ def cmd_serve(args):
     srv = ThreadingHTTPServer(("127.0.0.1", cfg["port"]), Handler)
     APP.maybe_scan(0)
     threading.Thread(target=APP.loop, daemon=True).start()
-    threading.Thread(target=lambda: (_guard(backfill_media), _guard(backfill_outputs)), daemon=True).start()
+    threading.Thread(target=lambda: (_guard(backfill_media), _guard(backfill_outputs), _guard(backfill_pr_links)), daemon=True).start()
     log("服务启动，端口 %s" % cfg["port"])
     srv.serve_forever()
 
