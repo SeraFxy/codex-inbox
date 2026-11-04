@@ -698,7 +698,7 @@ const VIEWS = {
   inbox: { label: "待整理", groups: ["backlog"], hint: "没写状态或很久没动静的会话。",
            emptyTitle: "都整理完了", emptyText: "新会话没写状态行时会先放在这里。" },
   hidden: { label: "已完成", groups: [], hint: "",
-            emptyTitle: "最近没有完成的", emptyText: "点了「完成」的会话会在这里留一阵，方便恢复。" }
+            emptyTitle: "最近没有完成的", emptyText: "点了「完成」的会话会在这里留 30 天，也在左栏最下面的「归档」里。" }
 };
 const TABS = ["you", "ai", "wait", "inbox"];
 const ORDER = { stuck: 0, alarm: 1, wait: 2, review: 3, run: 4, timer: 5, peer: 6, inbox: 7, done: 8 };
@@ -932,7 +932,8 @@ function srcOk(it) { return src === "all" || it.tool === src; }   // 页头的�
 function viewItems(v, all) {
   // all = 不管左栏选了什么，整个标签页的会话（来源筛选照样生效）
   if (!state) return [];
-  if (v === "hidden") return state.hidden.filter(it => srcOk(it) && (all || inScope(it)));
+  // 已完成：左栏选「全部」时（从「归档」里的「已完成的会话」进来）列所有完成的，含归档的项目和主题
+  if (v === "hidden") return state.hidden.filter(it => srcOk(it) && (all || scope.t === "all" || inScope(it)));
   const out = state.groups.filter(g => VIEWS[v].groups.includes(g.id)).reduce((a, g) => a.concat(g.items), []).filter(srcOk);
   // 置顶的在最上面，其余按更新时间，新的在前；「在等」按理由、到点时间排（等着的会话不会更新）
   let list = v === "wait" ? out.map((it, i) => [it, i]).sort((a, b) => ORDER[faceOf(a[0])] - ORDER[faceOf(b[0])] || a[1] - b[1]).map(x => x[0])
@@ -1261,7 +1262,8 @@ function setView(v) {
 // ---------------- 左栏：项目与主题
 function cntHtml(c) { return c.hot ? '<span class="count hot">' + c.hot + "</span>" : c.n ? '<span class="n">' + c.n + "</span>" : ""; }
 function sameScope(a, b) { return a.t === b.t && a.p === b.p && a.id === b.id; }
-function scopeData(sc) { return ' data-scope="' + esc(JSON.stringify(sc)) + '" aria-current="' + sameScope(sc, scope) + '"'; }
+function doneAll() { return view === "hidden" && scope.t === "all"; }   // 在看「归档」里的「已完成的会话」
+function scopeData(sc) { return ' data-scope="' + esc(JSON.stringify(sc)) + '" aria-current="' + (sameScope(sc, scope) && !(sc.t === "all" && doneAll())) + '"'; }
 function railItem(label, sc, c, cls, drop) {
   return '<button type="button" class="ri ' + cls + '"' + scopeData(sc) + (drop != null ? ' data-drop="' + drop + '"' : "") + ' onclick="setScope(this,event)">' +
     '<span class="nm" title="' + esc(label) + '">' + esc(label) + "</span>" + cntHtml(c) + "</button>";
@@ -1270,7 +1272,7 @@ function renderRail() {
   const d = railData();
   fixScope(d);
   document.getElementById("split").classList.toggle("railx", !railOpen);
-  document.getElementById("scopebtn").innerHTML = "<span>" + esc(scopeName(scope)) + "</span>" + ico("down", 14);
+  document.getElementById("scopebtn").innerHTML = "<span>" + (doneAll() ? "已完成的会话" : esc(scopeName(scope))) + "</span>" + ico("down", 14);
   let html = '<div class="rhead"><span>项目与主题</span>' +
     '<button type="button" class="btn ghost icon" aria-label="新建主题" title="新建主题" onclick="event.stopPropagation();newTopic(this)">' + ico("plus", 15) + "</button>" +
     '<button type="button" class="btn ghost icon" aria-label="收起侧栏" title="收起侧栏（[）" onclick="toggleRail()">' + ico("railL", 16) + "</button></div>" +
@@ -1288,10 +1290,13 @@ function renderRail() {
       ' data-key="' + esc(x.key) + '" onclick="event.stopPropagation();favMore(this,this.dataset.key)">' + ico("more", 15) + "</button></div>").join("")).join("");
   }
   html += autoSec();
-  if (arch.length || d.archTopics.length) {
+  const nDone = viewItems("hidden", true).length;
+  if (arch.length || d.archTopics.length || nDone) {
     html += '<button type="button" class="rsec" aria-expanded="' + archOpen + '" onclick="toggleArch()">' + ico(archOpen ? "down" : "right", 14) +
-      "<span>归档</span><span class=\"n\">" + (arch.length + d.archTopics.length) + "</span></button>";
+      "<span>归档</span><span class=\"n\">" + (arch.length + d.archTopics.length + (nDone ? 1 : 0)) + "</span></button>";
     if (archOpen) {
+      if (nDone) html += '<button type="button" class="ri sub" aria-current="' + doneAll() + '" title="最近 ' + doneDays() +
+        ' 天点了完成或不再跟踪的会话，所有项目的都在这里；你再和它说话，它会自己回到看板" onclick="goDone()"><span class="nm">已完成的会话</span><span class="n">' + nDone + "</span></button>";
       arch.forEach(p => { html += railGroup(p); });
       html += d.archTopics.map(x => topicRow(x, plabel(x.t.project) + " · " + x.t.name)).join("");
     }
@@ -1395,6 +1400,16 @@ function toggleArch() {
   archOpen = !archOpen; store("ledger.arch", archOpen);
   renderRail();
 }
+function doneDays() { return (state && (state.doneDays || state.windowDays)) || 30; }
+function goDone() {
+  // 左栏「归档」里的「已完成的会话」：所有项目完成、不再跟踪的会话
+  if (tab !== "board") setTab("board");
+  scope = { t: "all" }; store("ledger.scope", scope);
+  view = "hidden"; store("ledger.view", view);
+  selKey = null; selIdx = 0; closeMenu();
+  render();
+  document.getElementById("queue").scrollTop = 0;
+}
 function setScope(el, e) {
   const sc = JSON.parse(el.dataset.scope);
   // 双击项目或主题改名。第一下点击已经重画了左栏，所以看第二下的 detail，不用 dblclick
@@ -1402,9 +1417,10 @@ function setScope(el, e) {
     e.stopPropagation();
     return sc.t === "p" ? renameProject(sc.p) : renameTopic(sc.id);
   }
+  const wasDone = doneAll();
   scope = sc; store("ledger.scope", scope);
-  // 换了项目或主题：里面有轮到你的事就先看「轮到你」
-  if (viewItems("you").length) { view = "you"; store("ledger.view", view); }
+  // 换了项目或主题：里面有轮到你的事就先看「轮到你」；从「已完成的会话」点「全部」也回到标签页
+  if (viewItems("you").length || wasDone && sc.t === "all") { view = "you"; store("ledger.view", view); }
   const p = scope.t === "t" ? (topicById(scope.id) || {}).project : scope.p;
   if (p && railFold.delete(p)) store("ledger.fold", [...railFold]);
   if (((p && archivedP(p)) || (scope.t === "t" && archivedT(scope.id))) && !archOpen) { archOpen = true; store("ledger.arch", true); }
@@ -1432,8 +1448,9 @@ function openScopes(el) {
   const one = p => b(p.label, { t: "p", p: p.key }, p.c) + p.topics.map(x => b(x.t.name, { t: "t", id: x.t.id }, x.c, "sub")).join("") +
     (p.topics.length && p.none.n ? b("未归类", { t: "n", p: p.key }, p.none, "sub") : "");
   d.projects.filter(p => !p.archived).forEach(p => { html += one(p); });
-  const arch = d.projects.filter(p => p.archived);
-  if (arch.length || d.archTopics.length) html += '<span class="ml">归档</span>' + arch.map(one).join("") +
+  const arch = d.projects.filter(p => p.archived), nDone = viewItems("hidden", true).length;
+  if (arch.length || d.archTopics.length || nDone) html += '<span class="ml">归档</span>' +
+    (nDone ? mi("已完成的会话", "closeMenu();goDone()", cntHtml({ n: nDone }), ' class="sub" aria-current="' + doneAll() + '"') : "") + arch.map(one).join("") +
     d.archTopics.map(x => b(plabel(x.t.project) + " · " + x.t.name, { t: "t", id: x.t.id }, x.c, "sub")).join("");
   showMenu(el, "", '<div class="mlist">' + html + "</div>", { left: true, wide: true });
 }
@@ -1644,7 +1661,7 @@ function renderQueue() {
     return '<button type="button" role="tab" class="tab" aria-selected="' + on + '" onclick="setView(\'' + id + '\')"><span>' + VIEWS[id].label + "</span>" +
       (id === "you" && c ? '<span class="count hot">' + c + "</span>" : '<span class="n">' + c + "</span>") + "</button>";
   }).join("");
-  document.getElementById("qhint").innerHTML = view === "hidden" ? "最近 " + (state.windowDays || 14) + " 天完成或不再跟踪的。"
+  document.getElementById("qhint").innerHTML = view === "hidden" ? "最近 " + doneDays() + " 天完成或不再跟踪的" + (scope.t === "all" ? "，所有项目的都在这里" : "") + "。你再和它说话，它会自己回到看板。"
     : esc(v.hint);
 
   if (!items.some(it => it.key === selKey)) { const it = items[Math.min(selIdx, items.length - 1)]; selKey = it ? it.key : null; }

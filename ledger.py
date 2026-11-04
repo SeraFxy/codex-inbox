@@ -2972,6 +2972,12 @@ def include_session(st):
 
 
 WAKE_GRACE = 600   # 定时唤醒发出后，会话这么久还没接上就挪进「轮到你」
+DONE_KEEP_DAYS = 30   # 完成、不再跟踪的会话在左栏「归档」里留多久（看板上在跟的仍按 window_days）
+
+
+def done_by(ov, last):
+    """点了完成、关了标签页自动完成（之后没再说话），或不再跟踪：这样的会话放进「已完成」。"""
+    return bool(ov and (ov["action"] == "untrack" or ov["action"] in ("done", "closed") and last <= (ov["at"] or 0) + 120))
 
 
 def make_item(st, now, cfg, ov, sched, titles, goals, ctx):
@@ -2979,7 +2985,7 @@ def make_item(st, now, cfg, ov, sched, titles, goals, ctx):
     last = st.get("last_ts") or 0
     idle = now - last
     due = 0
-    if idle > cfg["window_days"] * 86400 and not sched:
+    if idle > cfg["window_days"] * 86400 and not sched and not done_by(ov, last):
         status = st.get("status") or {}
         if status.get("kind") not in ("peer", "time", "sched"):
             return None
@@ -3414,7 +3420,7 @@ def build_board(conn, cfg, now=None):
             continue
         hashtags[key] = st.get("hashtags")
         if it["group"] == "hidden":
-            if now - it["last"] < cfg["window_days"] * 86400:
+            if now - it["last"] < max(cfg["window_days"], DONE_KEEP_DAYS) * 86400:
                 hidden.append(it)
         else:
             items.append(it)
@@ -3469,7 +3475,7 @@ def build_board(conn, cfg, now=None):
         "build": board_build(), "now": now, "nowText": "%d月%d日 周%s %s" % (clock(now).month, clock(now).day, WEEK[clock(now).weekday()], clock(now).strftime("%H:%M")),
         "lastScan": last_scan, "lastScanText": fmt_time(last_scan, now) if last_scan else "从未",
         "tzOffsetMin": int(clock(now).astimezone(WORK_TZ).utcoffset().total_seconds() // 60),
-        "staleHours": cfg["stale_hours"], "interruptedMin": cfg["interrupted_min"], "ctxWarn": CTX_WARN_PCT, "windowDays": cfg["window_days"],
+        "staleHours": cfg["stale_hours"], "interruptedMin": cfg["interrupted_min"], "ctxWarn": CTX_WARN_PCT, "windowDays": cfg["window_days"], "doneDays": max(cfg["window_days"], DONE_KEEP_DAYS),
         "scanMs": int(meta_get(conn, "last_scan_ms", 0) or 0), "scanIntervalMin": cfg["scan_interval_min"],
         "groups": groups, "hidden": hidden, "order": load_order(conn), "pins": pins, "archived": archived, "archivedTopics": archived_topics, "favs": board_favs(conn, items + hidden, now), "autos": board_autos(conn, items + hidden, now), "digestTime": cfg["digest_time"], "tzText": tz_text(cfg), "home": HOME, "projectDirs": USER_DIRS,
         "topics": [{"id": t["id"], "name": t["name"], "project": t["project"], "projectLabel": tag_of(ctx["tags"], t["project"])[0]}
