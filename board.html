@@ -428,6 +428,11 @@ body.hist-on { overflow: hidden; }
 .links .ostar { flex: none; margin-left: auto; }
 .links .ostar + .lt { margin-left: 0; }
 .orow .ostm { display: flex; align-items: center; gap: 4px; }
+/* 收藏过的整行高亮：灰底、名字加粗（颜色只表达状态，这里不用彩色）。.links 里左右各伸出 8，文字不跟着挪 */
+.links li.fav { margin: 0 -8px; padding: 4px 8px; border-bottom-color: transparent; border-radius: 8px; background: var(--bk-sunken); }
+.orow.fav { background: var(--bk-sunken); }
+.links li.fav a, .orow.fav .ot { font-weight: 600; }
+.ostar.on:hover { background: var(--bk-line); }
 
 /* 长内容先露一段，下面渐隐 */
 .fold { max-height: 420px; overflow: hidden; -webkit-mask-image: linear-gradient(to bottom, #000 72%, transparent); mask-image: linear-gradient(to bottom, #000 72%, transparent); }
@@ -1199,7 +1204,7 @@ function outLink(l, cls, inner) {
   return '<a href="' + esc(l.url) + '"' + c + ' target="_blank" rel="noopener" title="' + esc(l.url) + '">' + t + "</a>";
 }
 function linkList(links) {
-  return '<ul class="links">' + links.map(l => '<li' + (l.cat === "mr" && !mrLive(l) ? ' class="done"' : "") + '><span class="lk">' + esc(l.text !== l.name ? l.name : "") +
+  return '<ul class="links">' + links.map(l => '<li class="' + (l.cat === "mr" && !mrLive(l) ? "done" : "") + (outFavOn(l.key) ? " fav" : "") + '"><span class="lk">' + esc(l.text !== l.name ? l.name : "") +
     "</span>" + outLink(l, l.gone && !l.arch ? "gone" : "") + (MR_STATE[l.state] ? '<span class="chip sm lst">' + MR_STATE[l.state] + "</span>" : "") + archMark(l) + outStar(l) +
     '<span class="lt">' + esc(l.timeText) + "</span></li>").join("") + "</ul>";
 }
@@ -3216,7 +3221,7 @@ function orow(o, q) {
     (o.cat === "file" && !o.gone && o.twin !== "web" ? btn("在访达里显示", "openFile(clips[" + clip(o.url) + "],true)", "ghost xs") : "") +
     btn(o.cat === "file" ? "复制路径" : "复制链接", "copyClip(" + clip(o.url) + ")", "ghost xs");
   const more = o.nSessions > o.sessions.length ? "<span>等 " + num(o.nSessions) + " 个会话都给过</span>" : "";
-  return '<div class="orow' + (o.cat === "mr" && !mrLive(o) ? " done" : "") + '"><span class="ok" title="' + esc(o.name) + '">' +
+  return '<div class="orow' + (o.cat === "mr" && !mrLive(o) ? " done" : "") + (outFavOn(o.key) ? " fav" : "") + '"><span class="ok" title="' + esc(o.name) + '">' +
     esc(o.text !== o.name ? o.name : CAT_NAME[o.cat] || "") + "</span>" +
     '<div class="om">' + outLink(o, "ot" + (o.gone && !o.arch ? " gone" : ""), hl(o.text, q)) + archMark(o) +
     (o.cat === "file" ? '<span class="op">' + hl(o.path || o.url, q) + (o.gone ? (o.arch ? "　原文件已经不在了，点开是看板留档的副本" : "　已经不在了") : o.twin === "file" ? "　原 worktree 已清理，这是主工作区里的同名文件"
