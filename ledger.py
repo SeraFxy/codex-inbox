@@ -3443,6 +3443,9 @@ def board_out_favs(conn, now):
         if not r:
             continue
         it = out_brief(r["url"], r["label"], r["title"], r["ts"], now, r["state"])
+        ar = archive_info(conn, [r["url"]]).get(r["url"]) if it["cat"] == "file" else None
+        if ar and ar["title"]:
+            it["text"] = ar["title"]
         bare = not r["title"] and not r["label"] and it["cat"] != "file"
         it.update(key=k, ts=r["ts"] or 0, sessionKey=r["session_key"],
                   railText=it["name"] + " · " + session_briefs(conn, [r["session_key"]], now)[r["session_key"]]["title"] if bare else it["text"])
@@ -3523,7 +3526,7 @@ def build_board(conn, cfg, now=None):
             if a:
                 l["arch"] = {"n": a["n"], "ts": a["ts"]}
                 l["gone"] = not os.path.exists(l["url"])
-                if a["title"] and l["text"] == l["name"]:
+                if a["title"]:   # 和展开后（search_outputs）同一个名字
                     l["text"] = a["title"]
     for r in conn.execute("SELECT data FROM sessions WHERE last_activity >= ?", (now - 30 * 86400,)):
         st = json.loads(r["data"])
