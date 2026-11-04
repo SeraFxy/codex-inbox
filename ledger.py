@@ -88,6 +88,7 @@ DEFAULTS = {
     "project_parents": [],     # 这些目录下的每个子目录算一个项目，如 ["~/code"]；其余按 ~/Desktop/<项目>、~/<项目> 推断
     "feishu_doc_titles": True, # 产出物里的飞书文档用 lark-cli 以你的身份查真实标题；false 就只用 AI 写的说明
     "gitlab_mr_state": True,   # AI 给的 GitLab MR 用 glab 以你的身份查标题和合并了没有；false 就不查
+    "link_names": {},          # 产出物里按域名后缀认的名字，如 {"apps.example.com": "公司应用商店"}；不配就显示域名
 }
 
 HEAD_BYTES = 512 * 1024
@@ -632,7 +633,7 @@ def unwrap_paste(text):
 
 # ---------------------------------------------------------------- 产出链接与图片
 
-URL_RE = re.compile(r"https?://[^\s<>()\[\]{}\"'`，。；、）」』|]+")
+URL_RE = re.compile(r"https?://[^\s<>()\[\]{}\"'`，。；、（）」』|]+")
 MD_LINK_RE = re.compile(r"\[([^\]\n]{1,80})\]\((https?://[^\s)]+)\)")
 SKIP_LINK_RE = re.compile(r"^https?://(127\.0\.0\.1|localhost|0\.0\.0\.0)([:/]|$)")
 IMG_EXT = {"image/png": "png", "image/jpeg": "jpg", "image/webp": "webp", "image/gif": "gif"}
@@ -664,6 +665,17 @@ def file_kind(path):
     return FILE_KINDS.get(ext) or ("文件" if ext else "文件夹")
 
 
+HOST_NAMES = {}   # 配置 link_names：域名后缀 -> 产出物里显示的名字。服务启动时填
+
+
+def host_name(host):
+    for sfx, name in HOST_NAMES.items():
+        sfx = sfx.strip(".").lower()
+        if host == sfx or host.endswith("." + sfx):
+            return name
+    return ""
+
+
 def link_name(url):
     if url.startswith("/"):
         return file_kind(url)
@@ -686,7 +698,7 @@ def link_name(url):
         return "GitLab · " + "/".join(path.strip("/").split("/")[:2])
     if host == "github.com":
         return "GitHub · " + "/".join(path.strip("/").split("/")[:2])
-    return host[4:] if host.startswith("www.") else host
+    return host_name(host) or (host[4:] if host.startswith("www.") else host)
 
 
 MR_PATH_RE = re.compile(r"/-/(merge_requests|pipelines|jobs|commit|compare)(/|$)|^/[^/]+/[^/]+/(pull|commit|compare|actions/runs)(/|$)")
@@ -877,7 +889,10 @@ def out_text(url, label, title):
     core = re.sub(r"^(MR|PR|CI|流水线|任务)\s*", "", label or "").strip()
     if label and not (core and core in name):   # 说明只是「!1496」「CI 91196」这种编号，用「MR !1496 · chatdam」更好认
         return label
-    return os.path.basename(url.rstrip("/")) if url.startswith("/") else name
+    if url.startswith("/"):
+        return os.path.basename(url.rstrip("/"))
+    host = urlparse(url).netloc.lower()
+    return host if host_name(host) else name   # 按配置认的：左边写名字，这里留域名，才分得清是哪一个
 
 
 def link_label(before):
@@ -2363,11 +2378,61 @@ def prompt_rows_to_items(conn, rows, now):
     return merge_batches(out)
 
 
+def _like(w):
+    return "%" + w.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
+
+
+URL_WORD_RE = re.compile(r"^https?://", re.I)
+LINK_TAIL_RE = re.compile(r"(/-/(?:merge_requests|pipelines|jobs|commit)/\w+|/pull/\d+|/commit/\w+|/actions/runs/\d+).*$")
+ID_QUERY_RE = re.compile(r"^(?:(MR)|(PR|CI|流水线|pipeline|任务|job))?\s*([!#]?)(\d+)$", re.I)
+
+
+def search_words(q):
+    """搜索词拆成词（最多 6 个）。粘贴来的链接先归一化，和记下的写法不一样也对得上：去掉 #锚点和末尾的 /；
+    飞书、GitLab、GitHub 的 ?参数不影响是哪一页，也去掉（别的网站的 ?参数可能就是页面本身，留着）；
+    MR、流水线只留到编号（…/970/diffs -> …/970）。"""
+    out = []
+    for w in (q or "").split():
+        if URL_WORD_RE.match(w):
+            web = out_cat(w) == "web"
+            w = w.split("#", 1)[0]
+            if not web:
+                w = LINK_TAIL_RE.sub(r"\1", w.split("?", 1)[0])
+            w = w.rstrip("/")
+        out.append(w)
+    return [w for w in out if w][:6]
+
+
+def link_target(q):
+    """搜索词指向一个具体的链接或编号时 -> (links 表上的条件, 参数, 它是不是 MR 和流水线, 搜其他字段用的词)；否则 None。
+    认粘贴的链接，和 !970、MR !970、MR 970、#91761、流水线 91761、970 这些写法（📌 行里就写「MR !970」）。
+    AI 回复的正文不进索引，它给过的链接只记在 links 表里，要找「哪个会话给过这个链接」只能靠它。"""
+    words = search_words(q)
+    if len(words) == 1 and URL_WORD_RE.match(words[0]):
+        w = words[0]
+        ref, doc = mr_ref(w), feishu_doc(w)
+        if ref:
+            return "l.mr = ?", [ref], True, w
+        if doc:
+            return "l.doc = ?", [doc], False, w
+        return "l.url LIKE ? ESCAPE '\\'", [_like(w)], out_cat(w) == "mr", w
+    m = ID_QUERY_RE.match(" ".join(words))
+    if not m:
+        return None
+    is_mr, is_other, n = m.group(1) or m.group(3) == "!", m.group(2) or m.group(3) == "#", m.group(4)
+    if is_mr:
+        return "l.mr LIKE ?", ["%!" + n], True, "!" + n
+    if is_other:
+        return "l.url LIKE ?", ["%/" + n], True, n
+    if len(n) < 3:   # 光打一两位数字，多半不是在找编号
+        return None
+    return "(l.mr LIKE ? OR l.url LIKE ?)", ["%!" + n, "%/" + n], True, n
+
+
 def _like_where(q):
-    words = [w for w in (q or "").split() if w][:6]
     conds, args = [], []
-    for w in words:
-        like = "%" + w.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
+    for w in search_words(q):
+        like = _like(w)
         conds.append("(text LIKE ? ESCAPE '\\' OR title LIKE ? ESCAPE '\\' OR project LIKE ? ESCAPE '\\' OR session_key IN "
                      "(SELECT session_key FROM names WHERE title LIKE ? ESCAPE '\\') OR project IN "
                      "(SELECT project FROM tags WHERE label LIKE ? ESCAPE '\\'))")
@@ -2390,7 +2455,7 @@ def search_prompts(conn, q, limit=100, offset=0):
 def handoff_snippet(text, q):
     """交接里第一个命中词前后各取一段，压成一行，给搜索结果当预览。"""
     low, at = text.lower(), -1
-    for w in [w for w in (q or "").split() if w]:
+    for w in search_words(q):
         i = low.find(w.lower())
         if i >= 0 and (at < 0 or i < at):
             at = i
@@ -2403,7 +2468,7 @@ def search_sessions(conn, q, limit=50, offset=0, tool="", cross=True, handoff=Fa
     """按会话汇总：有命中的会话按最近一次命中排序，每个会话带最多 3 条命中预览。tool = claude / codex 时只看这个工具的。
     cross：搜第一页时顺带搜产出物，带回总数和前 3 个，页面上两边一起列（不用先想清楚是你说的还是 AI 给的）。
     handoff：也搜 Claude 压缩时的交接、AI 问你的 ❓、替你定的 🧭、📌 状态和目标（「全部」标签用）。
-    只在这些里对上的会话，命中数记 0，排序按它们写的时间。"""
+    只在这些里对上的会话，命中数记 0，排序按它们写的时间。搜的是一个链接或编号时，也列给过它的会话（AI 的回复正文不进索引）。"""
     now = time.time()
     conds, args = _like_where(q)
     by_tool = (" WHERE tool=?", [tool]) if tool in ("claude", "codex") else ("", [])
@@ -2413,10 +2478,11 @@ def search_sessions(conn, q, limit=50, offset=0, tool="", cross=True, handoff=Fa
     sql_where = (" WHERE " + " AND ".join(conds)) if conds else ""
     prompt_total = conn.execute("SELECT COUNT(DISTINCT session_key) FROM prompts" + sql_where, args).fetchone()[0]
     grouped, gargs = "SELECT session_key, COUNT(*) AS hits, MAX(ts) AS last_ts FROM prompts" + sql_where + " GROUP BY session_key", list(args)
-    words = [w for w in (q or "").split() if w][:6] if handoff else []
+    words = search_words(q) if handoff else []
+    target = link_target(q) if words else None
     hwhere = " AND ".join(["text LIKE ? ESCAPE '\\'"] * len(words))
     gwhere = " AND ".join(["(COALESCE(goal, '') || ' ' || COALESCE(criteria, '')) LIKE ? ESCAPE '\\'"] * len(words))
-    hargs = ["%" + w.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%" for w in words]
+    hargs = [_like(w) for w in words]
     tw, targ = (" AND session_key LIKE ?", [tool + ":%"]) if tool in ("claude", "codex") else ("", [])
     if words:
         parts = [grouped]
@@ -2425,6 +2491,9 @@ def search_sessions(conn, q, limit=50, offset=0, tool="", cross=True, handoff=Fa
             gargs += hargs + targ
         parts += ["SELECT session_key, 0, ts FROM ai_notes WHERE " + hwhere + tw, "SELECT session_key, 0, at FROM goals WHERE " + gwhere + tw]
         gargs += hargs + targ + hargs + targ
+        if target:
+            parts.append("SELECT session_key, 0, ts FROM links l WHERE (" + target[0] + ")" + tw)
+            gargs += target[1] + targ
         grouped = "SELECT session_key, SUM(hits) AS hits, MAX(last_ts) AS last_ts FROM (" + " UNION ALL ".join(parts) + ") GROUP BY session_key"
     total = conn.execute("SELECT COUNT(*) FROM (" + grouped + ")", gargs).fetchone()[0] if words else prompt_total
     rows = conn.execute(grouped + " ORDER BY last_ts DESC LIMIT ? OFFSET ?", gargs + [limit, offset]).fetchall()
@@ -2451,6 +2520,9 @@ def search_sessions(conn, q, limit=50, offset=0, tool="", cross=True, handoff=Fa
             g = conn.execute("SELECT goal, criteria, at FROM goals WHERE session_key=? AND " + gwhere, [key] + hargs).fetchone()
             if g:
                 notes.append({"kind": "goal", "ts": g["at"] or 0, "text": (g["goal"] or "") + ("｜完成标准：" + g["criteria"] if g["criteria"] else "")})
+            if target:
+                for x in conn.execute("SELECT l.url, l.ctx, l.ts FROM links l WHERE l.session_key=? AND (" + target[0] + ") ORDER BY l.ts DESC LIMIT 3", [key] + target[1]):
+                    notes.append({"kind": "link", "ts": x["ts"] or 0, "url": x["url"], "text": link_name(x["url"]) + ("：" + x["ctx"] if x["ctx"] else "")})
         ex = session_extras(conn, key)
         out.append({"key": key, "title": head["title"], "project": head["project"], "projectKey": head["projectKey"],
                     "color": head["color"], "tool": head["tool"], "toolLabel": head["toolLabel"], "auto": head["auto"], "count": n,
@@ -2511,18 +2583,25 @@ def session_prompts(conn, key):
     return res
 
 
-def _out_where(q, cat="", key="", tool=""):
+def _out_where(q, cat="", key="", tool="", favs=None):
     """产出物的搜索条件：每个词都要在链接 / 文件路径、真实标题、AI 写的说明和原话、会话名或项目里出现。
-    cat 空着 = 只看产物（不含 MR 和流水线），any = 全都要，mr_open = 还开着的 MR（没查过的也算），其余 = 只看这一类。"""
+    cat 空着 = 只看产物（不含 MR 和流水线），any = 全都要，mr_open = 还开着的 MR（没查过的也算），fav = 收藏的（favs 是它们的 key），其余 = 只看这一类。"""
     conds, args = [], []
-    for w in [w for w in (q or "").split() if w][:6]:
-        like = "%" + w.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
-        conds.append("(l.url LIKE ? ESCAPE '\\' OR l.label LIKE ? ESCAPE '\\' OR l.ctx LIKE ? ESCAPE '\\' OR d.title LIKE ? ESCAPE '\\' OR m.title LIKE ? ESCAPE '\\' "
+    target = link_target(q)
+    for w in [target[3]] if target else search_words(q):
+        like = _like(w)
+        urlc, urla = "l.url LIKE ? ESCAPE '\\'", [like]
+        if target:   # 粘贴的 MR 链接只认这一个（…/970 不算 …/9701）；编号是在这之外多认一种写法
+            urlc, urla = (target[0], target[1]) if URL_WORD_RE.match(w) else (urlc + " OR " + target[0], urla + target[1])
+        for sfx, name in HOST_NAMES.items():   # 搜配置的名字（如「应用商店」）时，这个域名下的都算
+            if w.lower() in name.lower():
+                urlc, urla = urlc + " OR l.url LIKE ? ESCAPE '\\'", urla + [_like("." + sfx.strip("."))]
+        conds.append("(" + urlc + " OR l.label LIKE ? ESCAPE '\\' OR l.ctx LIKE ? ESCAPE '\\' OR d.title LIKE ? ESCAPE '\\' OR m.title LIKE ? ESCAPE '\\' "
                      "OR l.session_key IN (SELECT session_key FROM names WHERE title LIKE ? ESCAPE '\\') "
                      "OR l.session_key IN (SELECT session_key FROM prompts WHERE title LIKE ? ESCAPE '\\' OR project LIKE ? ESCAPE '\\' "
                      "OR project IN (SELECT project FROM tags WHERE label LIKE ? ESCAPE '\\'))"
                      " OR l.url IN (SELECT path FROM archives WHERE title LIKE ? ESCAPE '\\' OR text LIKE ? ESCAPE '\\'))")
-        args += [like] * 11
+        args += urla + [like] * 10
     if key:
         conds.append("l.session_key=?")
         args.append(key)
@@ -2534,6 +2613,9 @@ def _out_where(q, cat="", key="", tool=""):
         args.append(cat)
     elif cat == "mr_open":
         conds.append("l.mr != '' AND (m.state IS NULL OR m.state IN ('opened', 'locked'))")
+    elif cat == "fav":
+        conds.append(OUT_KEY + " IN (" + ",".join("?" * len(favs or [])) + ")")
+        args += favs or []
     elif cat != "any":
         conds.append("l.cat != 'mr'")
     return (" WHERE " + " AND ".join(conds)) if conds else "", args
@@ -2577,14 +2659,25 @@ def session_briefs(conn, keys, now):
 def search_outputs(conn, q, cat="", key="", tool="", limit=100, offset=0):
     """AI 给过你的产出物（链接和本机文件），同一个链接只列一次，带上给过它的会话（最近的在前）和 AI 给出它时的原话。"""
     now = time.time()
-    where, args = _out_where(q, cat, key, tool)
+    target, favs = link_target(q), meta_keys(conn, "out_favs")
+    # MR 和流水线平时单独一组，不混进产物；但搜的就是某个 MR、流水线，或者产物里没有时，也列出来
+    wide = bool(not cat and target and target[2])
+    where, args = _out_where(q, "any" if wide else cat, key, tool, favs)
     total = conn.execute("SELECT COUNT(DISTINCT " + OUT_KEY + ")" + OUT_FROM + where, args).fetchone()[0]
-    rows = conn.execute("SELECT " + OUT_KEY + " AS g, MAX(l.ts) AS ts" + OUT_FROM + where +
-                        " GROUP BY g ORDER BY ts DESC LIMIT ? OFFSET ?", args + [limit, offset]).fetchall()
+    if not total and not cat and q.strip():
+        where2, args2 = _out_where(q, "any", key, tool)
+        total2 = conn.execute("SELECT COUNT(DISTINCT " + OUT_KEY + ")" + OUT_FROM + where2, args2).fetchone()[0]
+        if total2:
+            wide, where, args, total = True, where2, args2, total2
+    exact = "MAX(CASE WHEN " + target[0] + " THEN 1 ELSE 0 END)" if target else "0"   # 就是它的排最前，只是话里提到的排后面
+    rows = conn.execute("SELECT " + OUT_KEY + " AS g, MAX(l.ts) AS ts, " + exact + " AS exact" + OUT_FROM + where +
+                        " GROUP BY g ORDER BY exact DESC, ts DESC LIMIT ? OFFSET ?", (target[1] if target else []) + args + [limit, offset]).fetchall()
     cw, cargs = _out_where(q, "any", key, tool)
     counts = {r[0] or "web": r[1] for r in conn.execute("SELECT l.cat, COUNT(DISTINCT " + OUT_KEY + ")" + OUT_FROM + cw + " GROUP BY l.cat", cargs)}
     ow, oargs = _out_where(q, "mr_open", key, tool)
     counts["mr_open"] = conn.execute("SELECT COUNT(DISTINCT " + OUT_KEY + ")" + OUT_FROM + ow, oargs).fetchone()[0]
+    fw, fargs = _out_where(q, "fav", key, tool, favs)
+    counts["fav"] = conn.execute("SELECT COUNT(DISTINCT " + OUT_KEY + ")" + OUT_FROM + fw, fargs).fetchone()[0]
     by_tool = ([key], " AND l.session_key=?") if key else (([tool + ":%"], " AND l.session_key LIKE ?") if tool in ("claude", "codex") else ([], ""))
     items, keys = [], []
     for r in rows:
@@ -2600,7 +2693,7 @@ def search_outputs(conn, q, cat="", key="", tool="", limit=100, offset=0):
         head = occ[0]
         label = next((o["label"] for o in occ if o["label"]), "")
         url = next((o["url"] for o in occ if "#" not in o["url"]), head["url"])   # 有不带锚点的就用它，打开是文档开头
-        it = {"url": url, "cat": out_cat(url), "name": link_name(url), "title": head["title"] or "", "label": label,
+        it = {"key": r["g"], "url": url, "cat": out_cat(url), "name": link_name(url), "title": head["title"] or "", "label": label,
               "text": out_text(url, label, head["title"]), "ctx": head["ctx"] or "", "ts": r["ts"], "timeText": fmt_time(r["ts"], now),
               "nSessions": len(sess), "sessions": sess[:3], "state": head["state"] or ""}
         if it["cat"] == "file":
@@ -2625,7 +2718,7 @@ def search_outputs(conn, q, cat="", key="", tool="", limit=100, offset=0):
             x.update(briefs.get(x["key"], {}))
     allc = conn.execute("SELECT COUNT(DISTINCT " + OUT_KEY + "), COUNT(DISTINCT l.session_key) FROM links l WHERE l.cat != 'mr'").fetchone()
     res = {"q": q, "cat": cat, "key": key, "total": total, "counts": counts, "items": items,
-           "all": allc[0], "allSessions": allc[1], "wider": 0, "promptHits": 0}
+           "all": allc[0], "allSessions": allc[1], "wider": 0, "promptHits": 0, "wide": wide}
     if q.strip():
         # 只看某个会话、某一类时没搜到：告诉你放开后有几个；你自己发过这个词的会话数，给「我说过的话」的入口
         if (key or cat) and not total:
@@ -2639,7 +2732,7 @@ def search_outputs(conn, q, cat="", key="", tool="", limit=100, offset=0):
 
 def out_brief(url, label, title, ts, now, state=""):
     """详情里一行产出物要的字段。state = MR 的状态：opened / merged / closed，没查过是空的。"""
-    it = {"url": url, "cat": out_cat(url), "name": link_name(url), "text": out_text(url, label, title),
+    it = {"key": feishu_doc(url) or url, "url": url, "cat": out_cat(url), "name": link_name(url), "text": out_text(url, label, title),
           "timeText": fmt_time(ts, now) if ts else "", "state": state or ""}
     if it["cat"] == "file":
         it["path"] = home_rel(url)
@@ -3335,6 +3428,23 @@ def meta_keys(conn, k):
     return [x for x in keys if isinstance(x, str)] if isinstance(keys, list) else []
 
 
+def board_out_favs(conn, now):
+    """收藏的产出物（最近收藏的在前）。没有标题也没有说明的（如 UUID 域名的应用）左栏写「名字 · 给出它的会话」，才认得出是哪个。"""
+    out = []
+    for k in meta_keys(conn, "out_favs"):
+        by_doc = "://" not in k and not k.startswith("/")
+        r = conn.execute("SELECT l.session_key, l.url, l.label, l.ts, COALESCE(d.title, m.title, '') AS title, m.state" + OUT_FROM +
+                         (" WHERE l.doc=?" if by_doc else " WHERE l.url=?") + " ORDER BY l.ts DESC LIMIT 1", (k,)).fetchone()
+        if not r:
+            continue
+        it = out_brief(r["url"], r["label"], r["title"], r["ts"], now, r["state"])
+        bare = not r["title"] and not r["label"] and it["cat"] != "file"
+        it.update(key=k, ts=r["ts"] or 0, sessionKey=r["session_key"],
+                  railText=it["name"] + " · " + session_briefs(conn, [r["session_key"]], now)[r["session_key"]]["title"] if bare else it["text"])
+        out.append(it)
+    return out
+
+
 def load_pins(conn):
     """置顶的会话 key，新钉的在前。看板上置顶的排在每个标签页最上面，其余按更新时间。"""
     return meta_keys(conn, "pins")
@@ -3477,7 +3587,7 @@ def build_board(conn, cfg, now=None):
         "tzOffsetMin": int(clock(now).astimezone(WORK_TZ).utcoffset().total_seconds() // 60),
         "staleHours": cfg["stale_hours"], "interruptedMin": cfg["interrupted_min"], "ctxWarn": CTX_WARN_PCT, "windowDays": cfg["window_days"], "doneDays": max(cfg["window_days"], DONE_KEEP_DAYS),
         "scanMs": int(meta_get(conn, "last_scan_ms", 0) or 0), "scanIntervalMin": cfg["scan_interval_min"],
-        "groups": groups, "hidden": hidden, "order": load_order(conn), "pins": pins, "archived": archived, "archivedTopics": archived_topics, "favs": board_favs(conn, items + hidden, now), "autos": board_autos(conn, items + hidden, now), "digestTime": cfg["digest_time"], "tzText": tz_text(cfg), "home": HOME, "projectDirs": USER_DIRS,
+        "groups": groups, "hidden": hidden, "order": load_order(conn), "pins": pins, "archived": archived, "archivedTopics": archived_topics, "favs": board_favs(conn, items + hidden, now), "outFavs": board_out_favs(conn, now), "autos": board_autos(conn, items + hidden, now), "digestTime": cfg["digest_time"], "tzText": tz_text(cfg), "home": HOME, "projectDirs": USER_DIRS,
         "topics": [{"id": t["id"], "name": t["name"], "project": t["project"], "projectLabel": tag_of(ctx["tags"], t["project"])[0]}
                    for t in topics if not t["deleted"]],
     }
@@ -3948,6 +4058,13 @@ class App:
                 meta_set(c, "favs", json.dumps(favs, ensure_ascii=False))
                 c.commit()
                 return True, "已收藏，在左栏「收藏」里" if arg.get("on") else "已取消收藏"
+            if action == "out_fav" and key and isinstance(arg, dict):
+                favs = [k for k in meta_keys(c, "out_favs") if k != key]
+                if arg.get("on"):
+                    favs.insert(0, key)
+                meta_set(c, "out_favs", json.dumps(favs, ensure_ascii=False))
+                c.commit()
+                return True, "已收藏，在左栏「收藏」和「产出物」里" if arg.get("on") else "已取消收藏"
             if action == "pin" and key and isinstance(arg, dict):
                 pins = [k for k in load_pins(c) if k != key]
                 if arg.get("on"):
@@ -5029,6 +5146,22 @@ def backfill_pr_links():
     log("补 Claude Code 记下的 MR：%d 个对话" % len(hit))
 
 
+def fix_cut_links():
+    """以前「链接（说明」里的全角括号被算进了链接（…/517（517），点不开，也认不出是哪个 MR。切掉重算分类，和对的那一行合并。只跑一次。"""
+    conn = open_db()
+    if meta_get(conn, "links_cut_v1"):
+        return
+    rows = conn.execute("SELECT session_key, url, label, ts, ctx FROM links WHERE url LIKE 'http%（%'").fetchall()
+    for r in rows:
+        good = r["url"].split("（", 1)[0].rstrip(".,;:!?*_")
+        conn.execute("DELETE FROM links WHERE session_key=? AND url=?", (r["session_key"], r["url"]))
+        if len(good) >= 12 and not SKIP_LINK_RE.match(good):
+            flush_media(conn, r["session_key"], {"new_links": [[r["ts"], good, r["label"] or "", r["ctx"] or ""]]})
+    meta_set(conn, "links_cut_v1", time.time())
+    conn.commit()
+    log("修了 %d 条被全角括号粘坏的链接" % len(rows))
+
+
 def backfill_outputs():
     """产出物加了「原话」和本机文件后补一遍：重读还在的 Claude 对话记录和 Codex 的全部回复，只跑一次。"""
     conn = open_db()
@@ -5095,6 +5228,7 @@ def cmd_serve(args):
     os.makedirs(LOG_DIR, exist_ok=True)
     os.chmod(LOG_DIR, 0o700)
     cfg = load_config()
+    HOST_NAMES.update(cfg.get("link_names") or {})
     APP = App(cfg)
     migrate_tz(APP.conn)
     with open(os.path.join(DATA_DIR, "board_url"), "w", encoding="utf-8") as f:
@@ -5103,7 +5237,7 @@ def cmd_serve(args):
     srv = ThreadingHTTPServer(("127.0.0.1", cfg["port"]), Handler)
     APP.maybe_scan(0)
     threading.Thread(target=APP.loop, daemon=True).start()
-    threading.Thread(target=lambda: (_guard(backfill_media), _guard(backfill_outputs), _guard(backfill_pr_links)), daemon=True).start()
+    threading.Thread(target=lambda: (_guard(fix_cut_links), _guard(backfill_media), _guard(backfill_outputs), _guard(backfill_pr_links)), daemon=True).start()
     log("服务启动，端口 %s" % cfg["port"])
     srv.serve_forever()
 

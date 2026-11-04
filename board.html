@@ -28,6 +28,7 @@
   --bk-e-toast: 0 16px 36px -12px rgba(16, 20, 25, .4), 0 2px 6px rgba(16, 20, 25, .12);
   --bk-on: 0 1px 2px rgba(16, 20, 25, .06), 0 0 0 1px rgba(16, 20, 25, .06);
   --bk-ring: rgba(27, 32, 38, .08);
+  --bk-scrim: rgba(16, 20, 25, .28);
   --bk-ease: cubic-bezier(.2, .8, .2, 1);
   --bk-sans: "Geist", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans CJK SC", system-ui, sans-serif;
   --bk-mono: "Geist Mono", "SF Mono", Menlo, Consolas, "PingFang SC", "Noto Sans CJK SC", monospace;
@@ -52,6 +53,7 @@
     --bk-e-toast: 0 16px 36px -12px rgba(0, 0, 0, .7), 0 0 0 1px rgba(255, 255, 255, .06);
     --bk-on: 0 1px 2px rgba(0, 0, 0, .4), 0 0 0 1px rgba(255, 255, 255, .07);
     --bk-ring: rgba(236, 238, 241, .12);
+    --bk-scrim: rgba(0, 0, 0, .5);
     color-scheme: dark;
   }
 }
@@ -72,6 +74,8 @@ a:focus-visible, button:focus-visible { outline: 2px solid var(--bk-ink-1); outl
 @keyframes bk-hop { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-5px); } }
 @keyframes bk-rise { from { opacity: 0; transform: translate(-50%, 8px); } to { opacity: 1; transform: translate(-50%, 0); } }
 @keyframes bk-drop { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: translateY(0); } }
+@keyframes bk-slide { from { opacity: .6; transform: translateX(32px); } to { opacity: 1; transform: translateX(0); } }
+@keyframes bk-fade { from { opacity: 0; } to { opacity: 1; } }
 .bk-blink { transform-box: fill-box; transform-origin: center; animation: bk-blink 5.2s infinite; }
 .bk-scan { animation: bk-scan 2.6s cubic-bezier(.45, 0, .55, 1) infinite; }
 .bk-doze { animation: bk-doze 3.2s ease-out infinite; }
@@ -79,7 +83,7 @@ a:focus-visible, button:focus-visible { outline: 2px solid var(--bk-ink-1); outl
 .face { flex: none; display: block; }
 .face.faded { opacity: .55; }
 @media (prefers-reduced-motion: reduce) {
-  .bk-blink, .bk-scan, .bk-doze, .bk-hop, .menu, .toast, .tagpop { animation: none !important; }
+  .bk-blink, .bk-scan, .bk-doze, .bk-hop, .menu, .toast, .tagpop, .hist-panel, .hist-scrim { animation: none !important; }
   * { transition: none !important; }
 }
 
@@ -387,6 +391,44 @@ kbd.k.lg { min-width: 22px; height: 22px; padding: 0 6px; border-radius: 6px; fo
 .tm-ho { display: flex; align-items: center; gap: 12px; font-size: 12px; line-height: 16px; color: var(--bk-ink-3); }
 .tm-ho::before, .tm-ho::after { content: ""; flex: 1; border-top: 1px dashed var(--bk-line-strong); }
 .tm-more { display: flex; justify-content: center; }
+/* 对话历史：右边滑出的侧边栏，专心读完整段对话。你说的靠右、放灰底气泡，它说的靠左、直接排在白底上 */
+body.hist-on { overflow: hidden; }
+.hist { position: fixed; inset: 0; z-index: 30; display: flex; justify-content: flex-end; }
+.hist-scrim { position: absolute; inset: 0; background: var(--bk-scrim); animation: bk-fade .16s ease-out; }
+.hist-panel { position: relative; width: min(780px, calc(100vw - 64px)); min-width: 0; display: flex; flex-direction: column; background: var(--bk-surface); box-shadow: var(--bk-e3); animation: bk-slide .2s var(--bk-ease); }
+.hist-h { flex: none; display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; padding: 14px 16px 14px 24px; border-bottom: 1px solid var(--bk-line); }
+.hist-t { flex: 1 1 200px; min-width: 0; }
+.hist-t h2 { margin: 0; font-size: 17px; line-height: 24px; font-weight: 600; }
+.hist-t p { margin: 0; font-size: 13px; line-height: 20px; color: var(--bk-ink-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.hist-acts { flex: none; display: flex; align-items: center; gap: 4px; }
+.hist-acts .seg { margin-right: 8px; }
+.hist-body { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; display: flex; flex-direction: column; gap: 24px; padding: 16px 24px 48px; }
+.hist-body:focus { outline: none; }
+.hist-body > * { flex: none; }
+.hmsg.you { align-items: flex-end; }
+.hmsg.you .tm-h .who { order: 3; }
+.hmsg.you .tm-h .cp { order: 1; margin-left: 0; }
+.hmsg.you .tm-h > span:not(.who) { order: 2; }
+.hmsg.you .tm-b.you { max-width: 86%; border-radius: 14px 14px 4px 14px; background: var(--bk-sunken); box-shadow: none; }
+.hmsg.at { margin: -12px; padding: 12px; border-radius: 14px; background: var(--bk-subtle); box-shadow: var(--bk-on); }
+@media (max-width: 640px) {
+  .hist-panel { width: 100vw; }
+  .hist-h { padding: 12px 12px 12px 16px; }
+  .hist-acts { flex: 1 1 100%; }
+  .hist-acts .seg { margin-right: auto; }
+  .hist-body { padding: 12px 16px 40px; }
+  .hmsg.you .tm-b.you { max-width: 94%; }
+  .hmsg .tm-b.md { padding-left: 0; }
+}
+/* 产出物的星标：收藏了一直亮着，没收藏的悬停才露出来 */
+.ostar { width: 28px; padding: 0; color: var(--bk-ink-3); opacity: 0; transition: opacity .12s; }
+.ostar.on { opacity: 1; color: var(--bk-ink-1); }
+.ostar:focus-visible, .links li:hover .ostar, .orow:hover .ostar { opacity: 1; }
+@media (hover: none) { .ostar { opacity: 1; } }
+.links .ostar { flex: none; margin-left: auto; }
+.links .ostar + .lt { margin-left: 0; }
+.orow .ostm { display: flex; align-items: center; gap: 4px; }
+
 /* 长内容先露一段，下面渐隐 */
 .fold { max-height: 420px; overflow: hidden; -webkit-mask-image: linear-gradient(to bottom, #000 72%, transparent); mask-image: linear-gradient(to bottom, #000 72%, transparent); }
 .handoff.fold { max-height: 260px; }
@@ -682,6 +724,10 @@ mark { background: var(--bk-lime-mark); color: #1B2026; border-radius: 3px; box-
   <div class="days" id="hlist"></div>
 </div>
 
+<div class="hist" id="hist" role="dialog" aria-modal="true" aria-labelledby="hist-t" hidden>
+  <div class="hist-scrim" onclick="closeHist()"></div>
+  <aside class="hist-panel"><div class="hist-h" id="hist-h"></div><div class="hist-body" id="hist-body" tabindex="-1"></div></aside>
+</div>
 <div class="menu" id="menu" role="menu" hidden></div>
 <div class="tagpop" id="tagpop" hidden></div>
 <div class="toast" id="toast" role="status" hidden></div>
@@ -795,7 +841,7 @@ const ICONS = {
   undo: '<path d="M9 14 4 9l5-5"/><path d="M4 9h10.5a5.5 5.5 0 0 1 0 11H11"/>', info: '<circle cx="12" cy="12" r="9"/><path d="M12 11v5M12 7.5v.5"/>',
   warn: '<circle cx="12" cy="12" r="9"/><path d="M12 7.5v5.5M12 16.5v.5"/>', send: '<path d="M5 12h13"/><path d="m13 6 6 6-6 6"/>',
   copy: '<rect x="8.5" y="8.5" width="12" height="12" rx="2.5"/><path d="M15.5 8.5V6a2.5 2.5 0 0 0-2.5-2.5H6A2.5 2.5 0 0 0 3.5 6v7A2.5 2.5 0 0 0 6 15.5h2.5"/>',
-  right: '<path d="m9 18 6-6-6-6"/>', plus: '<path d="M12 5v14M5 12h14"/>',
+  right: '<path d="m9 18 6-6-6-6"/>', close: '<path d="M6 6l12 12M18 6 6 18"/>', plus: '<path d="M12 5v14M5 12h14"/>',
   star: '<path d="M12 3.8l2.5 5.1 5.6.8-4 3.9.9 5.6-5-2.6-5 2.6.9-5.6-4-3.9 5.6-.8z"/>',
   starOn: '<path fill="currentColor" d="M12 3.8l2.5 5.1 5.6.8-4 3.9.9 5.6-5-2.6-5 2.6.9-5.6-4-3.9 5.6-.8z"/>',
   railL: '<rect x="3.5" y="4.5" width="17" height="15" rx="2.5"/><path d="M9.5 4.5v15"/><path d="m16 10-2 2 2 2"/>'
@@ -1028,7 +1074,7 @@ async function load(refresh) {
   try {
     const r = await fetch("/api/state" + (refresh ? "?refresh=" + refresh : ""), { cache: "no-store" });
     const next = await r.json();
-    if (state && localAt >= t0) { next.order = state.order; next.pins = state.pins; next.archived = state.archived; next.archivedTopics = state.archivedTopics; next.favs = state.favs; }   // 拉取途中你刚调过顺序、置顶：先用本地的，免得被旧数据盖回去
+    if (state && localAt >= t0) { next.order = state.order; next.pins = state.pins; next.archived = state.archived; next.archivedTopics = state.archivedTopics; next.favs = state.favs; next.outFavs = state.outFavs; }   // 拉取途中你刚调过顺序、置顶：先用本地的，免得被旧数据盖回去
     failed = false;
     hopNow = new Set();
     allItems(next).forEach(it => {
@@ -1154,7 +1200,7 @@ function outLink(l, cls, inner) {
 }
 function linkList(links) {
   return '<ul class="links">' + links.map(l => '<li' + (l.cat === "mr" && !mrLive(l) ? ' class="done"' : "") + '><span class="lk">' + esc(l.text !== l.name ? l.name : "") +
-    "</span>" + outLink(l, l.gone && !l.arch ? "gone" : "") + (MR_STATE[l.state] ? '<span class="chip sm lst">' + MR_STATE[l.state] + "</span>" : "") + archMark(l) +
+    "</span>" + outLink(l, l.gone && !l.arch ? "gone" : "") + (MR_STATE[l.state] ? '<span class="chip sm lst">' + MR_STATE[l.state] + "</span>" : "") + archMark(l) + outStar(l) +
     '<span class="lt">' + esc(l.timeText) + "</span></li>").join("") + "</ul>";
 }
 // MR 和流水线：临时的，开着的 MR 列出来，合并了、关了的和流水线、提交收起来
@@ -1279,15 +1325,19 @@ function renderRail() {
     railItem("全部", { t: "all" }, d.all, "all");
   const live = d.projects.filter(p => !p.archived), arch = d.projects.filter(p => p.archived);
   live.forEach(p => { html += railGroup(p); });
-  const favs = (state.favs || []).filter(srcOk);
-  if (favs.length) {
+  const favs = (state.favs || []).filter(srcOk), ofavs = state.outFavs || [];
+  if (favs.length || ofavs.length) {
     html += '<button type="button" class="rsec" aria-expanded="' + favOpen + '" onclick="toggleFavs()">' + ico(favOpen ? "down" : "right", 14) +
-      "<span>收藏</span><span class=\"n\">" + favs.length + "</span></button>";
+      "<span>收藏</span><span class=\"n\">" + (favs.length + ofavs.length) + "</span></button>";
     if (favOpen) html += favGroups(favs).map(g => (g.label ? '<div class="rfg" title="' + esc(g.label) + '">' + esc(g.label) + "</div>" : "") + g.items.map(x => '<div class="rt">' +
       '<button type="button" class="ri fav" data-key="' + esc(x.key) + '" title="' + esc(x.title) + (x.onBoard ? "" : "（点一下打开会话）") +
       '" onclick="goFav(this.dataset.key)">' + toolChip(x) + '<span class="nm">' + esc(x.title) + "</span></button>" +
       '<button type="button" class="ra" title="打开或取消收藏" aria-label="「' + esc(x.title) + '」打开或取消收藏" aria-haspopup="menu" aria-expanded="false"' +
       ' data-key="' + esc(x.key) + '" onclick="event.stopPropagation();favMore(this,this.dataset.key)">' + ico("more", 15) + "</button></div>").join("")).join("");
+    if (favOpen && ofavs.length) html += '<div class="rfg">产出物</div>' + ofavs.map(x => '<div class="rt">' +
+      '<button type="button" class="ri fav" title="' + esc(x.railText + "\n" + x.url) + '" onclick="openOutFav(clips[' + clip(x) + '])"><span class="nm">' + esc(x.railText) + "</span></button>" +
+      '<button type="button" class="ra" title="打开或取消收藏" aria-label="「' + esc(x.railText) + '」打开或取消收藏" aria-haspopup="menu" aria-expanded="false"' +
+      ' onclick="event.stopPropagation();outFavMore(this,clips[' + clip(x) + '])">' + ico("more", 15) + "</button></div>").join("");
   }
   html += autoSec();
   const nDone = viewItems("hidden", true).length;
@@ -1369,6 +1419,37 @@ function favMore(el, key) {
   const it = findItem(key);
   showMenu(el, key, mi(ico("open", 14) + "打开会话", "closeMenu();openSession(clips[" + clip(key) + "])") +
     (it ? mi("归到主题…", "openTopics(menu.el,clips[" + clip(key) + "])", it.topic ? esc(it.topic.name) : "") : "") + mi("取消收藏", "toggleFav(clips[" + clip(key) + "])"));
+}
+// 产出物收藏：和会话收藏一样存在服务端，放在左栏「收藏」和「产出物」页。key 同产出物的去重（飞书文档按文档，别的按链接）
+function outFavOn(key) { return !!(state && (state.outFavs || []).some(x => x.key === key)); }
+function outStar(l) {
+  if (!l.key) return "";
+  const on = outFavOn(l.key);
+  return btn(ico(on ? "starOn" : "star", 15), "toggleOutFav(clips[" + clip(l) + "])", "ghost xs ostar" + (on ? " on" : ""), on ? "取消收藏" : "收藏：放进左栏「收藏」和「产出物」页",
+    'aria-pressed="' + on + '" aria-label="收藏"');
+}
+function toggleOutFav(l) {
+  closeMenu();
+  const on = !outFavOn(l.key), had = oCat === "fav";
+  setLocal({ outFavs: on ? [Object.assign({ railText: l.text, ts: l.ts || 0 }, l)].concat(state.outFavs || []) : (state.outFavs || []).filter(x => x.key !== l.key) });
+  if (on && !favOpen) { favOpen = true; store("ledger.favx", false); }
+  if (oReady) {
+    oCounts.fav = Math.max(0, (oCounts.fav || 0) + (on ? 1 : -1));
+    if (had && !on) { oItems = oItems.filter(x => x.key !== l.key); oTotal = Math.max(0, oTotal - 1); }
+  }
+  render();
+  post("out_fav", l.key, { on }).then(res => toast(res.message || (res.ok ? "好了" : "没成功"), res.ok && !on ? () => post("out_fav", l.key, { on: true }).then(() => { oLoaded = false; if (tab === "outputs") searchOut(oq); load(); }) : null),
+    () => toast("操作失败：本机服务没响应"));
+}
+function openOutFav(x) {
+  if (x.cat === "file") openFile(x.url);
+  else window.open(x.url, "_blank", "noopener");
+}
+function outFavMore(el, x) {
+  const hit = { kind: "link", ts: x.ts, url: x.url, text: x.railText };
+  showMenu(el, x.key, mi(ico("open", 14) + "打开", "closeMenu();openOutFav(clips[" + clip(x) + "])") +
+    (x.sessionKey ? mi("看它是在哪说的", "closeMenu();goHit(clips[" + clip(x.sessionKey) + "],clips[" + clip(hit) + "])") : "") +
+    mi("取消收藏", "toggleOutFav(clips[" + clip(x) + "])"));
 }
 function goFav(key) {
   // 收藏、定时任务是捷径：跳到这个会话所在的标签页并选中它，左栏范围不含它就切过去；不在看板上了（完成很久）就直接打开会话。
@@ -1853,6 +1934,8 @@ function renderDetail() {
   el.innerHTML = '<div class="detail-in">' + html + "</div>";
   fitText(document.getElementById("rtext"));
   if (jumpTo && Date.now() < spyHold) goJump(); else spySec();   // 平滑滚动途中重画了（松开鼠标时补画、定时刷新）：接着滚过去
+  hitSpot();
+  if (hist && !hist.loading && hist.key === selKey && hist.ts !== histSig(hist.key)) loadHist(true);   // 又说了新的：悄悄重取
 }
 // 详情顶上的概要：它现在什么状态、下一步是什么、这个会话的目标，一眼看完。状态的解释放在悬停提示里，要你特别处理的才直接写出来
 const INK = { wait: "needs", stuck: "needs", alarm: "needs", run: "run", review: "review", timer: "timer", peer: "peer" };
@@ -2020,47 +2103,116 @@ function tmHtml(m, id, full, re) {
   return '<div class="tm">' + head + body + (long ? '<div class="tm-a">' + btn(open ? "收起" + ico("up") : "展开全文" + ico("down"),
     "bubOpen['" + id + "']=!bubOpen['" + id + "'];" + (re || "renderDetail") + "()", "ghost xs") + "</div>" : "") + "</div>";
 }
-// 全部对话：你说的每一句（和「我说过的话」同一份）加上它每一轮最后的回复，按时间排；可以只看你说的。先列最近 40 条，往前一次再加 60 条
-const dAll = {};   // 会话 key -> { open, ts, items, you, it, only, show, loading }
-async function loadAll(key, quiet) {
-  const it = findItem(key), g = dAll[key];
-  if (!it || !g) return;
-  g.loading = !quiet; g.ts = it.details.replyTs + "|" + it.details.promptTs;
-  if (!quiet) renderDetail();
+// 「它怎么说」要找它之前几轮问的，要整段对话记录
+const dAll = {};   // 会话 key -> { items, loading }
+async function loadAll(key) {
+  const g = dAll[key];
+  if (!g) return;
+  g.loading = true;
+  renderDetail();
   try {
-    const res = await (await fetch("/api/transcript?key=" + encodeURIComponent(key), { cache: "no-store" })).json();
-    Object.assign(g, { items: res.items || [], you: res.you || 0, it: res.it || 0 });
-  } catch (e) { if (!quiet) toast("没取到：本机服务没响应"); }
+    g.items = (await (await fetch("/api/transcript?key=" + encodeURIComponent(key), { cache: "no-store" })).json()).items || [];
+  } catch (e) { toast("没取到：本机服务没响应"); }
   g.loading = false;
   if (selKey === key && !typing()) laterRender(renderDetail);
 }
-function openAll(key, on) {
-  if (!on) { if (dAll[key]) dAll[key].open = false; renderDetail(); const el = document.getElementById("ds-convo"); if (el) el.scrollIntoView({ block: "start" }); return; }
-  dAll[key] = Object.assign(dAll[key] || { only: false, show: 40 }, { open: true });
-  loadAll(key);
+// 对话历史：右边滑出的侧边栏，专心读完整段对话：你说的每一句（和「我说过的话」同一份）加上它每一轮最后的回复，按时间排，一路滚到底。
+// 从「看全部对话」打开时停在最新一条；从搜索结果打开时停在命中的那一条，搜索词标亮
+let hist = null;   // { key, title, hit, only, items, you, it, ts, loading, scroll, back }
+function histSig(key) { const it = findItem(key); return it ? it.details.replyTs + "|" + it.details.promptTs : ""; }
+function histInert(on) { ["view-board", "view-history"].forEach(id => { document.getElementById(id).inert = on; }); }
+function openHist(key, hit, title) {
+  hist = { key, title: title || "", hit: hit || null, only: false, loading: true, scroll: true, ts: histSig(key), back: document.activeElement };
+  document.getElementById("hist").hidden = false;
+  document.body.classList.add("hist-on");
+  histInert(true);
+  renderHist();
+  document.getElementById("hist-body").focus({ preventScroll: true });   // 上下键、空格直接滚对话
+  loadHist();
+}
+function closeHist() {
+  if (!hist) return;
+  const back = hist.back;
+  hist = null;
+  document.getElementById("hist").hidden = true;
+  document.getElementById("hist-body").innerHTML = "";
+  document.body.classList.remove("hist-on");
+  histInert(false);
+  if (back && back.isConnected) back.focus({ preventScroll: true });
+}
+async function loadHist(quiet) {
+  const h = hist;
+  if (!h) return;
+  h.ts = histSig(h.key);
+  let res = null;
+  try { res = await (await fetch("/api/transcript?key=" + encodeURIComponent(h.key), { cache: "no-store" })).json(); }
+  catch (e) { if (!quiet) toast("没取到对话记录：本机服务没响应"); }
+  if (hist !== h) return;
+  h.loading = false;
+  const same = res && h.items && h.items.length === (res.items || []).length;
+  if (res) Object.assign(h, { items: res.items || [], you: res.you || 0, it: res.it || 0 });
+  if (quiet && (same || !res || selecting())) return;   // 正在选字时不重画，免得选区没了
+  renderHist();
+}
+function setHistOnly(on) {
+  if (!hist) return;
+  hist.only = on; hist.scroll = true;
+  renderHist();
+}
+function histMsg(m, at, lost, who) {
+  if (m.kind === "handoff") return '<div class="tm-ho"><span>' + esc(hm(m.ts)) + " 上下文满了，压缩过一次</span></div>";
+  const you = m.kind === "you", kind = at && hist.hit && NOTE_KIND[hist.hit.kind];
+  const tag = at ? (lost ? "台账记下的" : "搜到的" + (kind ? "「" + kind[0] + "」" : "")) + (m.ts ? " · " : "") : "";
+  const imgs = (m.images || []).length ? '<div class="thumbs">' + m.images.map(f =>
+    '<a href="/img/' + esc(f) + '" target="_blank" rel="noopener"><img src="/img/' + esc(f) + '" loading="lazy" alt=""></a>').join("") + "</div>" : "";
+  return '<div class="tm hmsg ' + (you ? "you" : "it") + (at ? " at" : "") + '"><div class="tm-h">' +
+    (you ? '<span class="who you">你</span>' : face("mark", 20) + '<span class="who">' + esc(who) + "</span>") +
+    "<span>" + esc(tag) + (m.ts ? esc(hm(m.ts)) : "") + "</span>" + btn(ico("copy", 13) + "复制", "copyClip(" + clip(m.text) + ")", "ghost xs cp") + "</div>" +
+    (you ? '<div class="tm-b you"><div class="tx">' + esc(m.text) + "</div>" + imgs + "</div>" : '<div class="tm-b md">' + mdHtml(m.text) + "</div>") + "</div>";
+}
+function renderHist() {
+  const h = hist;
+  if (!h) return;
+  const it = findItem(h.key), title = it ? it.title : h.title || "（未命名会话）", who = h.key.startsWith("codex:") ? "Codex" : "Claude", k = clip(h.key);
+  const seg = '<div class="seg src" role="group" aria-label="筛选">' +
+    '<button type="button" aria-pressed="' + !h.only + '" onclick="setHistOnly(false)">全部' + (h.items ? '<span class="n">' + num((h.you || 0) + (h.it || 0)) + "</span>" : "") + "</button>" +
+    '<button type="button" aria-pressed="' + h.only + '" onclick="setHistOnly(true)">只看我说的' + (h.items ? '<span class="n">' + num(h.you || 0) + "</span>" : "") + "</button></div>";
+  document.getElementById("hist-h").innerHTML = '<div class="hist-t"><h2 id="hist-t">对话历史</h2><p title="' + esc(title) + '">' + esc(title) + "</p></div>" +
+    '<div class="hist-acts">' + seg + btn("打开会话" + ico("open"), "openSession(clips[" + k + "],this)", "ghost sm") +
+    btn(ico("close", 16), "closeHist()", "ghost icon", "关闭（Esc）", 'aria-label="关闭"') + "</div>";
+  const box = document.getElementById("hist-body");
+  if (h.loading && !h.items) { box.innerHTML = '<span class="lmore">读取对话记录…</span>'; return; }
+  const f = h.hit && h.items ? ctxFind(h.items, h.hit) : null, all = f ? f.items : h.items || [], hitM = f && all[f.at];
+  const list = all.filter(m => !h.only || m.kind === "you");
+  const top = box.scrollTop, atEnd = box.scrollHeight - top - box.clientHeight < 40;
+  let html = '<span class="sec-l">' + (f && f.lost ? "这一轮的原文读不到了（Claude Code 默认只留 30 天对话记录），标出来的那条是台账记下的。" : "你说的每一句都在；它的只列每一轮最后的回复，中间干活的过程不列。") + "</span>", day = null;
+  if (!list.length) html += '<span class="lmore">' + (h.only ? "台账里没记到你在这个会话里说的话。" : "没读到这个会话的对话记录。") + "</span>";
+  list.forEach(m => {
+    if (m.ts && dayNo(m.ts) !== day) {
+      day = dayNo(m.ts);
+      const diff = day - dayNo(nowTs());
+      html += '<div class="tm-ho"><span>' + (diff === 0 ? "今天 " : diff === -1 ? "昨天 " : "") + md(m.ts) + " " + week(m.ts) + "</span></div>";
+    }
+    html += histMsg(m, m === hitM, f && f.lost, who);
+  });
+  box.innerHTML = html;
+  if (h.hit) markIn(box, h.hit.q || "", h.hit.url);
+  if (!h.scroll) { box.scrollTop = atEnd ? box.scrollHeight : top; return; }
+  h.scroll = false;
+  const at = box.querySelector(".hmsg.at");
+  if (!at) { box.scrollTop = box.scrollHeight; return; }
+  const ms = at.querySelectorAll("mark");   // 它问你的、替你定的多在回复末尾，滚到最后一个标亮的词；给链接的滚到那个链接
+  (at.querySelector("a[data-hit]") || (ms.length ? ms[h.hit.kind === "ask" || h.hit.kind === "call" ? ms.length - 1 : 0] : at)).scrollIntoView({ block: "center" });
 }
 function convo(it) {
-  const d = it.details, k = esc(it.key), g = dAll[it.key];
-  if (g && g.open) {
-    if (!g.loading && g.ts !== d.replyTs + "|" + d.promptTs) loadAll(it.key, true);   // 又说了新的：悄悄重取
-    const list = (g.items || []).filter(m => !g.only || m.kind === "you"), start = Math.max(0, list.length - g.show);
-    const seg = '<div class="seg src" role="group" aria-label="筛选">' +
-      '<button type="button" aria-pressed="' + !g.only + '" onclick="dAll[\'' + k + '\'].only=false;renderDetail()">全部<span class="n">' + num((g.you || 0) + (g.it || 0)) + "</span></button>" +
-      '<button type="button" aria-pressed="' + g.only + '" onclick="dAll[\'' + k + '\'].only=true;renderDetail()">只看我说的<span class="n">' + num(g.you || 0) + "</span></button></div>";
-    let body = g.loading && !g.items ? '<span class="lmore">读取中…</span>' : !list.length ? '<span class="lmore">' + (g.only ? "台账里没记到你在这个会话里说的话。" : "没读到这个会话的对话记录。") + "</span>" : "";
-    if (start > 0) body += '<div class="tm-more">' + btn("再往前看 " + num(Math.min(60, start)) + " 条（还有 " + num(start) + " 条）" + ico("up"), "dAll['" + k + "'].show+=60;renderDetail()", "ghost sm") + "</div>";
-    body += list.slice(start).map((m, i) => tmHtml(m, "a" + domId(it.key) + "_" + (start + i), true)).join("");
-    return '<div class="part dsec"><div class="sec-hd"><span class="sec-t">全部对话</span><span class="ho-acts">' + seg +
-      btn("收起" + ico("up"), "openAll('" + k + "',false)", "ghost xs") + "</span></div>" +
-      '<span class="sec-l">你说的每一句都在；它的只列每一轮最后的回复，中间干活的过程不列。</span><div class="thread">' + body + "</div></div>";
-  }
+  const d = it.details, k = esc(it.key);
   const msgs = [];
   if (d.firstPrompt) msgs.push({ kind: "you", label: "最初的要求", text: d.firstPrompt });
   if (d.lastPrompt) msgs.push({ kind: "you", label: "最后说的", text: d.lastPrompt, ts: d.promptTs });
   if (d.lastReply) msgs.push({ kind: "it", label: waitOf(it) ? "停下来前说的" : "最后说的", text: replyOf(it), ts: d.replyTs });
   if (!msgs.length) return "";
   return '<div class="part dsec"><div class="sec-hd"><span class="sec-t">对话</span>' +
-    btn("看全部对话" + ico("down"), "openAll('" + k + "',true)", "ghost xs", "你说过的每一句，和它每一轮的回复；可以只看你说的") + "</div>" +
+    btn("看全部对话" + ico("right"), "openHist('" + k + "')", "ghost xs", "在右边打开对话历史：你说过的每一句，和它每一轮的回复，一路滚着看") + "</div>" +
     '<div class="thread">' + msgs.map((m, i) => tmHtml(m, domId(it.key) + "_" + i)).join("") + "</div></div>";
 }
 // 压缩时的交接：Claude 上下文满了压缩时写给自己接着干活的，只取最后一段。正文长，详情打开时再取
@@ -2083,7 +2235,7 @@ function mdInline(t) {
   const codes = [];
   return esc(String(t).replace(/`([^`\n]+)`/g, (m, c) => "\u0000" + (codes.push(c) - 1) + "\u0000"))
     .replace(/\[([^\]\n]+)\]\((https?:\/\/[^\s)\u0000]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>')
-    .replace(/(^|[^"=>\w])(https?:\/\/[^\s<>"'）)」，。；、\u0000]+)/g, '$1<a href="$2" target="_blank" rel="noopener">$2</a>')
+    .replace(/(^|[^"=>\w])(https?:\/\/[^\s<>"'（）)」，。；、*\u0000]+)/g, '$1<a href="$2" target="_blank" rel="noopener">$2</a>')
     .replace(/\*\*([^*\n]+)\*\*/g, "<b>$1</b>")
     .replace(/\u0000(\d+)\u0000/g, (m, i) => "<code>" + esc(codes[i]) + "</code>");
 }
@@ -2349,7 +2501,7 @@ function askIds(text) {
     return m ? m[1].toUpperCase() : "";
   });
 }
-// 展开着的「它怎么说」：会话 key + 问题 k。之前几轮问的，去对话记录里找它问这件的那一轮（和「看全部对话」共用 dAll）
+// 展开着的「它怎么说」：会话 key + 问题 k。之前几轮问的，去对话记录里找它问这件的那一轮（dAll）
 const askOpen = {};
 function togAsk(key, i) {
   const it = findItem(key), d = it && asksOf(it)[i];
@@ -2357,7 +2509,7 @@ function togAsk(key, i) {
   const ck = key + "\n" + d.k;
   askOpen[ck] = !askOpen[ck];
   if (askOpen[ck] && i >= decisionsOf(it).length) {
-    const g = dAll[key] = dAll[key] || { only: false, show: 40, open: false };
+    const g = dAll[key] = dAll[key] || {};
     if (!g.items && !g.loading) { loadAll(key); return; }
   }
   renderDetail();
@@ -2697,6 +2849,7 @@ function xblock(title, where, n, more, rows) {
     '</div><div class="olist">' + rows + "</div></section>";
 }
 function goSearch() {
+  closeHist();
   if (tab === "board") setTab("search");   // 从看板进来先看「全部」；已经在只看一边的标签里就留在那
   const q = document.getElementById("q");
   q.focus(); q.select();
@@ -2736,20 +2889,63 @@ async function toggleSession(key) {
   hOpen[key] = true;
   renderHistory();
 }
+// 和后端 search_words 同一个意思：粘贴的链接去掉 ?参数、#锚点和末尾的 /，MR、流水线只留到编号，这样才标得上
+function qWords(q) {
+  return String(q || "").split(/\s+/).filter(Boolean).map(w => /^https?:\/\//i.test(w)
+    ? w.replace(/[?#].*$/, "").replace(/(\/-\/(?:merge_requests|pipelines|jobs|commit)\/\w+|\/pull\/\d+|\/commit\/\w+|\/actions\/runs\/\d+).*$/, "$1").replace(/\/+$/, "") : w);
+}
 function hl(text, q) {
   let out = esc(text);
-  const words = (q == null ? hq : q).split(/\s+/).filter(Boolean).map(w => esc(w).replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
+  const words = qWords(q == null ? hq : q).map(w => esc(w).replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
   if (words.length) out = out.replace(new RegExp("(" + words.join("|") + ")", "gi"), "<mark>$1</mark>");
   return out;
 }
 function snippet(text, q) {
   // 折叠时从第一个命中词前面一点开始显示，免得命中的地方被折掉
-  const words = (q == null ? hq : q).split(/\s+/).filter(Boolean);
+  const words = qWords(q == null ? hq : q);
   let at = -1;
   for (const w of words) { const i = text.toLowerCase().indexOf(w.toLowerCase()); if (i >= 0 && (at < 0 || i < at)) at = i; }
   return at > 120 ? "…" + text.slice(Math.max(0, at - 60)) : text;
 }
-function line(it, id, key) {
+// 从搜索结果跳回看板：定位到命中的那一条。聊天记录（你说的、它问你的、替你定的、给过的链接）打开对话历史并停在那条；
+// 压缩摘要、目标、状态就在详情里，滚过去标亮。不在看板上的会话也能看对话历史
+let dHit = null;   // 详情里要标亮的：{ key, kind, q, scroll }
+const HIT_SPOT = { handoff: "#ds-handoff .handoff", goal: ".sum-goal", status: ".sum-now" };
+function goHit(key, hit, title) {
+  const q = sq, on = locate(key);
+  if (!hit) { if (!on) openHist(key, null, title); return; }
+  const h = Object.assign({ q }, hit);
+  if (!on || !HIT_SPOT[h.kind]) return openHist(key, h, title);
+  dHit = Object.assign(h, { key, scroll: true });
+  if (h.kind === "handoff") bubOpen["ho" + domId(key)] = true;
+  renderDetail();
+}
+function hitSpot() {
+  if (!dHit) return;
+  if (dHit.key !== selKey) { dHit = null; return; }
+  const el = document.querySelector(HIT_SPOT[dHit.kind]);
+  if (!el) return;   // 压缩摘要还在读，读到后重画时再来
+  markIn(el, dHit.q);
+  if (!dHit.scroll) return;
+  dHit.scroll = false;
+  (el.querySelector("mark") || el).scrollIntoView({ block: "center" });
+}
+function hitBtn(key, hit, title, cls) {
+  const on = !!findItem(key);
+  return btn(on ? "在看板里看" : "看对话", "goHit(clips[" + clip(key) + "],clips[" + clip(hit) + "],clips[" + clip(title || "") + "])", cls || "ghost xs",
+    (on ? "回到看板，" : "打开对话历史，") + (hit ? "定位到这一条" : "打开这个会话"));
+}
+// 卡片底部的按钮去第一条命中；只是标题、项目对上的没有具体位置，打开会话详情就好
+function firstHit(s) {
+  const ws = qWords(hq).map(w => w.toLowerCase());
+  if (!ws.length) return null;
+  const p = (s.preview || []).find(x => ws.some(w => String(x.text || "").toLowerCase().includes(w)));
+  if (p) return { kind: "you", ts: p.ts, text: p.text };
+  if (s.handoff) return { kind: "handoff", ts: s.handoff.ts, text: s.handoff.text };
+  const n = (s.notes || [])[0];
+  return n ? { kind: n.kind, ts: n.ts, text: n.text, url: n.url } : null;
+}
+function line(it, id, key, title) {
   const text = it.text;
   const long = text.length > 300 || text.split("\n").length > 6;
   const open = hLong[id];
@@ -2758,24 +2954,24 @@ function line(it, id, key) {
   return '<div class="hline"><span class="ht">' + esc(it.ts ? when(it.ts) : it.timeText) + "</span>" +
     '<div class="hx"><p class="htext' + (long && !open ? " clamp" : "") + '">' + hl(long && !open ? snippet(text) : text) + "</p>" + imgs + "</div>" +
     '<span class="hacts">' + (long ? btn(open ? "收起" : "展开全文", "hLong['" + id + "']=!hLong['" + id + "'];renderHistory()", "ghost xs") : "") +
-    ctxBtn(key, "you", it.ts, text) + btn("复制", "copyClip(" + clip(text) + ")", "ghost xs") + "</span></div>";
+    ctxBtn(key, "you", it.ts, text) + (title != null ? hitBtn(key, { kind: "you", ts: it.ts, text }, title) : "") + btn("复制", "copyClip(" + clip(text) + ")", "ghost xs") + "</span></div>";
 }
 function sessExtra(full) {
   if (!full || !full.goal) return "";
   return '<div class="sess-extra"><span class="sec-l">目标' + (full.goalStatus ? '<span class="pill">' + esc(full.goalStatus) + "</span>" : "") +
     '</span><span class="goal-sub">' + esc(full.goal) + (full.criteria ? "\n完成标准：" + esc(full.criteria) : "") + "</span></div>";
 }
-function hoLine(h, key) {
+function hoLine(h, key, title) {
   // 搜索结果里：压缩时的交接对上的那一段
   return '<div class="hline"><span class="ht" title="' + esc(when(h.ts)) + ' 上下文压缩时写的摘要">压缩摘要</span><div class="hx"><p class="htext">' + hl(h.text) + "</p></div>" +
-    '<span class="hacts">' + ctxBtn(key, "handoff", h.ts, h.text) + "</span></div>";
+    '<span class="hacts">' + ctxBtn(key, "handoff", h.ts, h.text) + (title != null ? hitBtn(key, { kind: "handoff", ts: h.ts, text: h.text }, title) : "") + "</span></div>";
 }
 // 搜索结果里：AI 问你的 ❓、替你定的 🧭、📌 状态行、🎯 目标里对上的那一句（只在「全部」里搜）
-const NOTE_KIND = { ask: ["它问你", "它问你、要你拍板的事"], call: ["替你定", "它没问你、自己定了的事"], status: ["状态", "它最后写的状态行"], goal: ["目标", "这个会话的目标和完成标准"] };
-function noteLine(n, key) {
+const NOTE_KIND = { ask: ["它问你", "它问你、要你拍板的事"], call: ["替你定", "它没问你、自己定了的事"], status: ["状态", "它最后写的状态行"], goal: ["目标", "这个会话的目标和完成标准"], link: ["给过链接", "它在这一轮回复里给过这个链接"] };
+function noteLine(n, key, title) {
   const k = NOTE_KIND[n.kind] || ["AI", ""];
   return '<div class="hline"><span class="ht" title="' + esc((n.ts ? when(n.ts) + " · " : "") + k[1]) + '">' + k[0] + '</span><div class="hx"><p class="htext">' + hl(n.text) + "</p></div>" +
-    '<span class="hacts">' + ctxBtn(key, n.kind, n.ts, n.text) + "</span></div>";
+    '<span class="hacts">' + ctxBtn(key, n.kind, n.ts, n.text) + (title != null ? hitBtn(key, { kind: n.kind, ts: n.ts, text: n.text, url: n.url }, title) : "") + "</span></div>";
 }
 // 前后对话：搜到的那一句（你说的、它问你的、替你定的、状态、目标、交接）在对话里前后各几条，就在结果卡片里展开。
 // 对话从 /api/transcript 取（和看板详情「全部对话」同一份：你说的每一句，加它每一轮最后的回复），一个会话只取一次
@@ -2822,7 +3018,7 @@ function ctxMore(key, dir) {
 // 其次找含搜索词、时间最近的；都没有（对话记录已经清掉了）就把台账记下的那句按时间插进去
 function ctxFind(items, a) {
   const want = a.kind === "you" ? "you" : a.kind === "handoff" ? "handoff" : "it";
-  const words = hq.toLowerCase().split(/\s+/).filter(Boolean);
+  const words = (a.url ? [a.url] : qWords(a.q != null ? a.q : hq)).map(w => w.toLowerCase());
   let best = -1, bd = Infinity, wb = -1, wd = Infinity;
   items.forEach((m, i) => {
     if (m.kind !== want) return;
@@ -2830,6 +3026,7 @@ function ctxFind(items, a) {
     if (d < bd) { bd = d; best = i; }
     if (d < wd && words.length && words.every(w => (m.text || "").toLowerCase().includes(w))) { wd = d; wb = i; }
   });
+  if (a.url && wb >= 0) return { items, at: wb };   // 按链接找：哪一轮真的写了这个链接
   if (best >= 0 && bd < 2) return { items, at: best };
   if (wb >= 0) return { items, at: wb };
   if (best >= 0 && bd < 6 * 3600) return { items, at: best };
@@ -2865,8 +3062,18 @@ function ctxPanel(key) {
     '<span class="sec-l">' + note + '</span><div class="thread">' + body + "</div></div>";
 }
 // 前后对话里把搜索词标出来：它的回复按 Markdown 排过，不能像别处那样先拼好字符串再标，排好以后在文字节点上标
-function markIn(root, q) {
-  const words = q.split(/\s+/).filter(Boolean).map(w => w.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
+function markIn(root, q, url) {
+  // 链接常写成 [MR !970](地址)，文字里没有地址：按 href 对上的把链接本身标出来
+  const qw = qWords(q), urls = qw.filter(w => /^https?:\/\//i.test(w)).concat(url ? [url] : []).map(u => u.toLowerCase());
+  if (urls.length) root.querySelectorAll("a[href]").forEach(a => {
+    const href = (a.getAttribute("href") || "").toLowerCase();
+    if (!urls.some(u => href.includes(u))) return;
+    a.dataset.hit = "1";
+    const mk = document.createElement("mark");
+    mk.append(...a.childNodes);
+    a.append(mk);
+  });
+  const words = qw.map(w => w.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
   if (!words.length) return;
   const one = new RegExp(words.join("|"), "i"), all = new RegExp(words.join("|"), "gi");
   const walk = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
@@ -2903,13 +3110,15 @@ function scard(s, si, faces) {
   const fk = faces[s.key];
   const meta = [hq && s.hits ? "命中 " + s.hits : "", hq && s.handoff ? "压缩摘要里有" : "", s.count + " 句", s.lastTs ? when(s.lastTs) : s.lastText].filter(Boolean).join(" · ");
   const more = open ? "收起" + ico("up") : (s.count > 1 ? "展开全部 " + s.count + " 句" : "展开") + (s.goal ? "和目标" : "") + ico("down");
+  // 命中不止一条时，每条都能单独跳过去；只有一条就用底部的按钮
+  const each = items.length + (s.handoff ? 1 : 0) + (s.notes || []).length > 1 ? s.title : null;
   return '<article class="hcard" id="hs-' + domId(s.key) + '"><div class="fc">' + (fk ? face(fk, 24, si, REASON[fk]) : "") + "</div>" +
     '<div class="hbody"><div class="htop">' + tagChip(s) + "<h3>" + hl(s.title) + '</h3>' + toolChip(s) + '<span class="hm">' + esc(meta) + "</span></div>" +
     (open ? sessExtra(full) : "") +
-    '<div class="hlines">' + items.map((it, i) => line(it, (open ? "f" : "p") + si + "_" + i, s.key)).join("") + (s.handoff ? hoLine(s.handoff, s.key) : "") +
-    (s.notes || []).map(n => noteLine(n, s.key)).join("") + "</div>" + ctxPanel(s.key) +
+    '<div class="hlines">' + items.map((it, i) => line(it, (open ? "f" : "p") + si + "_" + i, s.key, each)).join("") + (s.handoff ? hoLine(s.handoff, s.key, each) : "") +
+    (s.notes || []).map(n => noteLine(n, s.key, each)).join("") + "</div>" + ctxPanel(s.key) +
     '<div class="hfoot">' + btn(more, "toggleSession('" + k + "')", "ghost sm") +
-    (findItem(s.key) ? btn("在看板里看", "locate('" + k + "')", "ghost sm", "回到看板，打开这个会话的详情：现状、目标、产出物、会话信息") : "") +
+    hitBtn(s.key, firstHit(s), s.title, "ghost sm") +
     btn("打开会话" + ico("open"), "openSession('" + k + "',this)", "ghost sm") +
     (s.linksTotal ? btn("AI 给的产出物 " + num(s.linksTotal) + " 个", "goOutputs('', '" + k + "')", "ghost sm", "到「产出物」里只看这个会话的") : "") + "</div></div></article>";
 }
@@ -2940,7 +3149,7 @@ function renderHistory() {
   }
   const faces = {};
   allItems(state).forEach(it => { faces[it.key] = faceOf(it); });
-  let html = cross ? cross + '<div class="dayh"><b>你说过的话和压缩摘要</b><span>' + num(hTotal) + " 个会话</span></div>" : "", day = null;
+  let html = cross ? cross + '<div class="dayh"><b>对得上的会话</b><span>' + num(hTotal) + " 个会话</span></div>" : "", day = null;
   hSessions.forEach((s, i) => {
     const ts = s.lastTs || (s.preview[0] && s.preview[0].ts) || 0;
     const dn = ts ? dayNo(ts) : null;
@@ -2956,7 +3165,7 @@ function renderHistory() {
 // ---------------- 产出物：AI 在回复里给你的链接和本机文件，能搜，能跳回给出它的会话
 // 产物一直留着；MR 和流水线是临时的，单独一组，「全部产物」里不算它们
 const CATS = [["all", "全部产物"], ["feishu", "飞书"], ["file", "文件"], ["web", "网页"], ["code", "代码"]];
-let oq = "", oCat = "all", oKey = "", oItems = [], oTotal = 0, oCounts = {}, oAll = 0, oAllSessions = 0, oWider = 0, oPromptHits = 0, oLoaded = false, oReady = false, oSig = "";
+let oq = "", oCat = "all", oKey = "", oItems = [], oTotal = 0, oCounts = {}, oAll = 0, oAllSessions = 0, oWider = 0, oWide = false, oPromptHits = 0, oLoaded = false, oReady = false, oSig = "";
 function goOutputs(q, key, cat) {
   // 从看板详情、我说过的话跳过来：key = 只看这个会话的，cat = 只看哪一类
   sq = q || ""; oKey = key || ""; oCat = cat || "all"; oLoaded = false;
@@ -2974,7 +3183,7 @@ async function searchOut(q, more) {
     const res = await r.json();
     if (sig !== oSig) return;  // 打字快时旧结果晚到，丢掉
     oItems = more ? oItems.concat(res.items) : res.items;
-    oTotal = res.total; oCounts = res.counts || {}; oAll = res.all; oAllSessions = res.allSessions; oWider = res.wider || 0;
+    oTotal = res.total; oCounts = res.counts || {}; oAll = res.all; oAllSessions = res.allSessions; oWider = res.wider || 0; oWide = !!res.wide;
     if (!more) oPromptHits = res.promptHits || 0;
   } catch (e) { if (sig === oSig) toast("没取到产出物：本机服务没响应"); return; }
   oReady = true;
@@ -2992,17 +3201,17 @@ function oKeyTitle() {
   const it = findItem(oKey), x = oItems.length && oItems[0].sessions.find(s => s.key === oKey);
   return it ? it.title : x ? x.title : "这个会话";
 }
-function sessLink(x, q) {
-  // 给出它的会话：在看板上的点一下回到看板打开详情，不在了的直接打开会话
+function sessLink(x, q, o) {
+  // 给出它的会话：在看板上的点一下回到看板，停在它给出这个链接的那一轮；不在了的打开对话历史
   const on = !!findItem(x.key);
   return '<span class="os1">' + toolChip(x) + '<span class="chip sm">' + esc(x.project || "") + '</span><button type="button" class="sl" title="' +
-    (on ? "回到看板，打开这个会话的详情" : "已不在看板上，点一下直接打开会话") + '" onclick="' + (on ? "locate" : "openSession") + "(clips[" + clip(x.key) + '])">' +
+    (on ? "回到看板，定位到它给出这个的那一轮" : "已不在看板上，打开对话历史，定位到它给出这个的那一轮") + '" onclick="goHit(clips[' + clip(x.key) + "],clips[" + clip({ kind: "link", ts: x.ts, url: o.url, text: o.ctx || o.text }) + "],clips[" + clip(x.title || "") + '])">' +
     hl(x.title || "（未命名会话）", q) + "</button></span>";
 }
-const CAT_NAME = { feishu: "飞书", code: "代码", file: "文件", web: "网页", mr: "MR 和流水线", mr_open: "还开着的 MR" };
+const CAT_NAME = { feishu: "飞书", code: "代码", file: "文件", web: "网页", mr: "MR 和流水线", mr_open: "还开着的 MR", fav: "收藏" };
 function orow(o, q) {
   const s0 = o.sessions[0], k0 = s0 ? clip(s0.key) : 0;
-  const acts = (s0 && findItem(s0.key) ? btn("在看板里看", "locate(clips[" + k0 + "])", "ghost xs", "回到看板，打开给出它的会话的详情") : "") +
+  const acts = (s0 ? hitBtn(s0.key, { kind: "link", ts: s0.ts, url: o.url, text: o.ctx || o.text }, s0.title) : "") +
     (s0 ? btn("打开会话" + ico("open", 12), "openSession(clips[" + k0 + "],this)", "ghost xs") : "") +
     (o.cat === "file" && !o.gone && o.twin !== "web" ? btn("在访达里显示", "openFile(clips[" + clip(o.url) + "],true)", "ghost xs") : "") +
     btn(o.cat === "file" ? "复制路径" : "复制链接", "copyClip(" + clip(o.url) + ")", "ghost xs");
@@ -3013,33 +3222,37 @@ function orow(o, q) {
     (o.cat === "file" ? '<span class="op">' + hl(o.path || o.url, q) + (o.gone ? (o.arch ? "　原文件已经不在了，点开是看板留档的副本" : "　已经不在了") : o.twin === "file" ? "　原 worktree 已清理，这是主工作区里的同名文件"
       : o.twin === "web" ? "　原 worktree 已清理，点开是仓库默认分支上的版本" : "") + "</span>" : "") +
     (o.ctx ? '<p class="oc" title="AI 给出它时说的话">「' + hl(o.ctx, q) + "」</p>" : "") +
-    '<div class="os">' + (MR_STATE[o.state] ? '<span class="chip sm">' + MR_STATE[o.state] + "</span>" : "") + o.sessions.map(x => sessLink(x, q)).join("") + more + "</div></div>" +
-    '<div class="oa"><span class="otm">' + esc(when(o.ts)) + '</span><span class="oacts">' + acts + "</span></div></div>";
+    '<div class="os">' + (MR_STATE[o.state] ? '<span class="chip sm">' + MR_STATE[o.state] + "</span>" : "") + o.sessions.map(x => sessLink(x, q, o)).join("") + more + "</div></div>" +
+    '<div class="oa"><span class="ostm">' + outStar(o) + '<span class="otm">' + esc(when(o.ts)) + '</span></span><span class="oacts">' + acts + "</span></div></div>";
 }
 function renderOutputs() {
   const n = c => c === "all" ? CATS.reduce((a, [k]) => a + (k === "all" ? 0 : oCounts[k] || 0), 0) : oCounts[c] || 0;
-  const mr = oCat === "mr" || oCat === "mr_open", seg = ([c, label]) =>
-    '<button type="button" aria-pressed="' + (oCat === c) + '" onclick="setCat(\'' + c + "')\">" + label + '<span class="n">' + num(n(c)) + "</span></button>";
+  // oWide：搜的就是某个 MR、流水线，或者产物里没有，把 MR 和流水线也列上了；全是它们时，标签也按它们亮
+  const onlyMr = oCat === "all" && oWide && !n("all"), mr = oCat === "mr" || oCat === "mr_open" || onlyMr, seg = ([c, label]) =>
+    '<button type="button" aria-pressed="' + (onlyMr ? c === "mr" : oCat === c) + '" onclick="setCat(\'' + c + "')\">" + label + '<span class="n">' + num(n(c)) + "</span></button>";
   segCounts(oPromptHits, oTotal);
   document.getElementById("hsum").innerHTML = (oq || oKey || oCat !== "all"
     ? '<span class="mono hit">找到 ' + num(oTotal) + (oCat === "mr_open" ? " 个还开着的 MR" : mr ? " 个 MR 和流水线" : " 个产出物") + "</span>"
     : '<span class="mono">共 ' + num(oAll) + " 个产出物 · 来自 " + num(oAllSessions) + " 个会话</span>") +
-    '<span class="note">' + ico("info", 13) + (mr ? "临时的：开着的 MR 标「待合并」，合并完的变灰，不用再管"
+    '<span class="note">' + ico("info", 13) + (onlyMr ? "产物里没有，这些是 MR 和流水线：开着的标「待合并」，合并完的变灰"
+      : oCat === "all" && oWide ? "搜的是 MR 或流水线，和产物一起列" : oCat === "fav" ? "你点过星标的，一直留着；也在左栏「收藏」里"
+      : mr ? "临时的：开着的 MR 标「待合并」，合并完的变灰，不用再管"
       : "AI 给你的文档、文件和网页，一直留着；MR 和流水线是临时的，单独放一组") + "</span>";
   let html = '<div class="ocats"><div class="seg src" role="group" aria-label="只看哪类产出物">' + CATS.map(seg).join("") + "</div>" +
     '<div class="seg src" role="group" aria-label="临时的链接">' + seg(["mr_open", "还开着的 MR"]) + seg(["mr", "MR 和流水线"]) + "</div>" +
+    '<div class="seg src" role="group" aria-label="收藏的">' + seg(["fav", "收藏"]) + "</div>" +
     (oKey ? '<span class="chip" title="只看这个会话给的">只看「' + esc(oKeyTitle()) + "」</span>" + btn("看全部会话的", "clearOutKey()", "ghost xs") : "") + "</div>";
   if (!oItems.length) {
     // 只看某个会话或某一类时没搜到：直接说放开后有几个，一键放开；产物里没有、MR 和流水线里有时给那边的入口
     const part = oKey ? "只看「" + oKeyTitle() + "」" + (oCat !== "all" ? "里的" + CAT_NAME[oCat] : "") : oCat !== "all" ? "只看" + CAT_NAME[oCat] : "";
     const inMr = !!(oq && !mr && oCounts.mr);
-    const tip = !oq ? (oCat === "mr_open" ? "合并完、关掉的在「MR 和流水线」里。" : mr ? "AI 在回复里给你 MR 或流水线链接后，会收在这里。" : "AI 在回复里给你链接或文件后，会自动收在这里。")
+    const tip = !oq ? (oCat === "fav" ? "产出物右边点星标，就会收在这里和左栏「收藏」。" : oCat === "mr_open" ? "合并完、关掉的在「MR 和流水线」里。" : mr ? "AI 在回复里给你 MR 或流水线链接后，会收在这里。" : "AI 在回复里给你链接或文件后，会自动收在这里。")
       : inMr ? "产物里没有，MR 和流水线里有 " + num(oCounts.mr) + " 个对得上。"
       : oWider ? "放开到全部会话、全部类型，有 " + num(oWider) + " 个。"
       : oPromptHits ? "AI 没给过，你自己说过的在上面。"
       : part ? "放开到全部也没有。换个说法，或者少打几个词试试。" : "换个说法，或者少打几个词试试。";
     html += '<div class="dash" style="margin: 0; padding: 20px; gap: 14px">' + face("search", 36) + '<span class="tx">' +
-      (oq ? "<b>" + (part ? part + "时" : "") + "没找到「" + esc(oq) + "」</b>" : "<b>" + (oCat === "mr_open" ? "开着的 MR 都处理完了" : "这里还空着") + "</b>") +
+      (oq ? "<b>" + (part ? part + "时" : "") + "没找到「" + esc(oq) + "」</b>" : "<b>" + (oCat === "mr_open" ? "开着的 MR 都处理完了" : oCat === "fav" ? "还没有收藏" : "这里还空着") + "</b>") +
       "<span>" + esc(tip) + "</span></span>" +
       (inMr ? btn("去 MR 和流水线里看", "setCat('mr')", "sec sm", "", 'style="margin-left: auto"')
         : oq && oWider ? btn("看全部 " + num(oWider) + " 个", "widenOut()", "sec sm", "", 'style="margin-left: auto"') : "") + "</div>";
@@ -3078,6 +3291,11 @@ document.addEventListener("click", e => {
 });
 document.addEventListener("keydown", e => {
   if (ime(e)) return;
+  if (hist) {   // 对话历史开着：Esc 关掉，⌘K 去搜索，别的键不碰后面的看板
+    if (e.key === "Escape") { e.preventDefault(); closeHist(); }
+    else if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") { e.preventDefault(); goSearch(); }
+    return;
+  }
   if (e.key === "Escape") {
     const inQ = document.activeElement && document.activeElement.id === "q", busyEsc = tagEdit || menu || inQ;
     if (tagEdit) closeTag();
