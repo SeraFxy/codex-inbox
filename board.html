@@ -1427,6 +1427,7 @@ function favMore(el, key) {
 }
 // 产出物收藏：和会话收藏一样存在服务端，放在左栏「收藏」和「产出物」页。key 同产出物的去重（飞书文档按文档，别的按链接）
 function outFavOn(key) { return !!(state && (state.outFavs || []).some(x => x.key === key)); }
+function favFirst(list) { return list.filter(l => outFavOn(l.key)).concat(list.filter(l => !outFavOn(l.key))); }   // 详情里收藏的排最前
 function outStar(l) {
   if (!l.key) return "";
   const on = outFavOn(l.key);
@@ -1443,8 +1444,10 @@ function toggleOutFav(l) {
     if (had && !on) { oItems = oItems.filter(x => x.key !== l.key); oTotal = Math.max(0, oTotal - 1); }
   }
   render();
-  post("out_fav", l.key, { on }).then(res => toast(res.message || (res.ok ? "好了" : "没成功"), res.ok && !on ? () => post("out_fav", l.key, { on: true }).then(() => { oLoaded = false; if (tab === "outputs") searchOut(oq); load(); }) : null),
-    () => toast("操作失败：本机服务没响应"));
+  post("out_fav", l.key, { on }).then(res => {
+    toast(res.message || (res.ok ? "好了" : "没成功"), res.ok && !on ? () => post("out_fav", l.key, { on: true }).then(() => { oLoaded = false; if (tab === "outputs") searchOut(oq); load(); }) : null);
+    load();   // 详情收起时列的是「收藏 + 最近 8 个」，要带上刚收藏的、去掉刚取消的
+  }, () => toast("操作失败：本机服务没响应"));
 }
 function openOutFav(x) {
   if (x.cat === "file") openFile(x.url);
@@ -2000,7 +2003,7 @@ function outMatch(l, q) {
 function outRows(key) {
   const it = findItem(key), got = dOut[key], q = dOutQ[key] || "";
   if (!it) return "";
-  const list = got ? got.items.filter(l => !q || outMatch(l, q)) : it.details.links;
+  const list = favFirst(got ? got.items.filter(l => !q || outMatch(l, q)) : it.details.links);
   return list.length ? linkList(list) : '<span class="lmore">这个会话的产出物里没有「' + esc(q) + "」</span>";
 }
 function outSec(it) {
@@ -2013,7 +2016,7 @@ function outSec(it) {
       esc(dOutQ[it.key] || "") + '" oninput="dOutQ[\'' + k + '\']=this.value;document.getElementById(\'dout-list\').innerHTML=outRows(\'' + k + '\')">';
   html += '<div id="dout-list">' + outRows(it.key) + "</div>";
   if (d.linksTotal > d.links.length || got)
-    html += '<div class="lbar">' + (got ? btn("收起，只看最近 " + d.links.length + " 个" + ico("up"), "foldOut('" + k + "')", "ghost sm")
+    html += '<div class="lbar">' + (got ? btn((d.links.some(l => outFavOn(l.key)) ? "收起，只看收藏和最近 " + d.links.filter(l => !outFavOn(l.key)).length + " 个" : "收起，只看最近 " + d.links.length + " 个") + ico("up"), "foldOut('" + k + "')", "ghost sm")
       : btn("展开全部 " + num(d.linksTotal) + " 个" + ico("down"), "expandOut('" + k + "')", "ghost sm")) +
       btn("到「产出物」里搜", "goOutputs('', '" + k + "')", "ghost sm", "在产出物页里只看这个会话的，能和别的会话一起搜") + "</div>";
   return html + "</div>";
@@ -2031,13 +2034,13 @@ const dMrAll = {};   // 会话 key -> 展开了合并完的 MR 和流水线
 function mrSec(it) {
   const d = it.details, k = esc(it.key), all = d.mrs || [];
   if (!d.mrsTotal) return "";
-  const live = all.filter(mrLive), rest = all.filter(l => !mrLive(l)), open = dMrAll[it.key];
+  const live = all.filter(mrLive), rest = all.filter(l => !mrLive(l) && !outFavOn(l.key)), open = dMrAll[it.key];
   const cnt = {};
   rest.forEach(l => { const t = MR_STATE[l.state] || (/^MR |^PR /.test(l.name) ? "其他 MR" : "流水线和提交"); cnt[t] = (cnt[t] || 0) + 1; });
   const sum = ["已合并", "已关闭", "其他 MR", "流水线和提交"].filter(t => cnt[t]).map(t => t + " " + num(cnt[t]) + " 个").join("、");
   let html = '<div class="part dsec dmr"><div class="sec-hd"><span class="sec-t">MR 和流水线</span><span class="mono">' + num(d.mrsTotal) + " 个</span></div>" +
     '<span class="sec-l">临时的，合并完就不用再管' + (live.length ? "；还开着的 " + num(live.length) + " 个" : "；都处理完了") + "</span>";
-  const list = open ? all : live;
+  const list = favFirst(open ? all : all.filter(l => mrLive(l) || outFavOn(l.key)));
   if (list.length) html += linkList(list);
   if (rest.length || d.mrsTotal > all.length)
     html += '<div class="lbar">' + (rest.length ? btn(open ? "收起合并完的" + ico("up") : sum + ico("down"),

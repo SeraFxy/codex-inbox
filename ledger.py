@@ -3073,6 +3073,11 @@ def done_by(ov, last):
     return bool(ov and (ov["action"] == "untrack" or ov["action"] in ("done", "closed") and last <= (ov["at"] or 0) + 120))
 
 
+def pin_favs(links, favs, n):
+    """详情里列的产出物：收藏的排最前、不占条数，后面跟最近的 n 个。"""
+    return [l for l in links if l["key"] in favs] + [l for l in links if l["key"] not in favs][:n]
+
+
 def make_item(st, now, cfg, ov, sched, titles, goals, ctx):
     key = "%s:%s" % (st["tool"], st["id"])
     last = st.get("last_ts") or 0
@@ -3345,9 +3350,9 @@ def make_item(st, now, cfg, ov, sched, titles, goals, ctx):
             "originalTitle": (st.get("custom_title") or titles.get(st["id"]) or st.get("ai_title") or "")
                              if ctx["names"].get(key) else "",
             # 产物先列 8 个，展开再按会话取全部；MR 和流水线是临时的，单独列在下面
-            "links": [l for l in ctx["links"].get(key, []) if l["cat"] != "mr"][:8],
+            "links": pin_favs([l for l in ctx["links"].get(key, []) if l["cat"] != "mr"], ctx["out_favs"], 8),
             "linksTotal": sum(1 for l in ctx["links"].get(key, []) if l["cat"] != "mr"),
-            "mrs": [l for l in ctx["links"].get(key, []) if l["cat"] == "mr"][:50],
+            "mrs": pin_favs([l for l in ctx["links"].get(key, []) if l["cat"] == "mr"], ctx["out_favs"], 50),
             "mrsTotal": sum(1 for l in ctx["links"].get(key, []) if l["cat"] == "mr"),
             "firstPrompt": (st.get("first_prompt") or "")[:300],
             "lastPrompt": (st.get("last_prompt") or "")[:300] if st.get("last_prompt") != st.get("first_prompt") else "",
@@ -3499,7 +3504,7 @@ def build_board(conn, cfg, now=None):
                 r["status"] != "pending" and cur["status"] != "pending" and (r["done_at"] or 0) > (cur["done_at"] or 0)):
             scheds[r["session_key"]] = r
     items, hidden, hashtags = [], [], {}
-    ctx = {"names": name_map(conn), "tags": tag_map(conn), "moved": load_moved(conn), "links": {}, "live": claude_live(), "bangs": claude_bangs(),
+    ctx = {"names": name_map(conn), "tags": tag_map(conn), "moved": load_moved(conn), "links": {}, "out_favs": set(meta_keys(conn, "out_favs")), "live": claude_live(), "bangs": claude_bangs(),
            "goals": {r["session_key"]: dict(r) for r in conn.execute("SELECT * FROM goals")},
            "handoffs": {r["session_key"]: r["ts"] for r in conn.execute("SELECT session_key, ts FROM handoffs")},
            "ho_goals": {r["session_key"]: handoff_goal(r["head"]) for r in conn.execute("SELECT session_key, substr(text, 1, 3000) AS head FROM handoffs")},
