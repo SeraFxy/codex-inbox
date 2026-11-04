@@ -2656,7 +2656,7 @@ def session_briefs(conn, keys, now):
     return out
 
 
-def search_outputs(conn, q, cat="", key="", tool="", limit=100, offset=0):
+def search_outputs(conn, q, cat="", key="", tool="", limit=100, offset=0, priority=False):
     """AI 给过你的产出物（链接和本机文件），同一个链接只列一次，带上给过它的会话（最近的在前）和 AI 给出它时的原话。"""
     now = time.time()
     target, favs = link_target(q), meta_keys(conn, "out_favs")
@@ -2670,8 +2670,9 @@ def search_outputs(conn, q, cat="", key="", tool="", limit=100, offset=0):
         if total2:
             wide, where, args, total = True, where2, args2, total2
     exact = "MAX(CASE WHEN " + target[0] + " THEN 1 ELSE 0 END)" if target else "0"   # 就是它的排最前，只是话里提到的排后面
+    order = "CASE WHEN MAX(l.cat) = 'feishu' THEN 0 ELSE 1 END, " if priority else ""
     rows = conn.execute("SELECT " + OUT_KEY + " AS g, MAX(l.ts) AS ts, " + exact + " AS exact" + OUT_FROM + where +
-                        " GROUP BY g ORDER BY exact DESC, ts DESC LIMIT ? OFFSET ?", (target[1] if target else []) + args + [limit, offset]).fetchall()
+                        " GROUP BY g ORDER BY exact DESC, " + order + "ts DESC, g LIMIT ? OFFSET ?", (target[1] if target else []) + args + [limit, offset]).fetchall()
     cw, cargs = _out_where(q, "any", key, tool)
     counts = {r[0] or "web": r[1] for r in conn.execute("SELECT l.cat, COUNT(DISTINCT " + OUT_KEY + ")" + OUT_FROM + cw + " GROUP BY l.cat", cargs)}
     ow, oargs = _out_where(q, "mr_open", key, tool)
@@ -3078,6 +3079,12 @@ def pin_favs(links, favs, n):
     return [l for l in links if l["key"] in favs] + [l for l in links if l["key"] not in favs][:n]
 
 
+def preview_outputs(links, favs, n):
+    """飞书文档优先；收藏仍完整保留，其余取优先级最高的 n 个，同类保持原有时间顺序。"""
+    ordered = sorted(links, key=lambda l: l["cat"] != "feishu")
+    return sorted(pin_favs(ordered, favs, n), key=lambda l: l["cat"] != "feishu")
+
+
 def make_item(st, now, cfg, ov, sched, titles, goals, ctx):
     key = "%s:%s" % (st["tool"], st["id"])
     last = st.get("last_ts") or 0
@@ -3334,6 +3341,7 @@ def make_item(st, now, cfg, ov, sched, titles, goals, ctx):
         resume = "cd %s && claude --resume %s" % (shell_quote(st.get("cwd") or HOME), st["id"])
     else:
         resume = "codex resume %s" % st["id"]
+    outputs = [l for l in ctx["links"].get(key, []) if l["cat"] != "mr"]
     return {
         "key": key, "tool": st["tool"], "toolLabel": "Claude" if st["tool"] == "claude" else "Codex",
         "title": title, "project": project_label, "projectKey": project, "color": project_color, "group": group, "kind": kind,
@@ -3349,9 +3357,10 @@ def make_item(st, now, cfg, ov, sched, titles, goals, ctx):
             "goalStatus": GOAL_STATUS.get(codex_goal.get("status") or saved.get("status") or "", ""),
             "originalTitle": (st.get("custom_title") or titles.get(st["id"]) or st.get("ai_title") or "")
                              if ctx["names"].get(key) else "",
-            # 产物先列 8 个，展开再按会话取全部；MR 和流水线是临时的，单独列在下面
-            "links": pin_favs([l for l in ctx["links"].get(key, []) if l["cat"] != "mr"], ctx["out_favs"], 8),
-            "linksTotal": sum(1 for l in ctx["links"].get(key, []) if l["cat"] != "mr"),
+            # 收起时飞书优先，保留全部收藏；分类数量来自完整列表，展开后可按分类查找
+            "links": preview_outputs(outputs, ctx["out_favs"], 8),
+            "linksTotal": len(outputs),
+            "linksCounts": {cat: sum(l["cat"] == cat for l in outputs) for cat in OUT_CATS if cat != "mr"},
             "mrs": pin_favs([l for l in ctx["links"].get(key, []) if l["cat"] == "mr"], ctx["out_favs"], 50),
             "mrsTotal": sum(1 for l in ctx["links"].get(key, []) if l["cat"] == "mr"),
             "firstPrompt": (st.get("first_prompt") or "")[:300],
@@ -4431,7 +4440,7 @@ class Handler(BaseHTTPRequestHandler):
             arg = lambda k, d="": (q.get(k) or [d])[0]
             with APP.lock:
                 res = search_outputs(APP.conn, arg("q"), arg("cat"), arg("key"), arg("tool"),
-                                     min(int(arg("limit", "100")), 500), int(arg("offset", "0")))
+                                     min(int(arg("limit", "100")), 500), int(arg("offset", "0")), priority=arg("priority") == "feishu")
             return self._send(200, json.dumps(res, ensure_ascii=False))
         if u.path == "/api/reply":
             q = parse_qs(u.query)

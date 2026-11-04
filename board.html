@@ -486,6 +486,7 @@ body.hist-on { overflow: hidden; }
 }
 .lfilter:focus { border-color: var(--bk-ink-1); box-shadow: 0 0 0 4px var(--bk-ring); }
 .lfilter::placeholder { color: var(--bk-ink-3); }
+.dout .ocats .seg.src { align-self: flex-start; flex-wrap: wrap; overflow: visible; }
 .info { display: flex; flex-direction: column; border-top: 1px solid var(--bk-sunken); }
 .info > div { display: grid; grid-template-columns: 80px minmax(0, 1fr) auto; gap: 12px; align-items: center; min-height: 40px; padding: 4px 0; border-bottom: 1px solid var(--bk-sunken); }
 .info .k { font-size: 13px; line-height: 20px; color: var(--bk-ink-3); }
@@ -1446,7 +1447,7 @@ function toggleOutFav(l) {
   render();
   post("out_fav", l.key, { on }).then(res => {
     toast(res.message || (res.ok ? "好了" : "没成功"), res.ok && !on ? () => post("out_fav", l.key, { on: true }).then(() => { oLoaded = false; if (tab === "outputs") searchOut(oq); load(); }) : null);
-    load();   // 详情收起时列的是「收藏 + 最近 8 个」，要带上刚收藏的、去掉刚取消的
+    load();   // 收起时保留全部收藏和优先展示的 8 个，要带上刚收藏的、去掉刚取消的
   }, () => toast("操作失败：本机服务没响应"));
 }
 function openOutFav(x) {
@@ -1993,43 +1994,109 @@ function spySec() {
   if (bottom && bs.length && (own ? box.scrollTop > 0 : scrollY > 0)) cur = bs[bs.length - 1];
   bs.forEach(b => b.setAttribute("aria-current", b === cur));
 }
-// 详情里的「AI 给的产出物」：先列最近 8 个，展开后按会话取全部；多于 12 个时可以在里面找
-const dOut = {};    // 会话 key -> { total, items }
+// 详情产出物：飞书优先；分类和搜索查完整列表，按页加载，不受收起时的 8 个预览限制
+const dOut = {};    // 会话 key -> 当前查询、结果和加载状态；请求对象也用于丢弃晚到的旧结果
 const dOutQ = {};   // 会话 key -> 详情里筛产出物的词
-function outMatch(l, q) {
-  const hay = (l.text + " " + l.name + " " + l.url + " " + (l.ctx || "")).toLowerCase();
-  return q.toLowerCase().split(/\s+/).filter(Boolean).every(w => hay.includes(w));
+const dOutCat = {}; // 会话 key -> 当前分类，默认全部
+let dOutTimer = null;
+function outputFirst(list) {
+  return favFirst(list).sort((a, b) => Number(a.cat !== "feishu") - Number(b.cat !== "feishu"));
+}
+function outData(key) {
+  const got = dOut[key];
+  return got && got.cat === (dOutCat[key] || "all") && got.q === (dOutQ[key] || "").trim() ? got : null;
+}
+function outCats(key) {
+  const it = findItem(key), got = outData(key), cat = dOutCat[key] || "all";
+  const counts = got && got.counts || it.details.linksCounts || {};
+  const all = CATS.reduce((n, [c]) => n + (c === "all" ? 0 : counts[c] || 0), 0);
+  return '<div class="seg src" role="group" aria-label="会话产出物分类">' + CATS.map(([c, label]) => {
+    const n = c === "all" ? all : counts[c] || 0;
+    return '<button type="button" data-out-cat="' + c + '" aria-pressed="' + (cat === c) + '" onclick="setOutCat(clips[' + clip(key) + '],\'' + c + '\')">' +
+      (c === "all" ? "全部" : label) + '<span class="n">' + num(n) + '</span></button>';
+  }).join("") + '</div>';
+}
+function outSummary(key) {
+  const it = findItem(key), got = outData(key), cat = dOutCat[key] || "all";
+  const label = cat === "all" ? "飞书文档优先" : (CATS.find(([c]) => c === cat) || [cat, cat])[1];
+  if (got && got.loading) return label + " · 正在查找…";
+  if (got && got.error) return "读取失败，可重试";
+  return label + " · " + (got ? "找到 " + num(got.matchTotal) + " 个，已显示 " + num(got.items.length) + " 个"
+    : "已显示 " + num(it.details.links.length) + " / " + num(it.details.linksTotal) + " 个");
 }
 function outRows(key) {
-  const it = findItem(key), got = dOut[key], q = dOutQ[key] || "";
+  const it = findItem(key), got = outData(key), q = (dOutQ[key] || "").trim(), cat = dOutCat[key] || "all";
   if (!it) return "";
-  const list = favFirst(got ? got.items.filter(l => !q || outMatch(l, q)) : it.details.links);
-  return list.length ? linkList(list) : '<span class="lmore">这个会话的产出物里没有「' + esc(q) + "」</span>";
+  if ((!got && (cat !== "all" || q)) || (got && got.loading && !got.items.length)) return '<span class="lmore">正在读取产出物…</span>';
+  if (got && got.error && !got.items.length) return '<span class="lmore">没取到产出物，请重试。</span>';
+  const list = outputFirst(got ? got.items : it.details.links);
+  return list.length ? linkList(list) : '<span class="lmore">' + (q ? "当前分类里没有找到「" + esc(q) + "」" : "这个会话还没有这类产出物") + "</span>";
+}
+function outMore(key) {
+  const it = findItem(key), got = outData(key), k = clip(key);
+  let html = "";
+  if (got && got.error) html += btn("重试", "expandOut(clips[" + k + "])", "sec sm");
+  else if (got && !got.loading && got.items.length < got.matchTotal)
+    html += btn("再加载 " + num(Math.min(100, got.matchTotal - got.items.length)) + " 个", "expandOut(clips[" + k + "],false,true)", "sec sm");
+  if (got) html += btn("收起为优先展示" + ico("up"), "foldOut(clips[" + k + "])", "ghost sm");
+  else if (it.details.linksTotal > it.details.links.length) html += btn("展开全部 " + num(it.details.linksTotal) + " 个" + ico("down"), "expandOut(clips[" + k + "])", "ghost sm");
+  return html + btn("到「产出物」里搜", "goOutputs('',clips[" + k + "],clips[" + clip(dOutCat[key] || "all") + "])", "ghost sm", "在产出物页里只看这个会话的，能和别的会话一起搜");
+}
+function updateOut(key) {
+  if (selKey !== key || tab !== "board" || !document.getElementById("dout-list")) return;
+  const active = document.activeElement, focusedCat = active && active.closest("#dout-cats") ? active.getAttribute("data-out-cat") : null;
+  document.getElementById("dout-cats").innerHTML = outCats(key);
+  if (focusedCat) document.querySelector('#dout-cats [data-out-cat="' + focusedCat + '"]').focus({ preventScroll: true });
+  document.getElementById("dout-summary").textContent = outSummary(key);
+  document.getElementById("dout-list").innerHTML = outRows(key);
+  document.getElementById("dout-list").setAttribute("aria-busy", !!(outData(key) || {}).loading);
+  document.getElementById("dout-more").innerHTML = outMore(key);
+}
+function setOutCat(key, cat) { clearTimeout(dOutTimer); dOutCat[key] = cat; expandOut(key); }
+function filterOut(key, q) {
+  dOutQ[key] = q; clearTimeout(dOutTimer);
+  dOutTimer = setTimeout(() => expandOut(key), 250);
 }
 function outSec(it) {
   const d = it.details, k = esc(it.key), got = dOut[it.key];
   if (!d.linksTotal) return "";
-  if (got && got.total !== d.linksTotal) expandOut(it.key, true);   // 又给了新的：悄悄重取
+  if (got && !got.loading && got.total !== d.linksTotal) expandOut(it.key, true);   // 又给了新的：悄悄重取
   let html = '<div class="part dsec dout"><div class="sec-hd"><span class="sec-t">AI 给的产出物</span><span class="mono">' + num(d.linksTotal) + " 个</span></div>";
-  if (got && got.items.length > 12)
-    html += '<input class="lfilter" type="search" autocomplete="off" placeholder="在这个会话的 ' + num(got.items.length) + ' 个产出物里找：名字、链接、AI 的原话" value="' +
-      esc(dOutQ[it.key] || "") + '" oninput="dOutQ[\'' + k + '\']=this.value;document.getElementById(\'dout-list\').innerHTML=outRows(\'' + k + '\')">';
-  html += '<div id="dout-list">' + outRows(it.key) + "</div>";
-  if (d.linksTotal > d.links.length || got)
-    html += '<div class="lbar">' + (got ? btn((d.links.some(l => outFavOn(l.key)) ? "收起，只看收藏和最近 " + d.links.filter(l => !outFavOn(l.key)).length + " 个" : "收起，只看最近 " + d.links.length + " 个") + ico("up"), "foldOut('" + k + "')", "ghost sm")
-      : btn("展开全部 " + num(d.linksTotal) + " 个" + ico("down"), "expandOut('" + k + "')", "ghost sm")) +
-      btn("到「产出物」里搜", "goOutputs('', '" + k + "')", "ghost sm", "在产出物页里只看这个会话的，能和别的会话一起搜") + "</div>";
+  html += '<div class="ocats" id="dout-cats">' + outCats(it.key) + '</div>';
+  html += '<input class="lfilter" id="dout-search" type="search" aria-label="搜索当前分类的产出物" autocomplete="off" placeholder="在当前分类里找：名字、链接、AI 的原话" value="' +
+    esc(dOutQ[it.key] || "") + '" oninput="filterOut(\'' + k + '\',this.value)">';
+  html += '<span class="lmore" id="dout-summary" role="status">' + outSummary(it.key) + '</span>';
+  html += '<div id="dout-list" aria-busy="' + !!(outData(it.key) || {}).loading + '">' + outRows(it.key) + '</div>';
+  html += '<div class="lbar" id="dout-more">' + outMore(it.key) + '</div>';
   return html + "</div>";
 }
-async function expandOut(key, quiet) {
+async function expandOut(key, quiet, more) {
+  const it = findItem(key);
+  if (!it) return;
+  const prev = outData(key), cat = dOutCat[key] || "all", q = (dOutQ[key] || "").trim();
+  const got = { total: it.details.linksTotal, cat, q, loading: true, items: more && prev ? prev.items : [],
+    counts: prev && prev.counts || it.details.linksCounts || {}, matchTotal: more && prev ? prev.matchTotal : 0 };
+  dOut[key] = got; updateOut(key);
   try {
-    const r = await fetch("/api/outputs?limit=500&key=" + encodeURIComponent(key), { cache: "no-store" });
+    const r = await fetch("/api/outputs?limit=100&priority=feishu&key=" + encodeURIComponent(key) + "&cat=" + cat + "&q=" + encodeURIComponent(q) +
+      "&offset=" + (more ? got.items.length : 0), { cache: "no-store" });
+    if (!r.ok) throw new Error("HTTP " + r.status);
     const res = await r.json();
-    dOut[key] = { total: (findItem(key) || { details: {} }).details.linksTotal, items: res.items };
-  } catch (e) { if (!quiet) toast("没取到：本机服务没响应"); return; }
-  if (selKey === key && tab === "board" && !typing()) renderDetail();
+    if (dOut[key] !== got) return;
+    got.items = got.items.concat(res.items); got.matchTotal = res.total; got.counts = res.counts || {};
+  } catch (e) {
+    if (dOut[key] !== got) return;
+    got.error = true;
+    if (!quiet) toast("没取到：本机服务没响应");
+  }
+  got.loading = false;
+  if (dOut[key] === got) updateOut(key);
 }
-function foldOut(key) { delete dOut[key]; delete dOutQ[key]; renderDetail(); }
+function foldOut(key) {
+  clearTimeout(dOutTimer); delete dOut[key]; delete dOutQ[key]; delete dOutCat[key];
+  if (selKey === key && document.getElementById("dout-search")) document.getElementById("dout-search").value = "";
+  updateOut(key);
+}
 const dMrAll = {};   // 会话 key -> 展开了合并完的 MR 和流水线
 function mrSec(it) {
   const d = it.details, k = esc(it.key), all = d.mrs || [];
@@ -3172,7 +3239,7 @@ function renderHistory() {
 
 // ---------------- 产出物：AI 在回复里给你的链接和本机文件，能搜，能跳回给出它的会话
 // 产物一直留着；MR 和流水线是临时的，单独一组，「全部产物」里不算它们
-const CATS = [["all", "全部产物"], ["feishu", "飞书"], ["file", "文件"], ["web", "网页"], ["code", "代码"]];
+const CATS = [["all", "全部产物"], ["feishu", "飞书文档"], ["file", "本机文件"], ["web", "网页"], ["code", "代码"]];
 let oq = "", oCat = "all", oKey = "", oItems = [], oTotal = 0, oCounts = {}, oAll = 0, oAllSessions = 0, oWider = 0, oWide = false, oPromptHits = 0, oLoaded = false, oReady = false, oSig = "";
 function goOutputs(q, key, cat) {
   // 从看板详情、我说过的话跳过来：key = 只看这个会话的，cat = 只看哪一类
