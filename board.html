@@ -622,7 +622,9 @@ body.hist-on { overflow: hidden; }
 .ocats { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; }
 .ocats .seg.src { align-self: flex-start; max-width: 100%; overflow-x: auto; scrollbar-width: none; }
 .ocats .seg.src button { flex: none; white-space: nowrap; }
-#out-session-filter { max-width: min(244px, 100%); min-width: 0; }
+.out-session-scope { display: flex; align-items: center; gap: 4px; min-width: 0; max-width: 100%; }
+#out-session-filter { max-width: 196px; min-width: 0; }
+#out-session-clear { flex: none; }
 .orow.done .ot { color: var(--bk-ink-2); font-weight: 400; }
 .orow .os1 { display: inline-flex; align-items: center; gap: 6px; min-width: 0; max-width: 100%; }
 mark { background: var(--bk-lime-mark); color: #1B2026; border-radius: 3px; box-shadow: 0 0 0 2px var(--bk-lime-mark); }
@@ -773,11 +775,13 @@ mark { background: var(--bk-lime-mark); color: #1B2026; border-radius: 3px; box-
     <div class="seg src" id="out-category-filters" role="group" aria-label="只看哪类产出物"></div>
     <div class="seg src" id="out-mr-filters" role="group" aria-label="临时的链接"></div>
     <div class="seg src" id="out-favorite-filter" role="group" aria-label="收藏的"></div>
-    <button type="button" class="btn sec sm" id="out-session-filter" title="切换会话" aria-haspopup="menu" aria-expanded="false"
-      onclick="event.stopPropagation();openOutSessionPicker(this)"><span id="out-session-label">全部会话</span>
-      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>
-    </button>
-    <button type="button" class="btn ghost xs" id="out-session-clear" hidden onclick="setOutSession()">看全部会话的</button>
+    <div class="out-session-scope">
+      <button type="button" class="btn sec sm" id="out-session-filter" title="切换会话" aria-haspopup="menu" aria-expanded="false"
+        onclick="event.stopPropagation();openOutSessionPicker(this)"><span id="out-session-label">全部会话</span>
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>
+      </button>
+      <button type="button" class="btn ghost xs" id="out-session-clear" hidden onclick="setOutSession()">看全部会话的</button>
+    </div>
   </div>
   <div class="days" id="hlist"></div>
 </div>
