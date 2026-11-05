@@ -408,8 +408,8 @@ body.hist-on { overflow: hidden; }
 .hist-t { flex: 1 1 200px; min-width: 0; }
 .hist-t h2 { margin: 0; font-size: 17px; line-height: 24px; font-weight: 600; }
 .hist-t p { margin: 0; font-size: 13px; line-height: 20px; color: var(--bk-ink-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.hist-acts { flex: none; display: flex; align-items: center; gap: 4px; }
-.hist-acts .seg { margin-right: 8px; }
+.hist-acts { flex: none; max-width: 100%; display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; }
+.hist-links { display: flex; align-items: center; gap: 4px; }
 .hist-body { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; display: flex; flex-direction: column; gap: 24px; padding: 16px 24px 48px; }
 .hist-body:focus { outline: none; }
 .hist-body > * { flex: none; }
@@ -2240,11 +2240,11 @@ function sumCard(it) {
 // 详情的页内导航：点一下滚到那一段；滚动时标出看到哪一段
 function dnav(secs) {
   return '<nav class="dnav" aria-label="跳到">' + secs.map(s =>
-    '<button type="button" data-to="ds-' + s[0] + '" aria-current="false" onclick="jumpSec(this)">' + s[1] + "</button>").join("") + "</nav>";
+    '<button type="button" data-to="ds-' + s[0] + '" aria-current="false" onclick="jumpSec(this.dataset.to)">' + s[1] + "</button>").join("") + "</nav>";
 }
 let spyHold = 0, jumpTo = null;
-function jumpSec(b) {
-  jumpTo = b.dataset.to;
+function jumpSec(id) {
+  jumpTo = id;
   spyHold = Date.now() + 1200;   // 平滑滚动途中别让 spySec 改回去
   goJump();
 }
@@ -2486,6 +2486,24 @@ function closeHist() {
   histInert(false);
   if (back && back.isConnected) back.focus({ preventScroll: true });
 }
+function goHistOutputs() {
+  if (!hist) return;
+  const { key } = hist;
+  closeHist();
+  const it = findItem(key);
+  if (it && it.details.linksTotal && locate(key) && selKey === key) {
+    const out = document.getElementById("ds-out");
+    if (out) {
+      if (!outData(key) && it.details.linksTotal > it.details.links.length) expandOut(key, true);
+      out.tabIndex = -1;
+      out.focus({ preventScroll: true });
+      jumpSec(out.id);
+      return;
+    }
+  }
+  goOutputs("", key);
+  document.getElementById("seg-outputs").focus({ preventScroll: true });
+}
 async function loadHist(quiet) {
   const h = hist;
   if (!h) return;
@@ -2524,8 +2542,10 @@ function renderHist() {
     '<button type="button" aria-pressed="' + !h.only + '" onclick="setHistOnly(false)">全部' + (h.items ? '<span class="n">' + num((h.you || 0) + (h.it || 0)) + "</span>" : "") + "</button>" +
     '<button type="button" aria-pressed="' + h.only + '" onclick="setHistOnly(true)">只看我说的' + (h.items ? '<span class="n">' + num(h.you || 0) + "</span>" : "") + "</button></div>";
   document.getElementById("hist-h").innerHTML = '<div class="hist-t"><h2 id="hist-t">对话历史</h2><p title="' + esc(title) + '">' + esc(title) + "</p></div>" +
-    '<div class="hist-acts">' + seg + btn("打开会话" + ico("open"), "openSession(clips[" + k + "],this)", "ghost sm") +
-    btn(ico("close", 16), "closeHist()", "ghost icon", "关闭（Esc）", 'aria-label="关闭"') + "</div>";
+    '<div class="hist-acts">' + seg + '<div class="hist-links">' +
+    btn("查看本会话产出物", "goHistOutputs()", "pri sm") +
+    btn("打开会话" + ico("open"), "openSession(clips[" + k + "],this)", "ghost sm") +
+    btn(ico("close", 16), "closeHist()", "ghost icon", "关闭（Esc）", 'aria-label="关闭"') + "</div></div>";
   const box = document.getElementById("hist-body");
   if (h.loading && !h.items) { box.innerHTML = '<span class="lmore">读取对话记录…</span>'; return; }
   const f = h.hit && h.items ? ctxFind(h.items, h.hit) : null, all = f ? f.items : h.items || [], hitM = f && all[f.at];
@@ -3514,7 +3534,8 @@ const CATS = [["all", "全部产物"], ["feishu", "飞书文档"], ["file", "本
 let oq = "", oCat = "all", oKey = "", oItems = [], oTotal = 0, oCounts = {}, oAll = 0, oAllSessions = 0, oWider = 0, oWide = false, oPromptHits = 0, oLoaded = false, oReady = false, oSig = "";
 function goOutputs(q, key, cat) {
   // 从看板详情、我说过的话跳过来：key = 只看这个会话的，cat = 只看哪一类
-  sq = q || ""; oKey = key || ""; oCat = cat || "all"; oLoaded = false;
+  clearTimeout(hTimer);
+  sq = q || ""; oKey = key || ""; oCat = cat || "all"; oLoaded = false; oReady = false;
   setTab("outputs");
   window.scrollTo(0, 0);
 }
@@ -3523,15 +3544,28 @@ async function searchOut(q, more) {
   if (tab === "outputs") document.getElementById("q-clear").hidden = !q;
   const off = more ? oItems.length : 0, sig = [q, oCat, oKey].join("|");
   oSig = sig;
+  const list = document.getElementById("hlist");
+  if (!oReady && tab === "outputs") {
+    document.getElementById("hsum").textContent = "";
+    list.innerHTML = '<span class="lmore" role="status">读取产出物…</span>';
+  }
   try {
     const r = await fetch("/api/outputs?q=" + encodeURIComponent(q) + "&offset=" + off + (oCat === "all" ? "" : "&cat=" + oCat) +
-      (oKey ? "&key=" + encodeURIComponent(oKey) : ""), { cache: "no-store" });
+      (oKey ? "&priority=feishu&key=" + encodeURIComponent(oKey) : ""), { cache: "no-store" });
+    if (!r.ok) throw new Error("HTTP " + r.status);
     const res = await r.json();
     if (sig !== oSig) return;  // 打字快时旧结果晚到，丢掉
     oItems = more ? oItems.concat(res.items) : res.items;
     oTotal = res.total; oCounts = res.counts || {}; oAll = res.all; oAllSessions = res.allSessions; oWider = res.wider || 0; oWide = !!res.wide;
     if (!more) oPromptHits = res.promptHits || 0;
-  } catch (e) { if (sig === oSig) toast("没取到产出物：本机服务没响应"); return; }
+  } catch (e) {
+    if (sig !== oSig) return;
+    oLoaded = false;
+    if (!oReady && tab === "outputs") list.innerHTML = '<div class="lbar"><span class="lmore" role="status">暂时没取到产出物</span>' +
+      btn("重试", "searchOut(oq)", "sec sm") + "</div>";
+    else toast("没取到产出物：本机服务没响应");
+    return;
+  }
   oReady = true;
   if (tab === "outputs") renderOutputs();
 }
