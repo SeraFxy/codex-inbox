@@ -426,6 +426,7 @@ body.hist-on { overflow: hidden; }
 .ostar:focus-visible, .links li:hover .ostar, .orow:hover .ostar { opacity: 1; }
 @media (hover: none) { .ostar { opacity: 1; } }
 .links .ostar { flex: none; margin-left: auto; }
+.links .oedit { flex: none; color: var(--bk-ink-3); }
 .links .ostar + .lt { margin-left: 0; }
 .orow .ostm { display: flex; align-items: center; gap: 4px; }
 /* 收藏过的整行高亮：灰底、名字加粗（颜色只表达状态，这里不用彩色）。.links 里左右各伸出 8，文字不跟着挪 */
@@ -1206,7 +1207,7 @@ function outLink(l, cls, inner) {
 }
 function linkList(links) {
   return '<ul class="links">' + links.map(l => '<li class="' + (l.cat === "mr" && !mrLive(l) ? "done" : "") + (outFavOn(l.key) ? " fav" : "") + '"><span class="lk">' + esc(l.text !== l.name ? l.name : "") +
-    "</span>" + outLink(l, l.gone && !l.arch ? "gone" : "") + (MR_STATE[l.state] ? '<span class="chip sm lst">' + MR_STATE[l.state] + "</span>" : "") + archMark(l) + outStar(l) +
+    "</span>" + outLink(l, l.gone && !l.arch ? "gone" : "") + (MR_STATE[l.state] ? '<span class="chip sm lst">' + MR_STATE[l.state] + "</span>" : "") + archMark(l) + outEdit(l) + outStar(l) +
     '<span class="lt">' + esc(l.timeText) + "</span></li>").join("") + "</ul>";
 }
 // MR 和流水线：临时的，开着的 MR 列出来，合并了、关了的和流水线、提交收起来
@@ -1434,6 +1435,35 @@ function outStar(l) {
   const on = outFavOn(l.key);
   return btn(ico(on ? "starOn" : "star", 15), "toggleOutFav(clips[" + clip(l) + "])", "ghost xs ostar" + (on ? " on" : ""), on ? "取消收藏" : "收藏：放进左栏「收藏」和「产出物」页",
     'aria-pressed="' + on + '" aria-label="收藏"');
+}
+function outEdit(l) {
+  return l.key ? btn("改名", "editOutputName(clips[" + clip(l) + "],this)", "ghost xs oedit", "修改产出物名称", 'aria-label="修改名称"') : "";
+}
+function editOutputName(l, el) {
+  closeMenu();
+  tagEdit = { kind: "output", key: l.key };
+  openPop(el, '<label for="on-name">产出物名称</label><input id="on-name" maxlength="300" value="' + esc(l.text) + '">' +
+    '<p class="note">保存后，会话详情、产出物页和收藏会使用这个名称。</p><div class="bar end">' +
+    (l.customTitle ? btn("恢复自动标题", "saveOutputName(true)", "ghost xs") : "") + btn("取消", "closeTag()", "sec xs") +
+    btn("保存", "saveOutputName(false)", "pri xs") + '</div>', () => saveOutputName(false));
+}
+async function saveOutputName(reset) {
+  const editing = tagEdit, input = document.getElementById("on-name");
+  if (!editing || editing.kind !== "output" || editing.saving) return;
+  const title = reset ? "" : input.value.trim();
+  if (!reset && !title) { input.focus(); toast("填写一个能辨认的名称"); return; }
+  editing.saving = true;
+  try {
+    const res = await post("out_name", editing.key, { title });
+    if (!res.ok) { toast(res.message || "名称没保存成功"); return; }
+    if (tagEdit === editing) closeTag();
+    Object.values(dOut).forEach(data => { data.version = -1; });
+    oLoaded = false;
+    await load();
+    if (tab === "outputs") await searchOut(oq);
+    toast(res.message || "名称已保存");
+  } catch (e) { toast("保存失败：本机服务没响应，输入的名称仍保留"); }
+  finally { editing.saving = false; }
 }
 function toggleOutFav(l) {
   closeMenu();
@@ -2060,7 +2090,7 @@ function filterOut(key, q) {
 function outSec(it) {
   const d = it.details, k = esc(it.key), got = dOut[it.key];
   if (!d.linksTotal) return "";
-  if (got && !got.loading && got.total !== d.linksTotal) expandOut(it.key, true);   // 又给了新的：悄悄重取
+  if (got && !got.loading && (got.total !== d.linksTotal || got.version !== (d.linksVersion || 0))) expandOut(it.key, true);   // 新产物、自动标题或手动名称变了：悄悄重取
   let html = '<div class="part dsec dout"><div class="sec-hd"><span class="sec-t">AI 给的产出物</span><span class="mono">' + num(d.linksTotal) + " 个</span></div>";
   html += '<div class="ocats" id="dout-cats">' + outCats(it.key) + '</div>';
   html += '<input class="lfilter" id="dout-search" type="search" aria-label="搜索当前分类的产出物" autocomplete="off" placeholder="在当前分类里找：名字、链接、AI 的原话" value="' +
@@ -2074,7 +2104,7 @@ async function expandOut(key, quiet, more) {
   const it = findItem(key);
   if (!it) return;
   const prev = outData(key), cat = dOutCat[key] || "all", q = (dOutQ[key] || "").trim();
-  const got = { total: it.details.linksTotal, cat, q, loading: true, items: more && prev ? prev.items : [],
+  const got = { total: it.details.linksTotal, version: it.details.linksVersion || 0, cat, q, loading: true, items: more && prev ? prev.items : [],
     counts: prev && prev.counts || it.details.linksCounts || {}, matchTotal: more && prev ? prev.matchTotal : 0 };
   dOut[key] = got; updateOut(key);
   try {
@@ -3298,7 +3328,7 @@ function orow(o, q) {
       : o.twin === "web" ? "　原 worktree 已清理，点开是仓库默认分支上的版本" : "") + "</span>" : "") +
     (o.ctx ? '<p class="oc" title="AI 给出它时说的话">「' + hl(o.ctx, q) + "」</p>" : "") +
     '<div class="os">' + (MR_STATE[o.state] ? '<span class="chip sm">' + MR_STATE[o.state] + "</span>" : "") + o.sessions.map(x => sessLink(x, q, o)).join("") + more + "</div></div>" +
-    '<div class="oa"><span class="ostm">' + outStar(o) + '<span class="otm">' + esc(when(o.ts)) + '</span></span><span class="oacts">' + acts + "</span></div></div>";
+    '<div class="oa"><span class="ostm">' + outEdit(o) + outStar(o) + '<span class="otm">' + esc(when(o.ts)) + '</span></span><span class="oacts">' + acts + "</span></div></div>";
 }
 function renderOutputs() {
   const n = c => c === "all" ? CATS.reduce((a, [k]) => a + (k === "all" ? 0 : oCounts[k] || 0), 0) : oCounts[c] || 0;

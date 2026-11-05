@@ -34,6 +34,7 @@ import traceback
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, quote as quote_url, unquote as unquote_url, urlparse
 from urllib.request import Request, urlopen
+from web_titles import canonical_web_url, fetch_web_title
 
 HOME = os.path.expanduser("~")
 BASE = os.path.dirname(os.path.realpath(__file__))
@@ -87,6 +88,7 @@ DEFAULTS = {
     "utc_offset_hours": None,  # 看板按哪个时区算时间；空 = 本机时区。Mac 时区和工作时区不一样时填，如北京时间填 8
     "project_parents": [],     # 这些目录下的每个子目录算一个项目，如 ["~/code"]；其余按 ~/Desktop/<项目>、~/<项目> 推断
     "feishu_doc_titles": True, # 产出物里的飞书文档用 lark-cli 以你的身份查真实标题；false 就只用 AI 写的说明
+    "web_page_titles": True,   # 后台读取正在查看的公开网页标题，不带登录凭证；手动改名始终优先
     "gitlab_mr_state": True,   # AI 给的 GitLab MR 用 glab 以你的身份查标题和合并了没有；false 就不查
     "link_names": {},          # 产出物里按域名后缀认的名字，如 {"apps.example.com": "公司应用商店"}；不配就显示域名
 }
@@ -117,6 +119,8 @@ CREATE TABLE IF NOT EXISTS tags (project TEXT PRIMARY KEY, label TEXT, color TEX
 CREATE TABLE IF NOT EXISTS goals (session_key TEXT PRIMARY KEY, goal TEXT, criteria TEXT, status TEXT, at REAL);
 CREATE TABLE IF NOT EXISTS links (session_key TEXT, url TEXT, label TEXT, ts REAL, PRIMARY KEY (session_key, url));
 CREATE TABLE IF NOT EXISTS doc_titles (token TEXT PRIMARY KEY, title TEXT, at REAL);
+CREATE TABLE IF NOT EXISTS web_titles (url TEXT PRIMARY KEY, title TEXT, at REAL);
+CREATE TABLE IF NOT EXISTS output_names (key TEXT PRIMARY KEY, title TEXT, at REAL);
 CREATE TABLE IF NOT EXISTS mr_state (ref TEXT PRIMARY KEY, state TEXT, title TEXT, at REAL);
 CREATE TABLE IF NOT EXISTS images (session_key TEXT, sha TEXT, ts REAL, file TEXT, bytes INTEGER, PRIMARY KEY (session_key, sha));
 CREATE INDEX IF NOT EXISTS images_session ON images(session_key, ts);
@@ -882,7 +886,7 @@ def feishu_doc(url):
 
 
 def out_text(url, label, title):
-    """产出物显示的名字：飞书文档用真实标题，其次是 AI 写的说明，文件用文件名。"""
+    """产出物显示的名字：优先手动名称和已获取的真实标题，其次是 AI 写的说明、文件名。"""
     if title:
         return title
     name = link_name(url)
@@ -2597,11 +2601,12 @@ def _out_where(q, cat="", key="", tool="", favs=None):
             if w.lower() in name.lower():
                 urlc, urla = urlc + " OR l.url LIKE ? ESCAPE '\\'", urla + [_like("." + sfx.strip("."))]
         conds.append("(" + urlc + " OR l.label LIKE ? ESCAPE '\\' OR l.ctx LIKE ? ESCAPE '\\' OR d.title LIKE ? ESCAPE '\\' OR m.title LIKE ? ESCAPE '\\' "
+                     "OR w.title LIKE ? ESCAPE '\\' OR n.title LIKE ? ESCAPE '\\' "
                      "OR l.session_key IN (SELECT session_key FROM names WHERE title LIKE ? ESCAPE '\\') "
                      "OR l.session_key IN (SELECT session_key FROM prompts WHERE title LIKE ? ESCAPE '\\' OR project LIKE ? ESCAPE '\\' "
                      "OR project IN (SELECT project FROM tags WHERE label LIKE ? ESCAPE '\\'))"
                      " OR l.url IN (SELECT path FROM archives WHERE title LIKE ? ESCAPE '\\' OR text LIKE ? ESCAPE '\\'))")
-        args += urla + [like] * 10
+        args += urla + [like] * 12
     if key:
         conds.append("l.session_key=?")
         args.append(key)
@@ -2621,10 +2626,15 @@ def _out_where(q, cat="", key="", tool="", favs=None):
     return (" WHERE " + " AND ".join(conds)) if conds else "", args
 
 
-OUT_FROM = (" FROM links l LEFT JOIN doc_titles d ON l.doc != '' AND d.token = l.doc"
-            " LEFT JOIN mr_state m ON l.mr != '' AND m.ref = l.mr")
 # 同一篇飞书文档算一个产出物：带 #块锚点、?from= 的各种写法都归到「类型:token」；别的按链接本身
 OUT_KEY = "(CASE WHEN l.doc != '' THEN l.doc ELSE l.url END)"
+WEB_CACHE_URL = "(CASE WHEN instr(l.url, '#') > 0 THEN substr(l.url, 1, instr(l.url, '#') - 1) ELSE l.url END)"
+OUT_TITLE = "COALESCE(NULLIF(n.title, ''), NULLIF(d.title, ''), NULLIF(m.title, ''), w.title, '')"
+OUT_TITLE_AT = "MAX(COALESCE(n.at, 0), COALESCE(w.at, 0))"
+OUT_FROM = (" FROM links l LEFT JOIN doc_titles d ON l.doc != '' AND d.token = l.doc"
+            " LEFT JOIN mr_state m ON l.mr != '' AND m.ref = l.mr"
+            " LEFT JOIN web_titles w ON w.url = " + WEB_CACHE_URL +
+            " LEFT JOIN output_names n ON n.key = " + OUT_KEY)
 OUT_CATS = ("feishu", "code", "file", "web", "mr")
 
 
@@ -2683,7 +2693,7 @@ def search_outputs(conn, q, cat="", key="", tool="", limit=100, offset=0, priori
     items, keys = [], []
     for r in rows:
         by_doc = "://" not in r["g"] and not r["g"].startswith("/")   # 「类型:token」按 doc 列查，别的按链接查，都走索引
-        occ = conn.execute("SELECT l.session_key, l.url, l.label, l.ctx, l.ts, l.alt, COALESCE(d.title, m.title, '') AS title, m.state" + OUT_FROM + (" WHERE l.doc=?" if by_doc else " WHERE l.url=?") + by_tool[1] +
+        occ = conn.execute("SELECT l.session_key, l.url, l.label, l.ctx, l.ts, l.alt, " + OUT_TITLE + " AS title, n.title AS custom_title, " + OUT_TITLE_AT + " AS title_at, m.state" + OUT_FROM + (" WHERE l.doc=?" if by_doc else " WHERE l.url=?") + by_tool[1] +
                            " ORDER BY l.ts DESC", [r["g"]] + by_tool[0]).fetchall()
         if not occ:
             continue
@@ -2695,6 +2705,7 @@ def search_outputs(conn, q, cat="", key="", tool="", limit=100, offset=0, priori
         label = next((o["label"] for o in occ if o["label"]), "")
         url = next((o["url"] for o in occ if "#" not in o["url"]), head["url"])   # 有不带锚点的就用它，打开是文档开头
         it = {"key": r["g"], "url": url, "cat": out_cat(url), "name": link_name(url), "title": head["title"] or "", "label": label,
+              "customTitle": head["custom_title"] or "", "titleAt": head["title_at"],
               "text": out_text(url, label, head["title"]), "ctx": head["ctx"] or "", "ts": r["ts"], "timeText": fmt_time(r["ts"], now),
               "nSessions": len(sess), "sessions": sess[:3], "state": head["state"] or ""}
         if it["cat"] == "file":
@@ -2731,10 +2742,10 @@ def search_outputs(conn, q, cat="", key="", tool="", limit=100, offset=0, priori
     return res
 
 
-def out_brief(url, label, title, ts, now, state=""):
+def out_brief(url, label, title, ts, now, state="", custom_title="", title_at=0):
     """详情里一行产出物要的字段。state = MR 的状态：opened / merged / closed，没查过是空的。"""
     it = {"key": feishu_doc(url) or url, "url": url, "cat": out_cat(url), "name": link_name(url), "text": out_text(url, label, title),
-          "timeText": fmt_time(ts, now) if ts else "", "state": state or ""}
+          "timeText": fmt_time(ts, now) if ts else "", "state": state or "", "customTitle": custom_title or "", "titleAt": title_at or 0}
     if it["cat"] == "file":
         it["path"] = home_rel(url)
     return it
@@ -3361,6 +3372,7 @@ def make_item(st, now, cfg, ov, sched, titles, goals, ctx):
             "links": preview_outputs(outputs, ctx["out_favs"], 8),
             "linksTotal": len(outputs),
             "linksCounts": {cat: sum(l["cat"] == cat for l in outputs) for cat in OUT_CATS if cat != "mr"},
+            "linksVersion": max((l.get("titleAt", 0) for l in outputs), default=0),
             "mrs": pin_favs([l for l in ctx["links"].get(key, []) if l["cat"] == "mr"], ctx["out_favs"], 50),
             "mrsTotal": sum(1 for l in ctx["links"].get(key, []) if l["cat"] == "mr"),
             "firstPrompt": (st.get("first_prompt") or "")[:300],
@@ -3447,13 +3459,13 @@ def board_out_favs(conn, now):
     out = []
     for k in meta_keys(conn, "out_favs"):
         by_doc = "://" not in k and not k.startswith("/")
-        r = conn.execute("SELECT l.session_key, l.url, l.label, l.ts, COALESCE(d.title, m.title, '') AS title, m.state" + OUT_FROM +
+        r = conn.execute("SELECT l.session_key, l.url, l.label, l.ts, " + OUT_TITLE + " AS title, n.title AS custom_title, " + OUT_TITLE_AT + " AS title_at, m.state" + OUT_FROM +
                          (" WHERE l.doc=?" if by_doc else " WHERE l.url=?") + " ORDER BY l.ts DESC LIMIT 1", (k,)).fetchone()
         if not r:
             continue
-        it = out_brief(r["url"], r["label"], r["title"], r["ts"], now, r["state"])
+        it = out_brief(r["url"], r["label"], r["title"], r["ts"], now, r["state"], r["custom_title"], r["title_at"])
         ar = archive_info(conn, [r["url"]]).get(r["url"]) if it["cat"] == "file" else None
-        if ar and ar["title"]:
+        if ar and ar["title"] and not r["custom_title"]:
             it["text"] = ar["title"]
         bare = not r["title"] and not r["label"] and it["cat"] != "file"
         it.update(key=k, ts=r["ts"] or 0, sessionKey=r["session_key"],
@@ -3522,12 +3534,12 @@ def build_board(conn, cfg, now=None):
            "ho_goals": {r["session_key"]: handoff_goal(r["head"]) for r in conn.execute("SELECT session_key, substr(text, 1, 3000) AS head FROM handoffs")},
            "ask_dismiss": load_ask_dismiss(conn)}
     seen_out = set()
-    for r in conn.execute("SELECT l.session_key, l.url, l.label, l.ts, l.doc, COALESCE(d.title, m.title, '') AS title, m.state" + OUT_FROM +
+    for r in conn.execute("SELECT l.session_key, l.url, l.label, l.ts, l.doc, " + OUT_TITLE + " AS title, n.title AS custom_title, " + OUT_TITLE_AT + " AS title_at, m.state" + OUT_FROM +
                           " WHERE l.session_key IN (SELECT key FROM sessions WHERE last_activity >= ?) ORDER BY l.ts DESC", (now - 30 * 86400,)):
         if (r["session_key"], r["doc"] or r["url"]) in seen_out:
             continue   # 同一篇飞书文档的别的写法（带锚点等），只留最近一次
         seen_out.add((r["session_key"], r["doc"] or r["url"]))
-        ctx["links"].setdefault(r["session_key"], []).append(out_brief(r["url"], r["label"], r["title"], r["ts"], now, r["state"]))
+        ctx["links"].setdefault(r["session_key"], []).append(out_brief(r["url"], r["label"], r["title"], r["ts"], now, r["state"], r["custom_title"], r["title_at"]))
     arch = archive_info(conn, list({l["url"] for ls in ctx["links"].values() for l in ls if l["cat"] == "file"}))
     for ls in ctx["links"].values():
         for l in ls:
@@ -3535,7 +3547,7 @@ def build_board(conn, cfg, now=None):
             if a:
                 l["arch"] = {"n": a["n"], "ts": a["ts"]}
                 l["gone"] = not os.path.exists(l["url"])
-                if a["title"]:   # 和展开后（search_outputs）同一个名字
+                if a["title"] and not l["customTitle"]:   # 和展开后同一个名字；手动名称始终优先
                     l["text"] = a["title"]
     for r in conn.execute("SELECT data FROM sessions WHERE last_activity >= ?", (now - 30 * 86400,)):
         st = json.loads(r["data"])
@@ -4017,6 +4029,9 @@ class App:
         self.lock = threading.RLock()
         self.token = load_token()
         self.event = threading.Event()
+        self.web_event = threading.Event()
+        self.web_pending = {}
+        self.web_inflight = set()
 
     def maybe_scan(self, min_age):
         with self.lock:
@@ -4033,13 +4048,81 @@ class App:
                 self.conn.commit()
             except Exception:
                 log("sync_cmux 出错：%s" % traceback.format_exc())
-            return build_board(self.conn, self.cfg)
+            board = build_board(self.conn, self.cfg)
+            for group in board["groups"]:
+                for item in group["items"]:
+                    self.queue_web_titles(item["details"]["links"])
+            return board
+
+    def queue_web_titles(self, items, priority=False):
+        """只给正在显示的网页排队；读缓存不联网，网络请求由单独线程执行。"""
+        if not self.cfg.get("web_page_titles", True):
+            return
+        now = time.time()
+        with self.lock:
+            first = {}
+            for item in items:
+                if item.get("cat") != "web":
+                    continue
+                url = canonical_web_url(item.get("url") or "")
+                if not url or url in self.web_inflight or len(self.web_pending) >= 500:
+                    continue
+                old = self.conn.execute("SELECT title, at FROM web_titles WHERE url=?", (url,)).fetchone()
+                ttl = 7 * 86400 if old and old["title"] else 86400
+                if not old or (old["at"] or 0) < now - ttl:
+                    self.web_pending[url] = None
+                    first[url] = None
+            if priority:
+                self.web_pending = dict(first, **self.web_pending)
+            if self.web_pending:
+                self.web_event.set()
+
+    def web_title_loop(self):
+        while True:
+            self.web_event.wait(60)
+            self.web_event.clear()
+            with self.lock:
+                urls = list(self.web_pending)[:5]
+                for url in urls:
+                    self.web_pending.pop(url, None)
+                    self.web_inflight.add(url)
+            for url in urls:
+                try:
+                    title = fetch_web_title(url)
+                    with self.lock:
+                        # 临时断网或登录页不覆盖以前已取到的标题；手动名称另存，永远不受自动刷新影响
+                        self.conn.execute("INSERT INTO web_titles (url, title, at) VALUES (?, ?, ?) ON CONFLICT(url) "
+                                          "DO UPDATE SET title=CASE WHEN excluded.title != '' THEN excluded.title ELSE web_titles.title END, at=excluded.at",
+                                          (url, title, time.time()))
+                        self.conn.commit()
+                except Exception:
+                    log("网页标题读取失败")   # 不把可能含私密参数的网址记进日志
+                finally:
+                    with self.lock:
+                        self.web_inflight.discard(url)
+            with self.lock:
+                if self.web_pending:
+                    self.web_event.set()
 
     def action(self, body):
         key, action, arg = body.get("key", ""), body.get("action", ""), body.get("arg")
         now = time.time()
         with self.lock:
             c = self.conn
+            if action == "out_name" and isinstance(arg, dict):
+                if not c.execute("SELECT 1 FROM links l WHERE " + OUT_KEY + "=? LIMIT 1", (key,)).fetchone():
+                    return False, "找不到这个产出物"
+                title = arg.get("title")
+                if not isinstance(title, str) or len(title) > 300:
+                    return False, "名称最多 300 个字"
+                title = re.sub(r"\s+", " ", title).strip()
+                if title:
+                    c.execute("INSERT INTO output_names (key, title, at) VALUES (?, ?, ?) ON CONFLICT(key) "
+                              "DO UPDATE SET title=excluded.title, at=excluded.at", (key, title, now))
+                else:
+                    c.execute("DELETE FROM output_names WHERE key=?", (key,))
+                c.commit()
+                return True, "名称已保存" if title else "已恢复自动标题"
             if action in ("done", "untrack"):
                 keys = arg if (action == "untrack" and isinstance(arg, list)) else [key]
                 for k in keys:
@@ -4441,6 +4524,7 @@ class Handler(BaseHTTPRequestHandler):
             with APP.lock:
                 res = search_outputs(APP.conn, arg("q"), arg("cat"), arg("key"), arg("tool"),
                                      min(int(arg("limit", "100")), 500), int(arg("offset", "0")), priority=arg("priority") == "feishu")
+                APP.queue_web_titles(res["items"], priority=True)
             return self._send(200, json.dumps(res, ensure_ascii=False))
         if u.path == "/api/reply":
             q = parse_qs(u.query)
@@ -5254,6 +5338,7 @@ def cmd_serve(args):
     srv = ThreadingHTTPServer(("127.0.0.1", cfg["port"]), Handler)
     APP.maybe_scan(0)
     threading.Thread(target=APP.loop, daemon=True).start()
+    threading.Thread(target=APP.web_title_loop, daemon=True).start()
     threading.Thread(target=lambda: (_guard(fix_cut_links), _guard(backfill_media), _guard(backfill_outputs), _guard(backfill_pr_links)), daemon=True).start()
     log("服务启动，端口 %s" % cfg["port"])
     srv.serve_forever()

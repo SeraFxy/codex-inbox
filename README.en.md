@@ -125,6 +125,7 @@ The first install copies `config.example.json` to `config.json`. Run `install.sh
 | `utc_offset_hours` | empty | Time zone the dashboard works in; empty means the Mac's own time zone. Set it when your Mac's time zone differs from the one you schedule work in, e.g. `8` if you are abroad but work on Beijing time. Times in status lines and `ledger schedule` are read in this zone too |
 | `project_parents` | `[]` | Every subfolder of these folders counts as a project, e.g. `["~/code", "~/work/repos"]`. When empty, projects are guessed from `~/Desktop/<project>` and `~/<project>` |
 | `feishu_doc_titles` | `true` | Look up the real titles of Feishu docs in Outputs with `lark-cli`, as you; `false` keeps the AI's own wording |
+| `web_page_titles` | `true` | Read and cache titles for displayed public HTML pages in the background, without login credentials. If unavailable, keep the existing label. Each output has a Rename action; saved names take priority across session details, Outputs and Favorites, with an option to restore the automatic title |
 | `gitlab_mr_state` | `true` | Look up the titles and merge status of GitLab MRs the AI gave you with `glab`, as you; `false` turns it off |
 | `link_names` | `{}` | Names for links in Outputs, by domain suffix, e.g. pages published to an internal app store: `{"apps.example.com": "Company App Store"}`. The domain and its subdomains show this name, and searching for the name finds them. Restart the service after changing it |
 
