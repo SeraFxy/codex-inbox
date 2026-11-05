@@ -2279,7 +2279,7 @@ def ensure_topic(conn, project, name, now):
 GENERIC_PROJECTS = ("桌面", "主目录", "其他")   # 杂项目录：在这里开的会话常常是别的项目的事
 
 
-def topic_by_tag(conn, rows, project, tags, now):
+def topic_by_tag(conn, rows, project, tags, now, create=True):
     """消息里的 #标签 对到主题：从最近写的往前找，用第一个认得出的（各种 kind 见 note_hashtag），认不出的随口一提不会把会话挤出原来的主题。
     先认本项目里同名的（含改名前的旧名）；中文连着写的再认名字是它开头的；会话在桌面这类杂项目录时，再认别的项目里唯一同名的。
     都认不出、标签又写得完整（kind=new）时，在本项目下新建一个。认出来的是删掉的主题就算未归类，标签不会把它重新建出来。"""
@@ -2295,7 +2295,7 @@ def topic_by_tag(conn, rows, project, tags, now):
             hit = other[0] if len(other) == 1 else None
         if hit is not None:
             return None if hit["deleted"] else hit
-        if tag["kind"] == "new":
+        if create and tag["kind"] == "new":
             hit = insert_topic(conn, project, tag["name"], now)
             rows.append(hit)
             return hit
@@ -3454,13 +3454,19 @@ def meta_keys(conn, k):
     return [x for x in keys if isinstance(x, str)] if isinstance(keys, list) else []
 
 
-def board_out_favs(conn, now):
-    """收藏的产出物（最近收藏的在前）。没有标题也没有说明的（如 UUID 域名的应用）左栏写「名字 · 给出它的会话」，才认得出是哪个。"""
+def saved_session_topic(conn, key):
+    row = conn.execute("SELECT t.id, t.name, t.project FROM session_topics s JOIN topics t ON t.id = s.topic_id "
+                       "WHERE s.session_key=? AND NOT t.deleted", (key,)).fetchone()
+    return dict(row) if row else None
+
+
+def board_out_favs(conn, now, items=()):
+    """收藏按最近收藏的排序；每份产出物沿用最近提供它的会话，作为项目和主题的来源。"""
     out = []
     for k in meta_keys(conn, "out_favs"):
         by_doc = "://" not in k and not k.startswith("/")
         r = conn.execute("SELECT l.session_key, l.url, l.label, l.ts, " + OUT_TITLE + " AS title, n.title AS custom_title, " + OUT_TITLE_AT + " AS title_at, m.state" + OUT_FROM +
-                         (" WHERE l.doc=?" if by_doc else " WHERE l.url=?") + " ORDER BY l.ts DESC LIMIT 1", (k,)).fetchone()
+                         (" WHERE l.doc=?" if by_doc else " WHERE l.url=?") + " ORDER BY l.ts DESC, l.session_key, l.url LIMIT 1", (k,)).fetchone()
         if not r:
             continue
         it = out_brief(r["url"], r["label"], r["title"], r["ts"], now, r["state"], r["custom_title"], r["title_at"])
@@ -3468,10 +3474,32 @@ def board_out_favs(conn, now):
         if ar and ar["title"] and not r["custom_title"]:
             it["text"] = ar["title"]
         bare = not r["title"] and not r["label"] and it["cat"] != "file"
-        it.update(key=k, ts=r["ts"] or 0, sessionKey=r["session_key"],
-                  railText=it["name"] + " · " + session_briefs(conn, [r["session_key"]], now)[r["session_key"]]["title"] if bare else it["text"])
-        out.append(it)
-    return out
+        it.update(key=k, ts=r["ts"] or 0, sessionKey=r["session_key"])
+        out.append((it, bare))
+    if not out:
+        return []
+    sources = {it["key"]: it for it in items}
+    older = list(dict.fromkeys(it["sessionKey"] for it, _ in out if it["sessionKey"] not in sources))
+    briefs = session_briefs(conn, older, now)
+    topics = load_topics(conn) if older else []
+    for key in older:
+        source, topic = briefs.get(key, {}), saved_session_topic(conn, key)
+        # 历史会话也能沿用已存在的 #主题；不因为看收藏新建主题，尊重手动选择的「未归类」。
+        if topics and not topic and not conn.execute("SELECT 1 FROM session_topics WHERE session_key=?", (key,)).fetchone():
+            row = conn.execute("SELECT data FROM sessions WHERE key=?", (key,)).fetchone()
+            tags = (json.loads(row[0]).get("hashtags") or []) if row else []
+            t = topic_by_tag(conn, topics, source.get("projectKey"), tags, now, create=False)
+            topic = {k: t[k] for k in ("id", "name", "project")} if t else None
+        sources[key] = dict(source, topic=topic)
+    tags = tag_map(conn)
+    for it, bare in out:
+        source = sources[it["sessionKey"]]
+        topic = source.get("topic")
+        project = topic["project"] if topic else source.get("projectKey") or "其他"
+        # 没有标题和说明的链接仍可用来源会话辨认；名称、收藏和原链接都照旧保存。
+        it.update(projectKey=project, project=tag_of(tags, project)[0], topic=topic,
+                  railText=it["name"] + " · " + (source.get("title") or "（未命名会话）") if bare else it["text"])
+    return [it for it, _ in out]
 
 
 def load_pins(conn):
@@ -3508,10 +3536,8 @@ def board_refs(conn, keys, items, now):
         if row:
             x = prompt_rows_to_items(conn, [row], now)[0]
             # 不在看板上的：只认你手动放进去的主题（#主题 要读对话记录才知道）
-            t = conn.execute("SELECT t.id, t.name, t.project FROM session_topics s JOIN topics t ON t.id = s.topic_id "
-                             "WHERE s.session_key=? AND NOT t.deleted", (k,)).fetchone()
             out.append({"key": k, "title": x["title"], "tool": x["tool"], "project": x["project"], "last": x["ts"], "onBoard": False, "auto": x["auto"],
-                        "topic": dict(t) if t else None})
+                        "topic": saved_session_topic(conn, k)})
     return out
 
 
@@ -3616,7 +3642,7 @@ def build_board(conn, cfg, now=None):
         "tzOffsetMin": int(clock(now).astimezone(WORK_TZ).utcoffset().total_seconds() // 60),
         "staleHours": cfg["stale_hours"], "interruptedMin": cfg["interrupted_min"], "ctxWarn": CTX_WARN_PCT, "windowDays": cfg["window_days"], "doneDays": max(cfg["window_days"], DONE_KEEP_DAYS),
         "scanMs": int(meta_get(conn, "last_scan_ms", 0) or 0), "scanIntervalMin": cfg["scan_interval_min"],
-        "groups": groups, "hidden": hidden, "order": load_order(conn), "pins": pins, "archived": archived, "archivedTopics": archived_topics, "favs": board_favs(conn, items + hidden, now), "outFavs": board_out_favs(conn, now), "autos": board_autos(conn, items + hidden, now), "digestTime": cfg["digest_time"], "tzText": tz_text(cfg), "home": HOME, "projectDirs": USER_DIRS,
+        "groups": groups, "hidden": hidden, "order": load_order(conn), "pins": pins, "archived": archived, "archivedTopics": archived_topics, "favs": board_favs(conn, items + hidden, now), "outFavs": board_out_favs(conn, now, items + hidden), "autos": board_autos(conn, items + hidden, now), "digestTime": cfg["digest_time"], "tzText": tz_text(cfg), "home": HOME, "projectDirs": USER_DIRS,
         "topics": [{"id": t["id"], "name": t["name"], "project": t["project"], "projectLabel": tag_of(ctx["tags"], t["project"])[0]}
                    for t in topics if not t["deleted"]],
     }

@@ -210,6 +210,13 @@ kbd.k.lg { min-width: 22px; height: 22px; padding: 0 6px; border-radius: 6px; fo
 .rsec .n { margin-left: auto; font: 500 12px/1 var(--bk-mono); }
 .ri.fav { padding-left: 26px; gap: 6px; }
 .rfg { flex: none; padding: 8px 10px 2px 26px; font-size: 12px; line-height: 16px; color: var(--bk-ink-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }   /* 收藏里的主题小标题 */
+.rof-tree .rfg { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.rof-tree .rfg .n { font: 500 12px/1 var(--bk-mono); }
+.rof-tree .of-fold { gap: 4px; padding-left: 12px; }
+.rof-tree .of-fold svg { flex: none; color: var(--bk-ink-3); }
+.rof-tree .of-sub { padding-left: 28px; color: var(--bk-ink-2); }
+.rof-tree .ri.fav { padding-left: 44px; padding-right: 36px; }
+@media (hover: none) { .rof-tree .rt .ra { display: inline-flex; } }
 .ri.off .nm { color: var(--bk-ink-3); }   /* 暂停了的定时任务，和「已暂停的 N 个」那一行 */
 .rfoot { margin: auto 0 0; padding: 12px 10px 0; font-size: 12px; line-height: 18px; color: var(--bk-ink-3); }
 .qtop { display: none; align-items: center; gap: 6px; margin-bottom: -4px; }
@@ -640,7 +647,7 @@ mark { background: var(--bk-lime-mark); color: #1B2026; border-radius: 3px; box-
 .toast button:hover { background: rgba(255, 255, 255, .16); }
 
 @media (max-width: 640px) {
-  .btn, .tab, .opt, .seg.src button, .dnav button { min-height: 40px; }
+  .btn, .tab, .opt, .seg.src button, .dnav button, .rof-tree .ri, .rof-tree .ra { min-height: 40px; }
   .dq .dctx { margin-left: 0; }
   .kbd-hints, kbd.k { display: none !important; }
   .btn.sec.searchbtn { width: auto; flex: 1; }
@@ -790,6 +797,7 @@ const railFold = new Set(store("ledger.fold") || []);   // 收起的项目
 let archOpen = store("ledger.arch") === true;            // 左栏「归档」展开着
 let src = store("ledger.src") || "all";                  // 只看哪个工具的会话：all / claude / codex
 let favOpen = store("ledger.favx") !== true;             // 左栏「收藏」展开着（默认展开）
+const outFavOpen = new Set(store("ledger.outfav.open") || []); // 收藏产出物展开的项目和分类
 let autoOpen = store("ledger.autox") !== true;           // 左栏「定时任务」展开着（默认展开）
 let autoOff = false;                                     // 「定时任务」里暂停了的那几个展开着
 let picker = null;      // 「归到主题」「移到项目」菜单：{ key, q, list }
@@ -1341,10 +1349,7 @@ function renderRail() {
       '" onclick="goFav(this.dataset.key)">' + toolChip(x) + '<span class="nm">' + esc(x.title) + "</span></button>" +
       '<button type="button" class="ra" title="打开或取消收藏" aria-label="「' + esc(x.title) + '」打开或取消收藏" aria-haspopup="menu" aria-expanded="false"' +
       ' data-key="' + esc(x.key) + '" onclick="event.stopPropagation();favMore(this,this.dataset.key)">' + ico("more", 15) + "</button></div>").join("")).join("");
-    if (favOpen && ofavs.length) html += '<div class="rfg">产出物</div>' + ofavs.map(x => '<div class="rt">' +
-      '<button type="button" class="ri fav" title="' + esc(x.railText + "\n" + x.url) + '" onclick="openOutFav(clips[' + clip(x) + '])"><span class="nm">' + esc(x.railText) + "</span></button>" +
-      '<button type="button" class="ra" title="打开或取消收藏" aria-label="「' + esc(x.railText) + '」打开或取消收藏" aria-haspopup="menu" aria-expanded="false"' +
-      ' onclick="event.stopPropagation();outFavMore(this,clips[' + clip(x) + '])">' + ico("more", 15) + "</button></div>").join("");
+    if (favOpen && ofavs.length) html += outFavTree(ofavs, (state.order || {}).rail || []);
   }
   html += autoSec();
   const nDone = viewItems("hidden", true).length;
@@ -1410,6 +1415,64 @@ function favGroups(favs) {
   if (out.length < 2) out.forEach(g => { g.label = ""; });
   return out;
 }
+
+function outFavGroups(favs, order) {
+  const projects = new Map(), ranks = new Map(order.map((key, i) => [key, i]));
+  const types = new Map(CATS.slice(1).concat([["mr", "MR 和流水线"], ["other", "其他产出物"]]));
+  const categories = [...types.keys()];
+  for (const x of favs) {
+    const project = x.projectKey || "其他", type = types.has(x.cat) ? x.cat : "other";
+    if (!projects.has(project)) projects.set(project, { key: project, label: x.project || project, count: 0, buckets: new Map() });
+    const p = projects.get(project), key = x.topic ? "topic:" + x.topic.id : "cat:" + type;
+    if (!p.buckets.has(key)) p.buckets.set(key, { key, label: x.topic ? "# " + x.topic.name : types.get(type),
+      rank: x.topic ? -1 : categories.indexOf(type), items: [] });
+    p.buckets.get(key).items.push(x);
+    p.count++;
+  }
+  const at = p => ranks.get(p.key) ?? Infinity;
+  return [...projects.values()].sort((a, b) => (at(a) - at(b) || 0) || (a.key === "其他") - (b.key === "其他") || a.label.localeCompare(b.label, "zh"))
+    .map(p => ({ key: p.key, label: p.label, count: p.count, groups: [...p.buckets.values()]
+      .sort((a, b) => a.rank - b.rank || a.label.localeCompare(b.label, "zh"))
+      .map(g => Object.assign(g, { items: g.items.sort((a, b) => (a.cat !== "feishu") - (b.cat !== "feishu")) })) }));
+}
+function outFavFold(key, label, n, sub) {
+  const open = outFavOpen.has(key);
+  return '<button type="button" class="ri of-fold ' + (sub ? "of-sub" : "proj") + '" aria-expanded="' + open +
+    '" data-out-fav-fold="' + esc(key) + '" onclick="toggleOutFavFold(this)">' + ico(open ? "down" : "right", 14) +
+    '<span class="nm" title="' + esc(label) + '">' + esc(label) + '</span><span class="n">' + num(n) + '</span></button>';
+}
+function outFavRow(x) {
+  const id = clip(x);
+  return '<div class="rt"><button type="button" class="ri fav" title="' + esc(x.railText + "\n" + x.url) +
+    '" onclick="openOutFav(clips[' + id + '])"><span class="nm">' + esc(x.railText) + '</span></button>' +
+    '<button type="button" class="ra" title="打开或取消收藏" aria-label="「' + esc(x.railText) + '」打开或取消收藏" aria-haspopup="menu" aria-expanded="false"' +
+    ' onclick="event.stopPropagation();outFavMore(this,clips[' + id + '])">' + ico("more", 15) + '</button></div>';
+}
+function outFavTree(favs, order) {
+  let html = '<div class="rof-tree" id="out-fav-tree" role="group" aria-label="收藏的产出物"><div class="rfg"><span>产出物</span><span class="n">' + num(favs.length) + '</span></div>';
+  for (const p of outFavGroups(favs, order)) {
+    const pk = JSON.stringify(["project", p.key]);
+    html += outFavFold(pk, p.label, p.count, false);
+    if (!outFavOpen.has(pk)) continue;
+    html += '<div role="group" aria-label="' + esc(p.label) + ' 的收藏分类">';
+    for (const g of p.groups) {
+      const gk = JSON.stringify(["group", p.key, g.key]);
+      html += outFavFold(gk, g.label, g.items.length, true);
+      if (outFavOpen.has(gk)) html += g.items.map(outFavRow).join("");
+    }
+    html += '</div>';
+  }
+  return html + '</div>';
+}
+function toggleOutFavFold(el) {
+  const key = el.dataset.outFavFold;
+  if (!outFavOpen.delete(key)) outFavOpen.add(key);
+  store("ledger.outfav.open", [...outFavOpen]);
+  closeMenu();
+  renderRail();
+  const next = [...document.querySelectorAll("#out-fav-tree [data-out-fav-fold]")].find(b => b.dataset.outFavFold === key);
+  if (next) next.focus({ preventScroll: true });
+}
 function favOn(key) { return !!(state && (state.favs || []).some(x => x.key === key)); }
 function toggleFav(key) {
   closeMenu();
@@ -1468,7 +1531,10 @@ async function saveOutputName(reset) {
 function toggleOutFav(l) {
   closeMenu();
   const on = !outFavOn(l.key), had = oCat === "fav";
-  setLocal({ outFavs: on ? [Object.assign({ railText: l.text, ts: l.ts || 0 }, l)].concat(state.outFavs || []) : (state.outFavs || []).filter(x => x.key !== l.key) });
+  const occurrence = (l.sessions || [])[0] || {}, source = findItem(occurrence.key || selKey) || occurrence, topic = source.topic;
+  setLocal({ outFavs: on ? [Object.assign({ railText: l.text, ts: l.ts || 0, sessionKey: source.key, topic,
+    projectKey: topic ? topic.project : source.projectKey, project: topic ? plabel(topic.project) : source.project }, l)].concat(state.outFavs || [])
+    : (state.outFavs || []).filter(x => x.key !== l.key) });
   if (on && !favOpen) { favOpen = true; store("ledger.favx", false); }
   if (oReady) {
     oCounts.fav = Math.max(0, (oCounts.fav || 0) + (on ? 1 : -1));
