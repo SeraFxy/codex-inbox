@@ -23,7 +23,7 @@ class OutputCategoriesTest(unittest.TestCase):
         self.add('https://github.com/example/project', 40, 'Code')
         self.add('https://github.com/example/project/pull/1', 50, 'Review')
         self.briefs = patch.object(ledger, 'session_briefs', return_value={})
-        self.briefs.start()
+        self.brief_lookup = self.briefs.start()
         self.addCleanup(self.briefs.stop)
         self.addCleanup(self.conn.close)
 
@@ -60,6 +60,24 @@ class OutputCategoriesTest(unittest.TestCase):
     def test_existing_output_page_keeps_chronological_order(self):
         result = ledger.search_outputs(self.conn, '', key=self.key)
         self.assertEqual([x['cat'] for x in result['items']], ['code', 'web', 'file', 'feishu'])
+
+    def test_session_picker_includes_older_sources_without_prompts(self):
+        older = 'claude:historical'
+        self.add('https://github.com/example/project/pull/2', 10, 'Historical review', older)
+        self.brief_lookup.return_value = {
+            self.key: {'title': 'Recent', 'project': 'Example', 'projectKey': 'example', 'tool': 'codex'},
+            older: {'title': 'Historical', 'project': 'Archive', 'projectKey': 'archive', 'tool': 'claude'},
+        }
+        sessions = ledger.output_sessions(self.conn)
+        self.assertEqual([(s['key'], s['title'], s['last']) for s in sessions],
+                         [(self.key, 'Recent', 50), (older, 'Historical', 10)])
+
+    def test_scoped_empty_results_still_report_session_title(self):
+        self.brief_lookup.return_value = {self.key: {'title': 'Historical research'}}
+        result = ledger.search_outputs(self.conn, 'unmatched', 'feishu', self.key)
+        self.assertEqual(result['total'], 0)
+        self.assertEqual(result['sessionTitle'], 'Historical research')
+        self.assertEqual(self.brief_lookup.call_args.args[1], [self.key])
 
 
 if __name__ == '__main__':

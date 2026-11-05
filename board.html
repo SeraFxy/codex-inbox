@@ -316,6 +316,12 @@ kbd.k.lg { min-width: 22px; height: 22px; padding: 0 6px; border-radius: 6px; fo
 .menu .mlist > * { flex: none; }
 .menu .mnone { padding: 6px 10px 8px; font-size: 13px; line-height: 20px; color: var(--bk-ink-3); }
 .menu hr { height: 1px; margin: 4px 6px; border: 0; background: var(--bk-line); }
+.menu.out-session-menu { width: min(384px, calc(100vw - 16px)); }
+.out-session-menu .mlist { max-height: min(320px, calc(100dvh - 144px)); overscroll-behavior: contain; }
+.out-session-menu .out-session-option { height: 48px; text-align: left; }
+.out-session-option .out-session-name { display: grid; gap: 2px; min-width: 0; }
+.out-session-name > span, .out-session-name small, #out-session-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.out-session-name small { color: var(--bk-ink-3); font: 12px/16px var(--bk-mono); font-weight: 400; }
 .part { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
 .part.tight { gap: 6px; }
 .sec-t { font-size: 15px; line-height: 22px; font-weight: 600; }
@@ -616,6 +622,7 @@ body.hist-on { overflow: hidden; }
 .ocats { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; }
 .ocats .seg.src { align-self: flex-start; max-width: 100%; overflow-x: auto; scrollbar-width: none; }
 .ocats .seg.src button { flex: none; white-space: nowrap; }
+#out-session-filter { max-width: min(244px, 100%); min-width: 0; }
 .orow.done .ot { color: var(--bk-ink-2); font-weight: 400; }
 .orow .os1 { display: inline-flex; align-items: center; gap: 6px; min-width: 0; max-width: 100%; }
 mark { background: var(--bk-lime-mark); color: #1B2026; border-radius: 3px; box-shadow: 0 0 0 2px var(--bk-lime-mark); }
@@ -673,7 +680,7 @@ mark { background: var(--bk-lime-mark); color: #1B2026; border-radius: 3px; box-
 .toast button:hover { background: rgba(255, 255, 255, .16); }
 
 @media (max-width: 640px) {
-  .btn, .tab, .opt, .seg.src button, .dnav button, .rof-tree .ri, .rof-tree .ra, .rfav-head .rsec, .rsec.rfavs, .of-edit .lfilter { min-height: 40px; }
+  .btn, .tab, .opt, .seg.src button, .dnav button, .rof-tree .ri, .rof-tree .ra, .rfav-head .rsec, .rsec.rfavs, .of-edit .lfilter, .out-session-menu button { min-height: 40px; }
   .of-edit { padding: 16px; }
   .dq .dctx { margin-left: 0; }
   .kbd-hints, kbd.k { display: none !important; }
@@ -761,6 +768,16 @@ mark { background: var(--bk-lime-mark); color: #1B2026; border-radius: 3px; box-
       <kbd class="k lg">/</kbd>
     </div>
     <div class="hsum" id="hsum"></div>
+  </div>
+  <div class="ocats" id="out-filters" hidden>
+    <div class="seg src" id="out-category-filters" role="group" aria-label="只看哪类产出物"></div>
+    <div class="seg src" id="out-mr-filters" role="group" aria-label="临时的链接"></div>
+    <div class="seg src" id="out-favorite-filter" role="group" aria-label="收藏的"></div>
+    <button type="button" class="btn sec sm" id="out-session-filter" title="切换会话" aria-haspopup="menu" aria-expanded="false"
+      onclick="event.stopPropagation();openOutSessionPicker(this)"><span id="out-session-label">全部会话</span>
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>
+    </button>
+    <button type="button" class="btn ghost xs" id="out-session-clear" hidden onclick="setOutSession()">看全部会话的</button>
   </div>
   <div class="days" id="hlist"></div>
 </div>
@@ -1295,6 +1312,10 @@ function topicChip(it) {
 function mi(label, onclick, right, attrs) {
   return '<button type="button" role="menuitem"' + (attrs || "") + ' onclick="event.stopPropagation();' + onclick + '"><span>' + label + "</span><span>" + (right || "") + "</span></button>";
 }
+function placeMenu(pop, r, left) {
+  pop.style.left = Math.min(Math.max(8, left ? r.left : r.right - pop.offsetWidth), window.innerWidth - pop.offsetWidth - 8) + "px";
+  pop.style.top = (r.bottom + 6 + pop.offsetHeight > window.innerHeight ? Math.max(8, r.top - pop.offsetHeight - 6) : r.bottom + 6) + "px";
+}
 function showMenu(el, key, html, opts) {
   // 共用的弹出菜单：推迟、归到主题、切换项目和主题、主题改名删除。再点一次同一个按钮就关上
   opts = opts || {};
@@ -1302,10 +1323,9 @@ function showMenu(el, key, html, opts) {
   closeMenu();
   if (same && !opts.keep) return;
   const pop = document.getElementById("menu");
-  pop.className = "menu" + (opts.wide ? " wide" : "");
+  pop.className = "menu" + (opts.wide ? " wide" : "") + (opts.menuClass ? " " + opts.menuClass : "");
   pop.innerHTML = html; pop.hidden = false;
-  pop.style.left = Math.min(Math.max(8, opts.left ? r.left : r.right - pop.offsetWidth), window.innerWidth - pop.offsetWidth - 8) + "px";
-  pop.style.top = (r.bottom + 6 + pop.offsetHeight > window.innerHeight ? Math.max(8, r.top - pop.offsetHeight - 6) : r.bottom + 6) + "px";
+  placeMenu(pop, r, opts.left);
   el.classList.add("on"); el.setAttribute("aria-expanded", "true");
   menu = { el, key, rect: r };
   const first = pop.querySelector("input, button");
@@ -1816,9 +1836,9 @@ function openScopes(el) {
   showMenu(el, "", '<div class="mlist">' + html + "</div>", { left: true, wide: true });
 }
 // 带搜索框的选单：归到主题、移到项目共用。keep = 从别的菜单点进来，原地换成这个列表
-function openPicker(el, key, title, ph, list, keep) {
+function openPicker(el, key, title, ph, list, opts = {}) {
   showMenu(el, key, '<span class="ml">' + title + '</span><input id="tp-q" autocomplete="off" placeholder="' + ph + '" aria-label="' + ph + '">' +
-    '<div class="mlist" id="tp-list"></div>', { keep, wide: true });
+    '<div class="mlist" id="tp-list"></div>' + (opts.footer || ""), { ...opts, wide: true });
   if (!menu) return;
   menu.picker = true;
   picker = { key, q: "", list };
@@ -1835,7 +1855,7 @@ function openPicker(el, key, title, ph, list, keep) {
 // 归到主题：行上「⋯」、详情里的主题标签、拖到左栏，三处都走 setTopic
 function openTopics(el, key) {
   if (!findItem(key)) return closeMenu();
-  openPicker(el, key, "归到主题", "搜主题，或打字新建", pickerList, !!(menu && menu.el === el && !menu.picker));   // 从行上「⋯」菜单点进来的：原地换成主题列表
+  openPicker(el, key, "归到主题", "搜主题，或打字新建", pickerList, { keep: !!(menu && menu.el === el && !menu.picker) });   // 从行上「⋯」菜单点进来的：原地换成主题列表
 }
 function pickerList() {
   const it = findItem(picker.key);
@@ -1855,7 +1875,7 @@ function pickerList() {
 // 移到项目：会话不再按文件夹算在哪个项目，比如放错文件夹的通用定时任务，移到你打字新建的「定时任务」里。行上「⋯」、主题选单、拖到左栏的项目上，都走 moveTo
 function openProjects(el, key) {
   if (!findItem(key)) return closeMenu();
-  openPicker(el, key, "移到项目", "搜项目，或打字新建", projList, !!(menu && menu.el === el));
+  openPicker(el, key, "移到项目", "搜项目，或打字新建", projList, { keep: !!(menu && menu.el === el) });
 }
 function projList() {
   const it = findItem(picker.key);
@@ -3189,9 +3209,11 @@ const hFull = {};      // 会话 key -> 这个会话里你说过的全部话、�
 const hOpen = {};      // 展开的会话
 const hLong = {};      // 展开全文的单条
 function setTab(t) {
+  if (tab !== t) closeMenu();
   tab = t; store("ledger.tab", t);
   document.getElementById("view-board").hidden = t !== "board";
   document.getElementById("view-history").hidden = t === "board";
+  document.getElementById("out-filters").hidden = t !== "outputs";
   history.replaceState(null, "", TAB_HASH[t] || "#");
   if (t === "board") return;
   // 三个标签页共用一个搜索框和同一个词：切过去就按这个词搜那一边
@@ -3531,21 +3553,70 @@ function renderHistory() {
 // ---------------- 产出物：AI 在回复里给你的链接和本机文件，能搜，能跳回给出它的会话
 // 产物一直留着；MR 和流水线是临时的，单独一组，「全部产物」里不算它们
 const CATS = [["all", "全部产物"], ["feishu", "飞书文档"], ["file", "本机文件"], ["web", "网页"], ["code", "代码"]];
-let oq = "", oCat = "all", oKey = "", oItems = [], oTotal = 0, oCounts = {}, oAll = 0, oAllSessions = 0, oWider = 0, oWide = false, oPromptHits = 0, oLoaded = false, oReady = false, oSig = "";
+let oq = "", oCat = "all", oKey = "", oSessionTitle = "", oItems = [], oTotal = 0, oCounts = {}, oAll = 0, oAllSessions = 0, oWider = 0, oWide = false, oPromptHits = 0, oLoaded = false, oReady = false, oRequest = 0;
+function openOutSessionPicker(el) {
+  const all = mi("全部会话", "setOutSession()", !oKey ? ico("check", 14) : "", ' aria-current="' + !oKey + '"');
+  openPicker(el, oKey, "切换会话", "搜会话名、项目或工具", renderOutSessionOptions,
+    { menuClass: "out-session-menu", footer: "<hr>" + all });
+  if (picker) loadOutSessionOptions(picker);
+}
+async function loadOutSessionOptions(p) {
+  if (p.error) { p.error = false; renderOutSessionOptions(); }
+  try {
+    const res = await fetch("/api/output-sessions", { cache: "no-store" });
+    if (!res.ok) throw new Error("HTTP " + res.status);
+    p.sessions = (await res.json()).sessions;
+  } catch (e) { p.error = true; }
+  if (picker === p) renderOutSessionOptions();
+}
+function renderOutSessionOptions() {
+  const list = document.getElementById("tp-list");
+  if (picker.error) list.innerHTML = '<span class="mnone" role="status">暂时没取到会话</span>' + mi("重试", "loadOutSessionOptions(picker)");
+  else if (!picker.sessions) list.innerHTML = '<span class="mnone" role="status">读取会话…</span>';
+  else {
+    const words = picker.q.toLowerCase().split(/\s+/).filter(Boolean);
+    const matches = picker.sessions.filter(s => {
+      const text = [s.title, s.project, s.projectKey, s.tool, toolName(s)].join(" ").toLowerCase();
+      return words.every(w => text.includes(w));
+    });
+    list.innerHTML = matches.map(s => {
+      const meta = [s.project, toolName(s), s.last ? when(s.last) : ""].filter(Boolean).join(" · ");
+      const label = '<span class="out-session-name"><span>' + esc(s.title) + '</span><small>' + esc(meta) + "</small></span>";
+      return mi(label, "chooseOutSession(this.dataset.session)", s.key === oKey ? ico("check", 14) : "",
+        ' class="out-session-option" data-session="' + esc(s.key) + '" title="' + esc(s.title) + '" aria-current="' + (s.key === oKey) + '"');
+    }).join("") || '<span class="mnone" role="status">' + (words.length ? "没找到符合的会话" : "还没有带产出物的会话") + "</span>";
+    list.scrollTop = 0;
+  }
+  placeMenu(document.getElementById("menu"), menu.rect);
+}
+function chooseOutSession(key) {
+  const session = picker.sessions.find(s => s.key === key);
+  if (session) setOutSession(session);
+}
+function setOutSession(session) {
+  closeMenu();
+  clearTimeout(hTimer);
+  oKey = session ? session.key : "";
+  oSessionTitle = session ? session.title : "";
+  oReady = false;
+  searchOut(sq);
+  document.getElementById("out-session-filter").focus({ preventScroll: true });
+}
 function goOutputs(q, key, cat) {
   // 从看板详情、我说过的话跳过来：key = 只看这个会话的，cat = 只看哪一类
+  closeMenu();
   clearTimeout(hTimer);
-  sq = q || ""; oKey = key || ""; oCat = cat || "all"; oLoaded = false; oReady = false;
+  sq = q || ""; oKey = key || ""; oSessionTitle = ""; oCat = cat || "all"; oLoaded = false; oReady = false;
   setTab("outputs");
   window.scrollTo(0, 0);
 }
 async function searchOut(q, more) {
   oq = q; oLoaded = true;
   if (tab === "outputs") document.getElementById("q-clear").hidden = !q;
-  const off = more ? oItems.length : 0, sig = [q, oCat, oKey].join("|");
-  oSig = sig;
+  const off = more ? oItems.length : 0, request = ++oRequest;
   const list = document.getElementById("hlist");
   if (!oReady && tab === "outputs") {
+    renderOutFilters();
     document.getElementById("hsum").textContent = "";
     list.innerHTML = '<span class="lmore" role="status">读取产出物…</span>';
   }
@@ -3554,12 +3625,13 @@ async function searchOut(q, more) {
       (oKey ? "&priority=feishu&key=" + encodeURIComponent(oKey) : ""), { cache: "no-store" });
     if (!r.ok) throw new Error("HTTP " + r.status);
     const res = await r.json();
-    if (sig !== oSig) return;  // 打字快时旧结果晚到，丢掉
+    if (request !== oRequest) return;  // 快速切换时，晚到的结果不能盖住当前会话
     oItems = more ? oItems.concat(res.items) : res.items;
     oTotal = res.total; oCounts = res.counts || {}; oAll = res.all; oAllSessions = res.allSessions; oWider = res.wider || 0; oWide = !!res.wide;
+    if (res.sessionTitle) oSessionTitle = res.sessionTitle;
     if (!more) oPromptHits = res.promptHits || 0;
   } catch (e) {
-    if (sig !== oSig) return;
+    if (request !== oRequest) return;
     oLoaded = false;
     if (!oReady && tab === "outputs") list.innerHTML = '<div class="lbar"><span class="lmore" role="status">暂时没取到产出物</span>' +
       btn("重试", "searchOut(oq)", "sec sm") + "</div>";
@@ -3570,16 +3642,15 @@ async function searchOut(q, more) {
   if (tab === "outputs") renderOutputs();
 }
 function setCat(c) { oCat = c; searchOut(oq); }
-function clearOutKey() { oKey = ""; searchOut(oq); }
-function widenOut() { oKey = ""; oCat = "all"; searchOut(oq); }
+function widenOut() { oCat = "all"; setOutSession(); }
 function goHistory(q) {
   sq = q || ""; hLoaded = false;
   setTab("history");
   window.scrollTo(0, 0);
 }
 function oKeyTitle() {
-  const it = findItem(oKey), x = oItems.length && oItems[0].sessions.find(s => s.key === oKey);
-  return it ? it.title : x ? x.title : "这个会话";
+  const it = findItem(oKey);
+  return it ? it.title : oSessionTitle || "这个会话";
 }
 function sessLink(x, q, o) {
   // 给出它的会话：在看板上的点一下回到看板，停在它给出这个链接的那一轮；不在了的打开对话历史
@@ -3605,11 +3676,24 @@ function orow(o, q) {
     '<div class="os">' + (MR_STATE[o.state] ? '<span class="chip sm">' + MR_STATE[o.state] + "</span>" : "") + o.sessions.map(x => sessLink(x, q, o)).join("") + more + "</div></div>" +
     '<div class="oa"><span class="ostm">' + outEdit(o) + outStar(o) + '<span class="otm">' + esc(when(o.ts)) + '</span></span><span class="oacts">' + acts + "</span></div></div>";
 }
+function outCount(cat) {
+  return cat === "all" ? CATS.slice(1).reduce((total, [c]) => total + (oCounts[c] || 0), 0) : oCounts[cat] || 0;
+}
+function renderOutFilters(onlyMr = false) {
+  const seg = ([c, label]) => '<button type="button" aria-pressed="' + (onlyMr ? c === "mr" : oCat === c) +
+    '" onclick="setCat(\'' + c + "')\">" + label + (oReady ? '<span class="n">' + num(outCount(c)) + "</span>" : "") + "</button>";
+  document.getElementById("out-category-filters").innerHTML = CATS.map(seg).join("");
+  document.getElementById("out-mr-filters").innerHTML = seg(["mr_open", "还开着的 MR"]) + seg(["mr", "MR 和流水线"]);
+  document.getElementById("out-favorite-filter").innerHTML = seg(["fav", "收藏"]);
+  const label = oKey ? "只看「" + oKeyTitle() + "」" : "全部会话";
+  document.getElementById("out-session-label").textContent = label;
+  document.getElementById("out-session-filter").title = "切换会话 · " + label;
+  document.getElementById("out-session-clear").hidden = !oKey;
+}
 function renderOutputs() {
-  const n = c => c === "all" ? CATS.reduce((a, [k]) => a + (k === "all" ? 0 : oCounts[k] || 0), 0) : oCounts[c] || 0;
   // oWide：搜的就是某个 MR、流水线，或者产物里没有，把 MR 和流水线也列上了；全是它们时，标签也按它们亮
-  const onlyMr = oCat === "all" && oWide && !n("all"), mr = oCat === "mr" || oCat === "mr_open" || onlyMr, seg = ([c, label]) =>
-    '<button type="button" aria-pressed="' + (onlyMr ? c === "mr" : oCat === c) + '" onclick="setCat(\'' + c + "')\">" + label + '<span class="n">' + num(n(c)) + "</span></button>";
+  const onlyMr = oCat === "all" && oWide && !outCount("all"), mr = oCat === "mr" || oCat === "mr_open" || onlyMr;
+  renderOutFilters(onlyMr);
   segCounts(oPromptHits, oTotal);
   document.getElementById("hsum").innerHTML = (oq || oKey || oCat !== "all"
     ? '<span class="mono hit">找到 ' + num(oTotal) + (oCat === "mr_open" ? " 个还开着的 MR" : mr ? " 个 MR 和流水线" : " 个产出物") + "</span>"
@@ -3618,21 +3702,18 @@ function renderOutputs() {
       : oCat === "all" && oWide ? "搜的是 MR 或流水线，和产物一起列" : oCat === "fav" ? "你点过星标的产出物，也可以在左栏「收藏的产出物」里找"
       : mr ? "临时的：开着的 MR 标「待合并」，合并完的变灰，不用再管"
       : "AI 给你的文档、文件和网页，一直留着；MR 和流水线是临时的，单独放一组") + "</span>";
-  let html = '<div class="ocats"><div class="seg src" role="group" aria-label="只看哪类产出物">' + CATS.map(seg).join("") + "</div>" +
-    '<div class="seg src" role="group" aria-label="临时的链接">' + seg(["mr_open", "还开着的 MR"]) + seg(["mr", "MR 和流水线"]) + "</div>" +
-    '<div class="seg src" role="group" aria-label="收藏的">' + seg(["fav", "收藏"]) + "</div>" +
-    (oKey ? '<span class="chip" title="只看这个会话给的">只看「' + esc(oKeyTitle()) + "」</span>" + btn("看全部会话的", "clearOutKey()", "ghost xs") : "") + "</div>";
+  let html = "";
   if (!oItems.length) {
     // 只看某个会话或某一类时没搜到：直接说放开后有几个，一键放开；产物里没有、MR 和流水线里有时给那边的入口
     const part = oKey ? "只看「" + oKeyTitle() + "」" + (oCat !== "all" ? "里的" + CAT_NAME[oCat] : "") : oCat !== "all" ? "只看" + CAT_NAME[oCat] : "";
     const inMr = !!(oq && !mr && oCounts.mr);
-    const tip = !oq ? (oCat === "fav" ? "点产出物右边的星标，就会加到「收藏的产出物」。" : oCat === "mr_open" ? "合并完、关掉的在「MR 和流水线」里。" : mr ? "AI 在回复里给你 MR 或流水线链接后，会收在这里。" : "AI 在回复里给你链接或文件后，会自动收在这里。")
+    const tip = !oq ? (oKey ? "可以切换会话或产出物类型。" : oCat === "fav" ? "点产出物右边的星标，就会加到「收藏的产出物」。" : oCat === "mr_open" ? "合并完、关掉的在「MR 和流水线」里。" : mr ? "AI 在回复里给你 MR 或流水线链接后，会收在这里。" : "AI 在回复里给你链接或文件后，会自动收在这里。")
       : inMr ? "产物里没有，MR 和流水线里有 " + num(oCounts.mr) + " 个对得上。"
       : oWider ? "放开到全部会话、全部类型，有 " + num(oWider) + " 个。"
       : oPromptHits ? "AI 没给过，你自己说过的在上面。"
       : part ? "放开到全部也没有。换个说法，或者少打几个词试试。" : "换个说法，或者少打几个词试试。";
     html += '<div class="dash" style="margin: 0; padding: 20px; gap: 14px">' + face("search", 36) + '<span class="tx">' +
-      (oq ? "<b>" + (part ? part + "时" : "") + "没找到「" + esc(oq) + "」</b>" : "<b>" + (oCat === "mr_open" ? "开着的 MR 都处理完了" : oCat === "fav" ? "还没有收藏" : "这里还空着") + "</b>") +
+      (oq ? "<b>" + (part ? esc(part) + "时" : "") + "没找到「" + esc(oq) + "」</b>" : "<b>" + (oKey ? "这个会话没有符合当前筛选的产出物" : oCat === "mr_open" ? "开着的 MR 都处理完了" : oCat === "fav" ? "还没有收藏" : "这里还空着") + "</b>") +
       "<span>" + esc(tip) + "</span></span>" +
       (inMr ? btn("去 MR 和流水线里看", "setCat('mr')", "sec sm", "", 'style="margin-left: auto"')
         : oq && oWider ? btn("看全部 " + num(oWider) + " 个", "widenOut()", "sec sm", "", 'style="margin-left: auto"') : "") + "</div>";

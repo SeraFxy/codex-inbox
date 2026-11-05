@@ -2667,6 +2667,18 @@ def session_briefs(conn, keys, now):
     return out
 
 
+def output_sessions(conn):
+    """有产出物或 MR 记录的会话，按最近一次给出链接的时间排列。"""
+    rows = conn.execute("SELECT session_key, MAX(ts) AS last_ts FROM links GROUP BY session_key ORDER BY last_ts DESC, session_key").fetchall()
+    briefs = session_briefs(conn, [key for key, _ in rows], time.time())
+    sessions = []
+    for key, last in rows:
+        brief = briefs[key]
+        sessions.append({"key": key, "title": brief["title"], "project": brief["project"],
+                         "projectKey": brief["projectKey"], "tool": brief["tool"], "last": last or 0})
+    return sessions
+
+
 def search_outputs(conn, q, cat="", key="", tool="", limit=100, offset=0, priority=False):
     """AI 给过你的产出物（链接和本机文件），同一个链接只列一次，带上给过它的会话（最近的在前）和 AI 给出它时的原话。"""
     now = time.time()
@@ -2725,6 +2737,8 @@ def search_outputs(conn, q, cat="", key="", tool="", limit=100, offset=0, priori
                     it["text"] = out_text(url, label, ar["title"])
         items.append(it)
         keys += [x["key"] for x in sess[:3]]
+    if ":" in key:
+        keys.append(key)   # 这个会话没有命中时，筛选仍要显示它的名字
     briefs = session_briefs(conn, list(dict.fromkeys(keys)), now)
     for it in items:
         for x in it["sessions"]:
@@ -2732,6 +2746,8 @@ def search_outputs(conn, q, cat="", key="", tool="", limit=100, offset=0, priori
     allc = conn.execute("SELECT COUNT(DISTINCT " + OUT_KEY + "), COUNT(DISTINCT l.session_key) FROM links l WHERE l.cat != 'mr'").fetchone()
     res = {"q": q, "cat": cat, "key": key, "total": total, "counts": counts, "items": items,
            "all": allc[0], "allSessions": allc[1], "wider": 0, "promptHits": 0, "wide": wide}
+    if key:
+        res["sessionTitle"] = briefs.get(key, {}).get("title", "")
     if q.strip():
         # 只看某个会话、某一类时没搜到：告诉你放开后有几个；你自己发过这个词的会话数，给「我说过的话」的入口
         if (key or cat) and not total:
@@ -4584,6 +4600,10 @@ class Handler(BaseHTTPRequestHandler):
                 res = search_sessions(APP.conn, (q.get("q") or [""])[0], 50, int((q.get("offset") or ["0"])[0]), (q.get("tool") or [""])[0],
                                       handoff=(q.get("handoff") or [""])[0] == "1")
             return self._send(200, json.dumps(res, ensure_ascii=False))
+        if u.path == "/api/output-sessions":
+            with APP.lock:
+                sessions = output_sessions(APP.conn)
+            return self._send(200, json.dumps({"sessions": sessions}, ensure_ascii=False))
         if u.path == "/api/outputs":
             q = parse_qs(u.query)
             arg = lambda k, d="": (q.get(k) or [d])[0]
