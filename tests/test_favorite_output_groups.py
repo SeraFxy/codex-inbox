@@ -1,6 +1,7 @@
 import importlib.util
 import json
 import sqlite3
+import threading
 import unittest
 from pathlib import Path
 
@@ -24,6 +25,11 @@ class FavoriteOutputOriginsTest(unittest.TestCase):
     def favorites(self, keys, items=()):
         ledger.meta_set(self.conn, 'out_favs', json.dumps(keys))
         return ledger.board_out_favs(self.conn, 1000, items)
+
+    def action(self, action, arg, key=""):
+        app = ledger.App.__new__(ledger.App)
+        app.conn, app.lock = self.conn, threading.RLock()
+        return app.action({"action": action, "arg": arg, "key": key})
 
     def test_current_topic_project_wins_over_session_directory(self):
         key, url = 'codex:source', 'https://example.com/report.html'
@@ -76,6 +82,57 @@ class FavoriteOutputOriginsTest(unittest.TestCase):
         self.conn.execute('INSERT INTO session_topics VALUES (?,NULL,?)', (key, 100))
         [item] = self.favorites([url])
         self.assertIsNone(item['topic'])
+
+    def test_batch_move_wins_over_new_source_and_follows_topic_rename(self):
+        doc, page = 'https://example.feishu.cn/docx/ABCDEFGHIJKLMNOP', 'https://example.com/report'
+        self.add('codex:first', doc, 100)
+        self.add('claude:second', page, 200)
+        keys = [ledger.feishu_doc(doc), page]
+        self.favorites(keys)
+        t = ledger.insert_topic(self.conn, 'Review', 'Weekly', 200)
+        ok, _ = self.action('out_fav_place', {'keys': keys, 'project': 'Review', 'topic': t['id']})
+        self.assertTrue(ok)
+
+        self.add('claude:new', doc + '#anchor', 300)
+        sources = [{'key': 'claude:new', 'projectKey': 'NewSource', 'topic': None}]
+        self.assertTrue(self.action('topic_edit', {'id': t['id'], 'name': 'Renamed'})[0])
+        moved = ledger.board_out_favs(self.conn, 1000, sources)
+        self.assertEqual([(x['projectKey'], x['topic']['name'], x['manualPlace']) for x in moved],
+                         [('Review', 'Renamed', True), ('Review', 'Renamed', True)])
+        self.assertEqual(moved[0]['sessionKey'], 'claude:new')
+        self.assertEqual(moved[0]['url'], doc + '#anchor')
+
+        self.assertTrue(self.action('out_fav_place', {'keys': keys, 'auto': True})[0])
+        automatic = ledger.board_out_favs(self.conn, 1000, sources)
+        self.assertEqual(automatic[0]['projectKey'], 'NewSource')
+        self.assertTrue(all(not x['manualPlace'] for x in automatic))
+
+    def test_invalid_batch_does_not_move_existing_favorite_or_create_topic(self):
+        page = 'https://example.com/report'
+        self.add('codex:source', page, 100)
+        self.favorites([page])
+        t = ledger.insert_topic(self.conn, 'Other', 'Weekly', 200)
+        for arg in ({'keys': [page, 'missing'], 'project': 'Review', 'name': 'New'},
+                    {'keys': [page], 'project': 'Review', 'topic': t['id']}):
+            self.assertFalse(self.action('out_fav_place', arg)[0])
+        self.assertEqual([r['id'] for r in ledger.load_topics(self.conn)], [t['id']])
+        [item] = ledger.board_out_favs(self.conn, 1000)
+        self.assertFalse(item['manualPlace'])
+
+    def test_new_topic_and_assignment_saved_together_and_deleted_topic_falls_back_to_type(self):
+        page = 'https://example.com/report'
+        self.add('codex:source', page, 100)
+        self.favorites([page])
+        self.assertTrue(self.action('out_fav_place', {'keys': [page], 'project': 'Review', 'name': 'Weekly'})[0])
+        [item] = ledger.board_out_favs(self.conn, 1000)
+        self.assertEqual(item['topic']['name'], 'Weekly')
+        self.assertFalse(self.conn.in_transaction)
+
+        self.assertTrue(self.action('topic_edit', {'id': item['topic']['id'], 'delete': True})[0])
+        [item] = ledger.board_out_favs(self.conn, 1000)
+        self.assertEqual(item['projectKey'], 'Review')
+        self.assertIsNone(item['topic'])
+        self.assertTrue(item['manualPlace'])
 
 
 if __name__ == '__main__':

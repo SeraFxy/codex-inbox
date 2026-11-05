@@ -121,6 +121,7 @@ CREATE TABLE IF NOT EXISTS links (session_key TEXT, url TEXT, label TEXT, ts REA
 CREATE TABLE IF NOT EXISTS doc_titles (token TEXT PRIMARY KEY, title TEXT, at REAL);
 CREATE TABLE IF NOT EXISTS web_titles (url TEXT PRIMARY KEY, title TEXT, at REAL);
 CREATE TABLE IF NOT EXISTS output_names (key TEXT PRIMARY KEY, title TEXT, at REAL);
+CREATE TABLE IF NOT EXISTS output_fav_places (key TEXT PRIMARY KEY, project TEXT NOT NULL, topic_id INTEGER);
 CREATE TABLE IF NOT EXISTS mr_state (ref TEXT PRIMARY KEY, state TEXT, title TEXT, at REAL);
 CREATE TABLE IF NOT EXISTS images (session_key TEXT, sha TEXT, ts REAL, file TEXT, bytes INTEGER, PRIMARY KEY (session_key, sha));
 CREATE INDEX IF NOT EXISTS images_session ON images(session_key, ts);
@@ -3461,7 +3462,7 @@ def saved_session_topic(conn, key):
 
 
 def board_out_favs(conn, now, items=()):
-    """收藏按最近收藏的排序；每份产出物沿用最近提供它的会话，作为项目和主题的来源。"""
+    """收藏按最近收藏的排序。手动分类优先，其余沿用最近提供它的会话。"""
     out = []
     for k in meta_keys(conn, "out_favs"):
         by_doc = "://" not in k and not k.startswith("/")
@@ -3492,14 +3493,51 @@ def board_out_favs(conn, now, items=()):
             topic = {k: t[k] for k in ("id", "name", "project")} if t else None
         sources[key] = dict(source, topic=topic)
     tags = tag_map(conn)
+    places = {r["key"]: r for r in conn.execute(
+        "SELECT p.key, p.project, t.id AS topic_id, t.name AS topic_name FROM output_fav_places p "
+        "LEFT JOIN topics t ON t.id=p.topic_id AND t.project=p.project AND t.deleted=0")}
     for it, bare in out:
         source = sources[it["sessionKey"]]
         topic = source.get("topic")
         project = topic["project"] if topic else source.get("projectKey") or "其他"
+        place = places.get(it["key"])
+        if place:
+            project = place["project"]
+            topic = {"id": place["topic_id"], "name": place["topic_name"], "project": project} if place["topic_id"] else None
         # 没有标题和说明的链接仍可用来源会话辨认；名称、收藏和原链接都照旧保存。
-        it.update(projectKey=project, project=tag_of(tags, project)[0], topic=topic,
+        it.update(projectKey=project, project=tag_of(tags, project)[0], topic=topic, manualPlace=place is not None,
                   railText=it["name"] + " · " + (source.get("title") or "（未命名会话）") if bare else it["text"])
     return [it for it, _ in out]
+
+
+def save_out_fav_place(conn, arg, now):
+    keys = arg.get("keys")
+    if not isinstance(keys, list) or not keys or any(not isinstance(k, str) for k in keys):
+        return False, "先勾选要改分类的产出物"
+    keys = list(dict.fromkeys(keys))
+    if not set(keys).issubset(meta_keys(conn, "out_favs")):
+        return False, "有产出物已取消收藏，请重新打开分类窗口"
+    if arg.get("auto") is True:
+        with conn:
+            conn.executemany("DELETE FROM output_fav_places WHERE key=?", ((k,) for k in keys))
+        return True, "已恢复 %d 份产出物的自动分类" % len(keys)
+    project, tid, name = arg.get("project"), arg.get("topic"), arg.get("name")
+    if not isinstance(project, str) or not project.strip() or len(project) > 256:
+        return False, "请选择项目"
+    if name is not None:
+        if tid is not None or not isinstance(name, str) or not (name := topic_name(name)):
+            return False, "请填写主题名称"
+    if tid is not None:
+        if type(tid) is not int or not 0 < tid < 2**63 or not conn.execute(
+                "SELECT 1 FROM topics WHERE id=? AND project=? AND deleted=0", (tid, project)).fetchone():
+            return False, "这个主题已删除或不在所选项目里"
+    with conn:
+        if name:
+            tid = ensure_topic(conn, project, name, now)
+        conn.executemany("INSERT INTO output_fav_places (key, project, topic_id) VALUES (?, ?, ?) "
+                         "ON CONFLICT(key) DO UPDATE SET project=excluded.project, topic_id=excluded.topic_id",
+                         ((k, project, tid) for k in keys))
+    return True, "已保存 %d 份产出物的分类" % len(keys)
 
 
 def load_pins(conn):
@@ -4183,14 +4221,16 @@ class App:
                     favs.insert(0, key)
                 meta_set(c, "favs", json.dumps(favs, ensure_ascii=False))
                 c.commit()
-                return True, "已收藏，在左栏「收藏」里" if arg.get("on") else "已取消收藏"
+                return True, "已收藏，在左栏「收藏的对话」里" if arg.get("on") else "已取消收藏"
             if action == "out_fav" and key and isinstance(arg, dict):
                 favs = [k for k in meta_keys(c, "out_favs") if k != key]
                 if arg.get("on"):
                     favs.insert(0, key)
                 meta_set(c, "out_favs", json.dumps(favs, ensure_ascii=False))
                 c.commit()
-                return True, "已收藏，在左栏「收藏」和「产出物」里" if arg.get("on") else "已取消收藏"
+                return True, "已收藏，在左栏「收藏的产出物」里" if arg.get("on") else "已取消收藏"
+            if action == "out_fav_place" and isinstance(arg, dict):
+                return save_out_fav_place(c, arg, now)
             if action == "pin" and key and isinstance(arg, dict):
                 pins = [k for k in load_pins(c) if k != key]
                 if arg.get("on"):
