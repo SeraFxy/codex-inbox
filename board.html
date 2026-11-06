@@ -430,6 +430,8 @@ body.hist-on { overflow: hidden; }
 #hist-favs[aria-pressed="true"], .hist-star[aria-pressed="true"] { background: var(--bk-sunken); color: var(--bk-ink-1); }
 .hist-foot { border-top: 1px solid var(--bk-line); }
 .hist-jump { margin-left: auto; }
+.hist-content { flex: 1; min-height: 0; display: flex; }
+.hist-main { flex: 1; min-width: 0; min-height: 0; display: flex; flex-direction: column; }
 .hist-body { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; display: flex; flex-direction: column; gap: 24px; padding: 16px 24px 48px; }
 .hist-body:focus { outline: none; }
 .hist-body > * { flex: none; }
@@ -442,10 +444,42 @@ body.hist-on { overflow: hidden; }
 .hmsg.at { margin: -12px; padding: 12px; border-radius: 14px; background: var(--bk-subtle); box-shadow: var(--bk-on); }
 .hist-star { width: 28px; padding: 0; color: var(--bk-ink-3); }
 .hist-body .hist-current { outline: 2px solid var(--bk-ink-2); outline-offset: 2px; border-radius: 4px; }
-.hist-saved { display: grid; gap: 8px; padding: 12px; border: 1px solid var(--bk-line); border-radius: 12px; }
-.hist-saved-head { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; color: var(--bk-ink-3); font-size: 12px; line-height: 16px; }
-.hist-saved-head .hm-actions { flex-wrap: wrap; }
-.hist-saved-text.tx { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 14px; line-height: 22px; }
+.hist-favorites .hist-panel { width: min(1220px, calc(100vw - 40px)); }
+.hist-favorites .hist-acts { flex: 0 0 auto; }
+.hist-favorites .hist-body { padding: 20px 24px 48px; }
+.hist-sessions { flex: 0 0 224px; min-width: 0; overflow-y: auto; overscroll-behavior: contain; padding: 16px 12px; border-right: 1px solid var(--bk-line); background: var(--bk-subtle); }
+.hist-sessions h3 { margin: 0 8px 8px; font-size: 13px; line-height: 20px; font-weight: 600; color: var(--bk-ink-3); }
+.hist-session { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 0 8px; align-items: center; width: 100%; min-height: 36px; padding: 8px; border: 0; border-radius: 10px; background: none; color: var(--bk-ink-2); font: inherit; font-size: 13px; line-height: 20px; text-align: left; cursor: pointer; }
+.hist-session:hover { background: var(--bk-sunken); }
+.hist-session[aria-pressed="true"] { background: var(--bk-surface); box-shadow: var(--bk-on); color: var(--bk-ink-1); font-weight: 600; }
+.hist-session-name { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.hist-session-tool, .hist-session-count, .hist-saved-meta { color: var(--bk-ink-3); font-size: 12px; line-height: 16px; }
+.hist-session-count { grid-column: 2; grid-row: 1; }
+.hist-session-picker { display: none; width: 100%; min-width: 0; min-height: 40px; padding: 0 8px; border: 1px solid var(--bk-line-strong); border-radius: 10px; background: var(--bk-surface); color: var(--bk-ink-1); font: inherit; font-size: 14px; }
+.hist-saved-list { display: grid; gap: 20px; }
+.hist-saved-total { color: var(--bk-ink-3); font-size: 13px; line-height: 20px; }
+.hist-saved-group h3 { display: flex; align-items: baseline; flex-wrap: wrap; gap: 4px 8px; margin: 0 0 8px; font-size: 15px; line-height: 22px; font-weight: 600; overflow-wrap: anywhere; }
+.hist-saved-rows { border: 1px solid var(--bk-line); border-radius: 14px; }
+.hist-saved-row { display: grid; width: 100%; grid-template-columns: minmax(0, 1fr) auto; gap: 4px 12px; padding: 8px 12px; border: 0; border-radius: 0; background: none; text-align: left; color: var(--bk-ink-1); font: inherit; cursor: pointer; }
+.hist-saved-row + .hist-saved-row { border-top: 1px solid var(--bk-line); }
+.hist-saved-row:first-child { border-top-left-radius: 13px; border-top-right-radius: 13px; }
+.hist-saved-row:last-child { border-bottom-left-radius: 13px; border-bottom-right-radius: 13px; }
+.hist-saved-row:hover { background: var(--bk-subtle); }
+.hist-saved-row > svg { grid-column: 2; grid-row: 1 / 3; align-self: center; color: var(--bk-ink-3); }
+.hist-saved-preview { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; overflow-wrap: anywhere; font-size: 14px; line-height: 22px; }
+.hist-reader-bar { flex: none; display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 4px 8px; padding: 8px 24px; border-bottom: 1px solid var(--bk-line); }
+.hist-reader { width: min(100%, 880px); align-self: center; }
+.hist-reader-head { margin-bottom: 20px; padding-bottom: 12px; border-bottom: 1px solid var(--bk-line); }
+.hist-reader-head h3 { margin: 0 0 4px; font-size: 17px; line-height: 24px; font-weight: 600; overflow-wrap: anywhere; }
+.hist-reader .hist-saved-text { font-size: 15px; line-height: 26px; }
+.hist-saved-text.tx { white-space: pre-wrap; overflow-wrap: anywhere; }
+@media (max-width: 980px) {
+  .hist-favorites .hist-panel { width: 100vw; }
+  .hist-favorites .hist-content { flex-direction: column; }
+  .hist-sessions { flex: none; padding: 8px 16px; border-right: 0; border-bottom: 1px solid var(--bk-line); }
+  .hist-sessions h3, .hist-session-list { display: none; }
+  .hist-session-picker { display: block; }
+}
 @media (max-width: 640px) {
   .hist-panel { width: 100vw; }
   .hist-h { padding: 12px 12px 12px 16px; }
@@ -453,6 +487,9 @@ body.hist-on { overflow: hidden; }
   .hist-acts .seg { margin-right: auto; }
   .hist-body { padding: 12px 16px 40px; }
   .hist-tools, .hist-foot { padding: 8px 12px 8px 16px; }
+  .hist-favorites .hist-body { padding: 16px 16px 40px; }
+  .hist-reader-bar { padding: 8px 16px; }
+  .hist-reader-bar .btn { min-height: 40px; }
   .hist-tools .search, .hist-find-nav .btn, .hist-clear, .hist-star { min-height: 40px; }
   .hist-find-nav .btn, .hist-clear, .hist-star { width: 40px; }
   .hmsg.you .tm-b.you { max-width: 94%; }
@@ -829,7 +866,17 @@ mark { background: var(--bk-lime-mark); color: #1B2026; border-radius: 3px; box-
       </div>
       <button type="button" class="btn sec sm" id="hist-favs" aria-pressed="false" onclick="toggleHistSaved()">收藏<span id="hist-favs-count" class="mono"></span></button>
     </div>
-    <div class="hist-body" id="hist-body" tabindex="-1"></div>
+    <div class="hist-content">
+      <nav class="hist-sessions" id="hist-sessions" aria-label="按会话筛选收藏" hidden>
+        <h3>会话</h3>
+        <div class="hist-session-list" id="hist-session-list"></div>
+        <select class="hist-session-picker" id="hist-session-picker" aria-label="按会话筛选收藏" onchange="setHistFavoriteSession(this.value)"></select>
+      </nav>
+      <div class="hist-main">
+        <div class="hist-reader-bar" id="hist-reader-bar" hidden></div>
+        <div class="hist-body" id="hist-body" tabindex="-1"></div>
+      </div>
+    </div>
     <div class="hist-foot" id="hist-foot">
       <button type="button" class="btn sec sm" id="hist-selection" hidden onpointerdown="event.preventDefault()" onclick="saveHistSelection(this)">收藏选中文字</button>
       <div class="hist-jump" role="group" aria-label="跳转对话首尾">
@@ -2542,6 +2589,8 @@ async function loadAll(key) {
 // 从「看全部对话」打开时停在最新一条；从搜索结果打开时停在命中的那一条，搜索词标亮
 let hist = null, histReadTimer = 0, histFindTimer = 0;
 const histBody = document.getElementById("hist-body"), histQuery = document.getElementById("hist-q");
+const histSessions = document.getElementById("hist-sessions"), histSessionList = document.getElementById("hist-session-list"),
+  histSessionPicker = document.getElementById("hist-session-picker"), histReaderBar = document.getElementById("hist-reader-bar");
 function histSig(key) { const it = findItem(key); return it ? it.details.replyTs + "|" + it.details.promptTs : ""; }
 function histInert(on) { ["view-board", "view-history"].forEach(id => { document.getElementById(id).inert = on; }); }
 function histReadingPosition() {
@@ -2571,7 +2620,7 @@ function openHist(key = "", hit = null, title = "") {
   const back = hist ? hist.back : document.activeElement;
   const position = key && !hit ? store("ledger.hist.pos." + key) : null;
   hist = { key, title, hit, position, back, only: false, saved: !key, favorites: [], loading: true, scroll: true,
-    query: "", matches: [], matchIndex: 0, ts: histSig(key) };
+    favoriteSession: "", favoriteId: "", favoriteListTop: 0, query: "", matches: [], matchIndex: 0, ts: histSig(key) };
   histQuery.value = "";
   document.getElementById("hist").hidden = false;
   document.body.classList.add("hist-on");
@@ -2588,7 +2637,10 @@ function closeHist() {
   const back = hist.back;
   hist = null;
   document.getElementById("hist").hidden = true;
-  histBody.innerHTML = "";
+  histBody.replaceChildren();
+  histSessionList.replaceChildren();
+  histSessionPicker.replaceChildren();
+  histReaderBar.replaceChildren();
   document.body.classList.remove("hist-on");
   histInert(false);
   if (back && back.isConnected) back.focus({ preventScroll: true });
@@ -2643,7 +2695,7 @@ function toggleHistSaved() {
   if (!hist || !hist.key) return;
   if (hist.saved) return setHistOnly(hist.only);
   rememberHistPosition();
-  hist.saved = true; hist.scroll = true; hist.matchIndex = 0;
+  hist.saved = true; hist.scroll = true; hist.matchIndex = 0; hist.favoriteId = "";
   renderHist();
 }
 function searchHist(value) {
@@ -2662,6 +2714,11 @@ function applyHistSearch(scroll) {
   clearTimeout(histFindTimer); histFindTimer = 0;
   const h = hist;
   if (!h) return;
+  if (h.saved) {
+    h.favoriteId = "";
+    renderHistSaved(true);
+    return;
+  }
   const marks = histBody.querySelectorAll("mark");
   marks.forEach(m => m.replaceWith(...m.childNodes));
   if (marks.length) histBody.normalize();   // 下一个词可以跨过上次高亮拆开的文字
@@ -2669,14 +2726,14 @@ function applyHistSearch(scroll) {
   h.matches = [];
   const words = qWords(h.query).map(w => w.toLowerCase());
   if (words.length) {
-    for (const body of histBody.querySelectorAll(".hmsg > .tm-b, .hist-saved-text")) {
+    for (const body of histBody.querySelectorAll(".hmsg > .tm-b")) {
       const text = body.textContent.toLowerCase();
       if (!words.every(w => text.includes(w) || (/^https?:\/\//.test(w) && [...body.querySelectorAll("a[href]")].some(a => a.href.toLowerCase().includes(w))))) continue;
       markIn(body, h.query);
       const hits = body.querySelectorAll("mark");
       h.matches.push(...(hits.length ? hits : [body]));
     }
-  } else if (h.hit && !h.saved) {
+  } else if (h.hit) {
     const b = h.hit.favorite;
     if (b && b.excerpt) {
       const body = histBody.querySelector(".hmsg.at > .tm-b");
@@ -2691,7 +2748,7 @@ function showHistMatch(scroll) {
   const prev = histBody.querySelector(".hist-current");
   if (prev) prev.classList.remove("hist-current");
   document.getElementById("hist-clear").hidden = !histQuery.value;
-  document.getElementById("hist-find-nav").hidden = !h.query;
+  document.getElementById("hist-find-nav").hidden = h.saved || !h.query;
   document.getElementById("hist-prev").disabled = n < 2;
   document.getElementById("hist-next").disabled = n < 2;
   document.getElementById("hist-find-status").textContent = n ? num(h.matchIndex + 1) + " / " + num(n) + " 处" : h.loading ? "读取中…" : "无匹配";
@@ -2703,6 +2760,7 @@ function showHistMatch(scroll) {
 function stepHistMatch(delta) {
   if (!hist) return;
   if (histFindTimer) return applyHistSearch(true);
+  if (hist.saved) return;
   const n = hist.matches.length;
   if (!n) return;
   hist.matchIndex = (hist.matchIndex + delta + n) % n;
@@ -2768,22 +2826,141 @@ function saveHistSelection(button) {
   const selected = selectedHistText();
   if (selected) saveHistMessage(selected.id, button, selected.text);
 }
-function openHistFavorite(index) {
-  const b = hist.favorites[index];
-  if (b) openHist(b.sessionKey, { favorite: b }, b.title);
+function histFavoriteTitle(b) {
+  return b.title || (hist.key === b.sessionKey && hist.title) || findItem(b.sessionKey)?.title || "（未命名会话）";
 }
-function removeHistFavorite(index, button) {
-  const b = hist.favorites[index];
+function histFavoriteTool(b) { return b.sessionKey.startsWith("codex:") ? "Codex" : "Claude"; }
+function histFavoriteMeta(b) {
+  return [b.kind === "you" ? "你" : histFavoriteTool(b), b.ts && when(b.ts), b.excerpt ? "片段" : "整条消息"].filter(Boolean).join(" · ");
+}
+function histFavoriteGroups(favorites) {
+  const groups = new Map();
+  for (const b of favorites) {
+    if (!groups.has(b.sessionKey)) groups.set(b.sessionKey, { title: histFavoriteTitle(b), tool: histFavoriteTool(b), items: [] });
+    groups.get(b.sessionKey).items.push(b);
+  }
+  return groups;
+}
+function renderHistFavoriteSessions(groups) {
+  const h = hist;
+  histSessions.hidden = !!h.key || !groups.size;
+  if (histSessions.hidden) return;
+  // 只在收藏数据变动时重画会话按钮；搜索和换会话时保留导航的位置、焦点。
+  if (h.sessionOptions !== h.favorites) {
+    h.sessionOptions = h.favorites;
+    const options = [["", { title: "全部会话", items: h.favorites }], ...groups];
+    histSessionList.innerHTML = options.map(([key, g]) => '<button type="button" class="hist-session" data-key="' + esc(key) +
+      '" title="' + esc(g.title) + '" onclick="setHistFavoriteSession(this.dataset.key)"><span class="hist-session-name">' +
+      esc(g.title) + '</span><span class="hist-session-count mono">' + num(g.items.length) + '</span>' +
+      (g.tool ? '<span class="hist-session-tool mono">' + g.tool + "</span>" : "") + "</button>").join("");
+    histSessionPicker.innerHTML = options.map(([key, g]) => '<option value="' + esc(key) + '">' +
+      esc(g.title) + (g.tool ? " · " + g.tool : "") + "（" + num(g.items.length) + "）</option>").join("");
+  }
+  for (const button of histSessionList.children) button.setAttribute("aria-pressed", String(button.dataset.key === h.favoriteSession));
+  histSessionPicker.value = h.favoriteSession;
+}
+function setHistFavoriteSession(key) {
+  const h = hist;
+  if (!h || !h.saved || (key === h.favoriteSession && !h.favoriteId)) return;
+  h.favoriteSession = key; h.favoriteId = "";
+  renderHistSaved(true);
+}
+function readHistFavorite(id) {
+  hist.favoriteListTop = histBody.scrollTop;
+  hist.favoriteId = id;
+  renderHistSaved(true);
+  histBody.focus({ preventScroll: true });
+}
+function backHistFavorites() {
+  const h = hist, id = h.favoriteId;
+  h.favoriteId = "";
+  renderHistSaved();
+  histBody.scrollTop = h.favoriteListTop;
+  const row = histBody.querySelector('[data-id="' + CSS.escape(id) + '"]');
+  (row || histBody).focus({ preventScroll: true });
+}
+function openHistFavorite() {
+  const b = hist.favorites.find(b => b.id === hist.favoriteId);
+  if (b) openHist(b.sessionKey, { favorite: b }, histFavoriteTitle(b));
+}
+function removeHistFavorite(button) {
+  const b = hist.favorites.find(b => b.id === hist.favoriteId);
   if (b) changeHistFavorite(b.sessionKey, { on: false, id: b.id }, button);
 }
-function histFavoriteRow(b, index) {
-  const source = b.kind === "you" ? "你" : b.sessionKey.startsWith("codex:") ? "Codex" : "Claude";
-  const meta = [!hist.key && b.title, source, b.ts && when(b.ts), b.excerpt ? "片段" : "整条消息"].filter(Boolean).join(" · ");
+function histFavoritePreview(b, words, lower) {
+  const at = words.reduce((first, w) => {
+    const i = lower.indexOf(w);
+    return i < 0 ? first : Math.min(first, i);
+  }, Infinity);
+  const start = Number.isFinite(at) && at > 56 ? at - 20 : 0;
+  let text = b.text.slice(start, start + 280);
+  if (!b.excerpt && b.kind === "it") {
+    text = text.split("\n").filter(l => !mdSep(l)).join("\n")
+      .replace(/^[ \t]*\|([^\n]*\|)[ \t]*$/gm, (_, cells) => cells.split("|").map(c => c.trim()).filter(Boolean).join(" · "))
+      .replace(/^[ \t]*(?:\x60{3}[^\n]*|#{1,6}[ \t]+|>[ \t]*|[-*][ \t]+)/gm, "")
+      .replace(/\[([^\]\n]+)\]\((https?:\/\/[^\s)]+)\)/g, (_, label, url) =>
+        words.some(w => url.toLowerCase().includes(w)) ? label + " " + url : label)
+      .replace(/[\x60*]/g, "");
+  }
+  text = text.replace(/\s+/g, " ").trim() || b.text.replace(/\s+/g, " ").trim();
+  return (start ? "…" : "") + text.slice(0, 180).trimEnd() + (text.length > 180 || b.text.length > start + 280 ? "…" : "");
+}
+function histFavoriteRow(b, words, lower) {
+  return '<button type="button" class="hist-saved-row" data-id="' + esc(b.id) + '" onclick="readHistFavorite(this.dataset.id)">' +
+    '<span class="hist-saved-meta">' + esc(histFavoriteMeta(b)) + '</span><span class="hist-saved-preview">' +
+    hl(histFavoritePreview(b, words, lower), hist.query) + "</span>" + ico("right", 16) + "</button>";
+}
+function renderHistFavoriteReader(b) {
   const md = !b.excerpt && b.kind === "it";
-  return '<article class="hist-saved"><div class="hist-saved-head"><span>' + esc(meta) + '</span><div class="hm-actions">' +
-    btn("定位原消息", "openHistFavorite(" + index + ")", "ghost xs") +
-    btn(ico("starOn", 15), "removeHistFavorite(" + index + ",this)", "ghost xs hist-star-saved", "取消收藏", 'aria-label="取消收藏"') +
-    '</div></div><div class="hist-saved-text ' + (md ? "md" : "tx") + '">' + (md ? mdHtml(b.text) : esc(b.text)) + "</div></article>";
+  histReaderBar.innerHTML = btn("‹ 返回列表", "backHistFavorites()", "ghost sm") + '<div class="hist-links">' +
+    btn("定位原消息" + ico("open"), "openHistFavorite()", "sec sm") +
+    btn(ico("starOn", 15), "removeHistFavorite(this)", "ghost icon", "取消收藏", 'aria-label="取消收藏"') + "</div>";
+  histBody.innerHTML = '<article class="hist-reader"><header class="hist-reader-head"><h3>' + esc(histFavoriteTitle(b)) +
+    '</h3><div class="hist-saved-meta">' + esc(histFavoriteMeta(b)) + '</div></header><div class="hist-saved-text ' +
+    (md ? "md" : "tx") + '">' + (md ? mdHtml(b.text) : esc(b.text)) + "</div></article>";
+  if (hist.query) markIn(histBody.querySelector(".hist-saved-text"), hist.query);
+}
+function renderHistSaved(reset = false) {
+  clearTimeout(histFindTimer); histFindTimer = 0;
+  const h = hist, notice = histLoadNotice(h);
+  let top = reset ? 0 : histBody.scrollTop;
+  const groups = histFavoriteGroups(h.favorites);
+  if (!groups.has(h.favoriteSession)) h.favoriteSession = "";
+  renderHistFavoriteSessions(groups);
+  const b = !notice && h.favorites.find(b => b.id === h.favoriteId);
+  histReaderBar.hidden = !b;
+  if (b) renderHistFavoriteReader(b);
+  else {
+    histReaderBar.replaceChildren();
+    const removed = !!h.favoriteId && !notice;
+    if (removed) h.favoriteId = "";
+    const words = qWords(h.query).map(w => w.toLowerCase());
+    let html = "", count = 0, sessions = 0;
+    for (const [key, g] of groups) {
+      if (h.favoriteSession && key !== h.favoriteSession) continue;
+      const title = g.title.toLowerCase();
+      const rows = [];
+      for (const b of g.items) {
+        const lower = words.length ? b.text.toLowerCase() : "";
+        if (words.every(w => lower.includes(w) || title.includes(w))) rows.push(histFavoriteRow(b, words, lower));
+      }
+      if (!rows.length) continue;
+      count += rows.length; sessions++;
+      html += '<section class="hist-saved-group"><h3><span>' + hl(g.title, h.query) +
+        '</span><span class="hist-saved-meta mono">' + g.tool + " · " + num(rows.length) + ' 条</span></h3><div class="hist-saved-rows">' + rows.join("") + "</div></section>";
+    }
+    const empty = groups.size ? "没有符合当前筛选的收藏消息。" : "还没有收藏的消息。";
+    histBody.innerHTML = notice || '<div class="hist-saved-list"><div class="hist-saved-total" role="status">' +
+      (words.length ? "找到 " : "") + num(count) + " 条收藏" + (sessions > 1 ? " · " + num(sessions) + " 个会话" : "") +
+      "</div>" + (html || '<span class="lmore">' + empty + "</span>") + "</div>";
+    if (removed) {
+      top = h.favoriteListTop;
+      histBody.focus({ preventScroll: true });
+    }
+  }
+  h.matches = [];
+  showHistMatch(false);
+  histBody.scrollTop = top;
 }
 function histAnchor(h) {
   if (!h.hit || !h.items) return null;
@@ -2812,30 +2989,41 @@ function histMsg(m, at, lost, who) {
     btn(ico("copy", 13) + "复制", "copyClip(" + clip(m.text) + ")", "ghost xs cp") + star + "</div></div>" +
     (you ? '<div class="tm-b you"><div class="tx">' + esc(m.text) + "</div>" + imgs + "</div>" : '<div class="tm-b md">' + mdHtml(m.text) + "</div>") + "</div>";
 }
+function histLoadNotice(h) {
+  if (h.loading && !h.items) return '<span class="lmore">读取' + (h.saved ? "收藏的消息" : "对话记录") + "…</span>";
+  if (h.failed) return '<div class="lbar"><span class="lmore">本机服务暂时没取到记录</span>' + btn("重试", "loadHist()", "sec sm") + "</div>";
+  return "";
+}
 function renderHist() {
   const h = hist;
   if (!h) return;
+  document.getElementById("hist").classList.toggle("hist-favorites", h.saved);
   const it = findItem(h.key), title = it ? it.title : h.title || "（未命名会话）", who = h.key.startsWith("codex:") ? "Codex" : "Claude", k = clip(h.key);
   const seg = h.key ? '<div class="seg src" role="group" aria-label="筛选">' +
     '<button type="button" aria-pressed="' + (!h.saved && !h.only) + '" onclick="setHistOnly(false)">全部' + (h.items ? '<span class="n">' + num(h.you + h.it) + "</span>" : "") + "</button>" +
     '<button type="button" aria-pressed="' + (!h.saved && h.only) + '" onclick="setHistOnly(true)">只看我说的' + (h.items ? '<span class="n">' + num(h.you) + "</span>" : "") + "</button></div>" : "";
   const links = h.key ? btn("查看本会话产出物", "goHistOutputs()", "pri sm") +
     btn("打开会话" + ico("open"), "openSession(clips[" + k + "],this)", "ghost sm") : "";
-  document.getElementById("hist-h").innerHTML = '<div class="hist-t"><h2 id="hist-t">' + (h.key ? "对话历史" : "收藏的消息") + "</h2>" +
+  document.getElementById("hist-h").innerHTML = '<div class="hist-t"><h2 id="hist-t">' + (h.saved ? "收藏的消息" : "对话历史") + "</h2>" +
     (h.key ? '<p title="' + esc(title) + '">' + esc(title) + "</p>" : "") + '</div><div class="hist-acts">' + seg + '<div class="hist-links">' +
     links + btn(ico("close", 16), "closeHist()", "ghost icon", "关闭（Esc）", 'aria-label="关闭"') + "</div></div>";
-  const searchLabel = h.saved ? "搜索收藏的消息" : "搜索对话全文";
-  histQuery.placeholder = searchLabel; histQuery.setAttribute("aria-label", searchLabel);
+  histQuery.placeholder = h.saved ? "搜索收藏的正文或会话名" : "搜索对话全文";
+  histQuery.setAttribute("aria-label", h.saved ? "搜索收藏的消息" : "搜索对话全文");
+  document.getElementById("hist-clear").setAttribute("aria-label", h.saved ? "清空收藏搜索" : "清空对话搜索");
   document.getElementById("hist-foot").hidden = h.saved;
   document.getElementById("hist-selection").hidden = true;
+  if (h.saved) {
+    renderHistSaved(h.scroll);
+    updateHistFavoriteControls();
+    if (!histLoadNotice(h)) { h.scroll = false; h.position = null; }
+    return;
+  }
+  histSessions.hidden = true;
+  histReaderBar.hidden = true;
   const top = histBody.scrollTop, atEnd = histBody.scrollHeight - top - histBody.clientHeight < 40;
-  const position = h.position || (!h.saved && !h.scroll ? histReadingPosition() : null);
-  let html = "";
-  if (h.loading && !h.items) html = '<span class="lmore">读取' + (h.saved ? "收藏的消息" : "对话记录") + "…</span>";
-  else if (h.failed) html = '<div class="lbar"><span class="lmore">本机服务暂时没取到记录</span>' + btn("重试", "loadHist()", "sec sm") + "</div>";
-  else if (h.saved) {
-    html = h.favorites.map(histFavoriteRow).join("") || '<span class="lmore">还没有收藏的消息。</span>';
-  } else {
+  const position = h.position || (!h.scroll ? histReadingPosition() : null);
+  let html = histLoadNotice(h);
+  if (!html) {
     const f = histAnchor(h), all = f ? f.items : h.items || [], hitM = f && all[f.at];
     const list = all.filter(m => !h.only || m.kind === "you");
     const note = f && f.lost ? (h.hit.favorite ? "下方显示收藏时保留的内容。" : "下方标出的是台账保存的命中片段。") :
@@ -2861,7 +3049,6 @@ function renderHist() {
   h.scroll = false;
   h.position = null;
   if (findOnOpen && h.matches.length) return;
-  if (h.saved) { histBody.scrollTop = opening ? 0 : top; return; }
   if (position && (opening || !atEnd)) return restoreHistPosition(position);
   const at = opening && histBody.querySelector(".hmsg.at");
   if (!at) { histBody.scrollTop = opening || atEnd ? histBody.scrollHeight : top; return; }
