@@ -160,6 +160,7 @@ kbd.k.lg { min-width: 22px; height: 22px; padding: 0 6px; border-radius: 6px; fo
 .dnav button:hover { color: var(--bk-ink-1); background: var(--bk-sunken); }
 .dnav button[aria-current="true"] { background: var(--bk-sunken); color: var(--bk-ink-1); font-weight: 600; }
 .dnav button:focus-visible { outline: 2px solid var(--bk-ink-1); outline-offset: -2px; }
+.dnav .dnav-history { display: inline-flex; align-items: center; gap: 6px; }
 [id^="ds-"] { scroll-margin-top: 64px; }
 @media (min-width: 961px) {
   .board { height: 100vh; height: 100dvh; min-height: 0; }
@@ -257,11 +258,13 @@ kbd.k.lg { min-width: 22px; height: 22px; padding: 0 6px; border-radius: 6px; fo
 .row .t { min-width: 0; font-size: 14px; line-height: 20px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .row .w { font: 500 12px/20px var(--bk-mono); color: var(--bk-ink-2); white-space: nowrap; }
 .row .w.hot { color: var(--bk-needs-ink); }
-.row .s { grid-column: 2 / 4; display: flex; align-items: center; gap: 6px; min-width: 0; font-size: 13px; line-height: 18px; color: var(--bk-ink-3); }
+.row .s { grid-column: 2 / 4; display: flex; align-items: center; gap: 6px; min-width: 0; padding-right: 28px; font-size: 13px; line-height: 18px; color: var(--bk-ink-3); }
 .row .s > span:last-child { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 /* 行内快捷操作：悬停或选中时出现在第二行右侧，盖住摘要的尾巴，不挡时间 */
-.racts { position: absolute; right: 6px; bottom: 5px; display: none; gap: 2px; padding-left: 18px; background: linear-gradient(to right, transparent, var(--bk-surface) 16px); }
-.row:hover .racts, .row[aria-current="true"] .racts, .row:focus-within .racts { display: flex; }
+.racts { position: absolute; right: 6px; bottom: 5px; display: flex; align-items: center; gap: 2px; }
+.racts .ra:not([data-hist-open]) { display: none; }
+.row:is(:hover, [aria-current="true"], :focus-within) .racts { padding-left: 18px; background: linear-gradient(to right, transparent, var(--bk-surface) 16px); }
+.row:is(:hover, [aria-current="true"], :focus-within) .racts .ra { display: inline-flex; }
 .ra {
   display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 26px; padding: 0; border: 0; border-radius: 8px;
   background: transparent; color: var(--bk-ink-2); cursor: pointer; transition: background-color .12s, color .12s;
@@ -416,21 +419,42 @@ body.hist-on { overflow: hidden; }
 .hist-t p { margin: 0; font-size: 13px; line-height: 20px; color: var(--bk-ink-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .hist-acts { flex: none; max-width: 100%; display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; }
 .hist-links { display: flex; align-items: center; gap: 4px; }
+.hist-tools, .hist-foot { flex: none; display: flex; align-items: center; gap: 8px; padding: 8px 16px 8px 24px; }
+.hist-tools { flex-wrap: wrap; border-bottom: 1px solid var(--bk-line); }
+.hist-tools .search { flex: 1 1 200px; min-width: 0; height: 36px; padding: 0 8px 0 12px; gap: 8px; }
+.hist-tools .search input { font-size: 13px; }
+.hist-find-nav, .hist-jump, .hm-actions { display: flex; align-items: center; gap: 4px; }
+.hist-find-nav .btn, .hist-clear { width: 28px; padding: 0; }
+.hist-find-nav .btn:disabled { opacity: .4; cursor: default; }
+#hist-find-status { color: var(--bk-ink-3); font: 12px/16px var(--bk-mono); white-space: nowrap; }
+#hist-favs[aria-pressed="true"], .hist-star[aria-pressed="true"] { background: var(--bk-sunken); color: var(--bk-ink-1); }
+.hist-foot { border-top: 1px solid var(--bk-line); }
+.hist-jump { margin-left: auto; }
 .hist-body { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; display: flex; flex-direction: column; gap: 24px; padding: 16px 24px 48px; }
 .hist-body:focus { outline: none; }
 .hist-body > * { flex: none; }
 .hmsg.you { align-items: flex-end; }
 .hmsg.you .tm-h .who { order: 3; }
-.hmsg.you .tm-h .cp { order: 1; margin-left: 0; }
+.hm-actions { margin-left: auto; }
+.hmsg.you .hm-actions { order: 1; margin-left: 0; }
 .hmsg.you .tm-h > span:not(.who) { order: 2; }
 .hmsg.you .tm-b.you { max-width: 86%; border-radius: 14px 14px 4px 14px; background: var(--bk-sunken); box-shadow: none; }
 .hmsg.at { margin: -12px; padding: 12px; border-radius: 14px; background: var(--bk-subtle); box-shadow: var(--bk-on); }
+.hist-star { width: 28px; padding: 0; color: var(--bk-ink-3); }
+.hist-body .hist-current { outline: 2px solid var(--bk-ink-2); outline-offset: 2px; border-radius: 4px; }
+.hist-saved { display: grid; gap: 8px; padding: 12px; border: 1px solid var(--bk-line); border-radius: 12px; }
+.hist-saved-head { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; color: var(--bk-ink-3); font-size: 12px; line-height: 16px; }
+.hist-saved-head .hm-actions { flex-wrap: wrap; }
+.hist-saved-text.tx { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 14px; line-height: 22px; }
 @media (max-width: 640px) {
   .hist-panel { width: 100vw; }
   .hist-h { padding: 12px 12px 12px 16px; }
   .hist-acts { flex: 1 1 100%; }
   .hist-acts .seg { margin-right: auto; }
   .hist-body { padding: 12px 16px 40px; }
+  .hist-tools, .hist-foot { padding: 8px 12px 8px 16px; }
+  .hist-tools .search, .hist-find-nav .btn, .hist-clear, .hist-star { min-height: 40px; }
+  .hist-find-nav .btn, .hist-clear, .hist-star { width: 40px; }
   .hmsg.you .tm-b.you { max-width: 94%; }
   .hmsg .tm-b.md { padding-left: 0; }
 }
@@ -685,6 +709,8 @@ mark { background: var(--bk-lime-mark); color: #1B2026; border-radius: 3px; box-
   .btn, .tab, .opt, .seg.src button, .dnav button, .rof-tree .ri, .rof-tree .ra, .rfav-head .rsec, .rsec.rfavs, .of-edit .lfilter, .out-session-menu button { min-height: 40px; }
   .of-edit { padding: 16px; }
   .dq .dctx { margin-left: 0; }
+  .row .s { min-height: 32px; padding-right: 40px; }
+  .racts [data-hist-open] { width: 40px; height: 40px; }
   .kbd-hints, kbd.k { display: none !important; }
   .btn.sec.searchbtn { width: auto; flex: 1; }
   .hline { flex-wrap: wrap; }
@@ -788,7 +814,30 @@ mark { background: var(--bk-lime-mark); color: #1B2026; border-radius: 3px; box-
 
 <div class="hist" id="hist" role="dialog" aria-modal="true" aria-labelledby="hist-t" hidden>
   <div class="hist-scrim" onclick="closeHist()"></div>
-  <aside class="hist-panel"><div class="hist-h" id="hist-h"></div><div class="hist-body" id="hist-body" tabindex="-1"></div></aside>
+  <aside class="hist-panel">
+    <div class="hist-h" id="hist-h"></div>
+    <div class="hist-tools">
+      <div class="search">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+        <input id="hist-q" type="search" maxlength="240" autocomplete="off" aria-label="搜索对话全文" placeholder="搜索对话全文" oninput="searchHist(this.value)">
+        <button type="button" class="btn ghost xs hist-clear" id="hist-clear" aria-label="清空对话搜索" hidden onclick="clearHistSearch()">×</button>
+      </div>
+      <div class="hist-find-nav" id="hist-find-nav" role="group" aria-label="搜索命中" hidden>
+        <span id="hist-find-status" role="status"></span>
+        <button type="button" class="btn ghost xs" id="hist-prev" aria-label="上一处" title="上一处（Shift+Enter）" onclick="stepHistMatch(-1)">↑</button>
+        <button type="button" class="btn ghost xs" id="hist-next" aria-label="下一处" title="下一处（Enter）" onclick="stepHistMatch(1)">↓</button>
+      </div>
+      <button type="button" class="btn sec sm" id="hist-favs" aria-pressed="false" onclick="toggleHistSaved()">收藏<span id="hist-favs-count" class="mono"></span></button>
+    </div>
+    <div class="hist-body" id="hist-body" tabindex="-1"></div>
+    <div class="hist-foot" id="hist-foot">
+      <button type="button" class="btn sec sm" id="hist-selection" hidden onpointerdown="event.preventDefault()" onclick="saveHistSelection(this)">收藏选中文字</button>
+      <div class="hist-jump" role="group" aria-label="跳转对话首尾">
+        <button type="button" class="btn ghost sm" onclick="jumpHistEnd(false)" aria-label="跳到对话开头">↑ 开头</button>
+        <button type="button" class="btn ghost sm" onclick="jumpHistEnd(true)" aria-label="跳到对话结尾">↓ 结尾</button>
+      </div>
+    </div>
+  </aside>
 </div>
 <dialog class="of-edit" id="out-fav-editor" aria-labelledby="of-title" oncancel="if (outFavFields.inputs.disabled) event.preventDefault()">
   <h2 id="of-title">改收藏分类</h2>
@@ -891,7 +940,7 @@ function esc(s) {
 function clip(text) { clips[++clipN] = text; return clipN; }
 function domId(key) { return String(key).replace(/[^a-zA-Z0-9]/g, ""); }
 function selecting() { return !!String(window.getSelection()); }
-function typing() { const el = document.activeElement; return !!(el && el.matches(".reply textarea, .tagpop input, .tagpop select, .menu input, .lfilter")); }
+function typing() { const el = document.activeElement; return !!(el && el.matches(".reply textarea, .tagpop input, .tagpop select, .menu input, .lfilter, #hist-q")); }
 function ime(e) { return e.isComposing || e.keyCode === 229; }   // 中文输入法还在选字：回车是上屏、Esc 是取消，不算提交
 function num(n) { return Number(n || 0).toLocaleString("en-US"); }
 
@@ -934,6 +983,7 @@ const ICONS = {
   right: '<path d="m9 18 6-6-6-6"/>', close: '<path d="M6 6l12 12M18 6 6 18"/>', plus: '<path d="M12 5v14M5 12h14"/>',
   star: '<path d="M12 3.8l2.5 5.1 5.6.8-4 3.9.9 5.6-5-2.6-5 2.6.9-5.6-4-3.9 5.6-.8z"/>',
   starOn: '<path fill="currentColor" d="M12 3.8l2.5 5.1 5.6.8-4 3.9.9 5.6-5-2.6-5 2.6.9-5.6-4-3.9 5.6-.8z"/>',
+  chat: '<path d="M5 4.5h14a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2h-7l-5 3v-3H5a2 2 0 0 1-2-2v-8a2 2 0 0 1 2-2Z"/><path d="M8 9h8m-8 3h5"/>',
   railL: '<rect x="3.5" y="4.5" width="17" height="15" rx="2.5"/><path d="M9.5 4.5v15"/><path d="m16 10-2 2 2 2"/>'
 };
 function ico(name, size, sw) {
@@ -1422,6 +1472,7 @@ function renderRail() {
   html += '<button type="button" class="rsec rfavs" id="chat-fav-toggle" aria-expanded="' + favOpen + '" onclick="toggleFavs()">' +
     ico(favOpen ? "down" : "right", 14) + '<span>收藏的对话</span><span class="n">' + num(favs.length) + "</span></button>";
   if (favOpen) {
+    html += '<button type="button" class="ri fav" aria-haspopup="dialog" onclick="openHist()">' + ico("star", 14) + '<span class="nm">收藏的消息</span></button>';
     html += favGroups(favs).map(g => (g.label ? '<div class="rfg" title="' + esc(g.label) + '">' + esc(g.label) + "</div>" : "") + g.items.map(x => '<div class="rt">' +
       '<button type="button" class="ri fav" data-key="' + esc(x.key) + '" title="' + esc(x.title) + (x.onBoard ? "" : "（点一下打开会话）") +
       '" onclick="goFav(this.dataset.key)">' + toolChip(x) + '<span class="nm">' + esc(x.title) + "</span></button>" +
@@ -2094,7 +2145,7 @@ function row(it, i) {
     (oldAsksOf(it).length ? '<span class="chip sm ask" title="它之前问过、你还没答的事，详情里能接着选">' + oldAsksOf(it).length + " 件没答</span>" : "") +
     (ctxHot(it) ? '<span class="chip sm" title="上下文快满了：这件做完换个新会话，省 token">上下文 ' + ctxOf(it) + "%</span>" : "") +
     "<span>" + esc(shortOf(it)) + "</span></span>" +
-    '<span class="racts">' + acts + "</span></div>";
+    '<span class="racts">' + acts + ra(ico("chat", 15), "openHist('" + k + "')", "查看对话历史", ' data-hist-open aria-haspopup="dialog"') + "</span></div>";
 }
 function pick(key) {
   if (selecting()) return;
@@ -2227,19 +2278,19 @@ function renderDetail() {
   const secs = [
     ["reply", decisionsOf(it).length ? (todoOf(it) ? "要你做、待你决定" : "待你决定") : todoOf(it) ? "要你做" : oldAsksOf(it).length ? "没答的" : "推它一下", replyBox(it)],
     ["calls", "替你定的", callsSec(it)],
-    ["convo", "对话", convo(it)],
+    ["convo", "对话"],
     ["handoff", "上下文压缩", handoffSec(it)],
     ["out", "产出物", outSec(it)],
     ["mr", "MR", mrSec(it)],
     ["info", "会话信息", infoSec(it)],
-  ].filter(s => s[2]);
-  if (secs.length >= 3) html += dnav(secs);
-  html += secs.map(s => s[2].replace("<div ", '<div id="ds-' + s[0] + '" ')).join("");
+  ].filter(s => s[2] || s[0] === "convo");
+  html += dnav(secs, it.key);
+  html += secs.filter(s => s[2]).map(s => s[2].replace("<div ", '<div id="ds-' + s[0] + '" ')).join("");
   el.innerHTML = '<div class="detail-in">' + html + "</div>";
   fitText(document.getElementById("rtext"));
   if (jumpTo && Date.now() < spyHold) goJump(); else spySec();   // 平滑滚动途中重画了（松开鼠标时补画、定时刷新）：接着滚过去
   hitSpot();
-  if (hist && !hist.loading && hist.key === selKey && hist.ts !== histSig(hist.key)) loadHist(true);   // 又说了新的：悄悄重取
+  if (hist && hist.key && !hist.loading && hist.ts !== histSig(hist.key)) loadHist(true);   // 又说了新的：悄悄重取
 }
 // 详情顶上的概要：它现在什么状态、下一步是什么、这个会话的目标，一眼看完。状态的解释放在悬停提示里，要你特别处理的才直接写出来
 const INK = { wait: "needs", stuck: "needs", alarm: "needs", run: "run", review: "review", timer: "timer", peer: "peer" };
@@ -2262,9 +2313,10 @@ function sumCard(it) {
   return html + "</div>";
 }
 // 详情的页内导航：点一下滚到那一段；滚动时标出看到哪一段
-function dnav(secs) {
-  return '<nav class="dnav" aria-label="跳到">' + secs.map(s =>
-    '<button type="button" data-to="ds-' + s[0] + '" aria-current="false" onclick="jumpSec(this.dataset.to)">' + s[1] + "</button>").join("") + "</nav>";
+function dnav(secs, key) {
+  return '<nav class="dnav" aria-label="会话详情导航">' + secs.map(([id, label]) => id === "convo"
+    ? btn(ico("chat", 14) + label, "openHist(clips[" + clip(key) + "])", "dnav-history", "在侧栏查看对话历史", 'aria-haspopup="dialog"')
+    : '<button type="button" data-to="ds-' + id + '" aria-current="false" onclick="jumpSec(this.dataset.to)">' + label + "</button>").join("") + "</nav>";
 }
 let spyHold = 0, jumpTo = null;
 function jumpSec(id) {
@@ -2276,12 +2328,12 @@ function goJump() {
   const el = document.getElementById(jumpTo);
   if (!el) return;
   el.scrollIntoView({ behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth", block: "start" });
-  document.querySelectorAll(".dnav button").forEach(x => x.setAttribute("aria-current", x.dataset.to === jumpTo));
+  document.querySelectorAll(".dnav button[data-to]").forEach(x => x.setAttribute("aria-current", x.dataset.to === jumpTo));
 }
 function spySec() {
   const nav = document.querySelector(".dnav");
   if (!nav || Date.now() < spyHold) return;
-  const bs = [...nav.querySelectorAll("button")], line = nav.getBoundingClientRect().bottom + 16;
+  const bs = [...nav.querySelectorAll("button[data-to]")], line = nav.getBoundingClientRect().bottom + 16;
   const box = document.getElementById("detail"), own = box.scrollHeight > box.clientHeight + 1;
   const bottom = own ? box.scrollTop + box.clientHeight >= box.scrollHeight - 2 : innerHeight + scrollY >= document.documentElement.scrollHeight - 2;
   let cur = bs[0];
@@ -2488,24 +2540,55 @@ async function loadAll(key) {
 }
 // 对话历史：右边滑出的侧边栏，专心读完整段对话：你说的每一句（和「我说过的话」同一份）加上它每一轮最后的回复，按时间排，一路滚到底。
 // 从「看全部对话」打开时停在最新一条；从搜索结果打开时停在命中的那一条，搜索词标亮
-let hist = null;   // { key, title, hit, only, items, you, it, ts, loading, scroll, back }
+let hist = null, histReadTimer = 0, histFindTimer = 0;
+const histBody = document.getElementById("hist-body"), histQuery = document.getElementById("hist-q");
 function histSig(key) { const it = findItem(key); return it ? it.details.replyTs + "|" + it.details.promptTs : ""; }
 function histInert(on) { ["view-board", "view-history"].forEach(id => { document.getElementById(id).inert = on; }); }
-function openHist(key, hit, title) {
-  hist = { key, title: title || "", hit: hit || null, only: false, loading: true, scroll: true, ts: histSig(key), back: document.activeElement };
+function histReadingPosition() {
+  const top = histBody.getBoundingClientRect().top;
+  const anchor = [...histBody.querySelectorAll(".hmsg[data-message-id]")].find(m => m.getBoundingClientRect().bottom > top);
+  return anchor ? { id: anchor.dataset.messageId, offset: anchor.getBoundingClientRect().top - top, top: histBody.scrollTop } : null;
+}
+function rememberHistPosition() {
+  if (!hist || !hist.key || hist.saved) return;
+  const position = histReadingPosition();
+  if (position) store("ledger.hist.pos." + hist.key, position);
+}
+function restoreHistPosition(position) {
+  const anchor = [...histBody.querySelectorAll(".hmsg[data-message-id]")].find(m => m.dataset.messageId === position.id);
+  if (anchor) histBody.scrollTop += anchor.getBoundingClientRect().top - histBody.getBoundingClientRect().top - position.offset;
+  else histBody.scrollTop = position.top || 0;
+}
+function jumpHistEnd(end) {
+  histBody.scrollTop = end ? histBody.scrollHeight : 0;
+  rememberHistPosition();
+}
+function openHist(key = "", hit = null, title = "") {
+  rememberHistPosition();
+  clearTimeout(histReadTimer);
+  clearTimeout(histFindTimer); histFindTimer = 0;
+  closeMenu();
+  const back = hist ? hist.back : document.activeElement;
+  const position = key && !hit ? store("ledger.hist.pos." + key) : null;
+  hist = { key, title, hit, position, back, only: false, saved: !key, favorites: [], loading: true, scroll: true,
+    query: "", matches: [], matchIndex: 0, ts: histSig(key) };
+  histQuery.value = "";
   document.getElementById("hist").hidden = false;
   document.body.classList.add("hist-on");
   histInert(true);
   renderHist();
-  document.getElementById("hist-body").focus({ preventScroll: true });   // 上下键、空格直接滚对话
+  histBody.focus({ preventScroll: true });   // 上下键、空格直接滚对话
   loadHist();
 }
 function closeHist() {
   if (!hist) return;
+  rememberHistPosition();
+  clearTimeout(histReadTimer);
+  clearTimeout(histFindTimer); histFindTimer = 0;
   const back = hist.back;
   hist = null;
   document.getElementById("hist").hidden = true;
-  document.getElementById("hist-body").innerHTML = "";
+  histBody.innerHTML = "";
   document.body.classList.remove("hist-on");
   histInert(false);
   if (back && back.isConnected) back.focus({ preventScroll: true });
@@ -2531,79 +2614,259 @@ function goHistOutputs() {
 async function loadHist(quiet) {
   const h = hist;
   if (!h) return;
-  h.ts = histSig(h.key);
+  const sig = histSig(h.key);
+  h.loading = true;
+  const url = h.key ? "/api/transcript?favorites=1&key=" + encodeURIComponent(h.key) : "/api/message-favorites";
   let res = null;
-  try { res = await (await fetch("/api/transcript?key=" + encodeURIComponent(h.key), { cache: "no-store" })).json(); }
-  catch (e) { if (!quiet) toast("没取到对话记录：本机服务没响应"); }
+  try {
+    const r = await fetch(url, { cache: "no-store" });
+    if (!r.ok) throw new Error("HTTP " + r.status);
+    res = await r.json();
+  } catch (e) {}
   if (hist !== h) return;
   h.loading = false;
-  const same = res && h.items && h.items.length === (res.items || []).length;
+  if (quiet && (!res || selecting())) return;
+  h.ts = sig;
+  h.failed = !res;
   if (res) Object.assign(h, { items: res.items || [], you: res.you || 0, it: res.it || 0 });
-  if (quiet && (same || !res || selecting())) return;   // 正在选字时不重画，免得选区没了
+  if (res && !quiet) h.favorites = res.favorites || [];
   renderHist();
 }
 function setHistOnly(on) {
   if (!hist) return;
-  hist.only = on; hist.scroll = true;
+  if (hist.saved) hist.position = store("ledger.hist.pos." + hist.key);
+  else if (hist.only === on) return;
+  hist.only = on; hist.saved = false; hist.scroll = true; hist.matchIndex = 0;
   renderHist();
+}
+function toggleHistSaved() {
+  if (!hist || !hist.key) return;
+  if (hist.saved) return setHistOnly(hist.only);
+  rememberHistPosition();
+  hist.saved = true; hist.scroll = true; hist.matchIndex = 0;
+  renderHist();
+}
+function searchHist(value) {
+  if (!hist) return;
+  hist.query = value.trim();
+  hist.matchIndex = 0;
+  clearTimeout(histFindTimer);
+  histFindTimer = setTimeout(() => applyHistSearch(true), 150);
+}
+function clearHistSearch() {
+  histQuery.value = "";
+  searchHist("");
+  histQuery.focus();
+}
+function applyHistSearch(scroll) {
+  clearTimeout(histFindTimer); histFindTimer = 0;
+  const h = hist;
+  if (!h) return;
+  const marks = histBody.querySelectorAll("mark");
+  marks.forEach(m => m.replaceWith(...m.childNodes));
+  if (marks.length) histBody.normalize();   // 下一个词可以跨过上次高亮拆开的文字
+  histBody.querySelectorAll("a[data-hit]").forEach(a => delete a.dataset.hit);
+  h.matches = [];
+  const words = qWords(h.query).map(w => w.toLowerCase());
+  if (words.length) {
+    for (const body of histBody.querySelectorAll(".hmsg > .tm-b, .hist-saved-text")) {
+      const text = body.textContent.toLowerCase();
+      if (!words.every(w => text.includes(w) || (/^https?:\/\//.test(w) && [...body.querySelectorAll("a[href]")].some(a => a.href.toLowerCase().includes(w))))) continue;
+      markIn(body, h.query);
+      const hits = body.querySelectorAll("mark");
+      h.matches.push(...(hits.length ? hits : [body]));
+    }
+  } else if (h.hit && !h.saved) {
+    const b = h.hit.favorite;
+    if (b && b.excerpt) {
+      const body = histBody.querySelector(".hmsg.at > .tm-b");
+      if (body) markIn(body, b.text.split("\n")[0].trim(), "", true);
+    } else if (!b) markIn(histBody, h.hit.q || "", h.hit.url);
+  }
+  h.matchIndex = Math.max(0, Math.min(h.matchIndex, h.matches.length - 1));
+  showHistMatch(scroll);
+}
+function showHistMatch(scroll) {
+  const h = hist, n = h.matches.length, target = h.matches[h.matchIndex];
+  const prev = histBody.querySelector(".hist-current");
+  if (prev) prev.classList.remove("hist-current");
+  document.getElementById("hist-clear").hidden = !histQuery.value;
+  document.getElementById("hist-find-nav").hidden = !h.query;
+  document.getElementById("hist-prev").disabled = n < 2;
+  document.getElementById("hist-next").disabled = n < 2;
+  document.getElementById("hist-find-status").textContent = n ? num(h.matchIndex + 1) + " / " + num(n) + " 处" : h.loading ? "读取中…" : "无匹配";
+  if (target) {
+    target.classList.add("hist-current");
+    if (scroll) target.scrollIntoView({ block: "center" });
+  }
+}
+function stepHistMatch(delta) {
+  if (!hist) return;
+  if (histFindTimer) return applyHistSearch(true);
+  const n = hist.matches.length;
+  if (!n) return;
+  hist.matchIndex = (hist.matchIndex + delta + n) % n;
+  showHistMatch(true);
+}
+function selectedHistText() {
+  const selection = window.getSelection();
+  if (!hist || hist.saved || !selection || selection.isCollapsed || !selection.rangeCount) return null;
+  const range = selection.getRangeAt(0), node = range.commonAncestorContainer;
+  const element = node.nodeType === Node.ELEMENT_NODE ? node : node.parentElement;
+  const body = element && element.closest(".hmsg[data-message-id] > .tm-b");
+  const text = selection.toString().trim();
+  return body && histBody.contains(body) && text ? { id: body.parentElement.dataset.messageId, text } : null;
+}
+function updateHistFavoriteControls() {
+  const h = hist, button = document.getElementById("hist-favs");
+  button.hidden = !h.key;
+  button.setAttribute("aria-pressed", String(h.saved));
+  document.getElementById("hist-favs-count").textContent = h.favorites.length ? num(h.favorites.length) : "";
+  const full = new Set(h.favorites.filter(b => !b.excerpt).map(b => b.messageId));
+  histBody.querySelectorAll(".hist-star").forEach(el => {
+    const on = full.has(el.closest(".hmsg").dataset.messageId);
+    if (el.getAttribute("aria-pressed") === String(on)) return;
+    el.setAttribute("aria-pressed", String(on));
+    el.title = on ? "取消收藏整条消息" : "收藏整条消息";
+    el.setAttribute("aria-label", el.title);
+    el.innerHTML = ico(on ? "starOn" : "star", 15);
+  });
+}
+async function changeHistFavorite(key, arg, button) {
+  const h = hist;
+  if (!h || h.saving) return;
+  h.saving = true; button.disabled = true;
+  let saved = false;
+  try {
+    const res = await post("message_fav", key, arg);
+    if (!res.ok) return toast(res.message || "收藏操作没成功");
+    saved = true;
+    if (hist === h) {
+      const r = await fetch("/api/message-favorites?key=" + encodeURIComponent(h.key), { cache: "no-store" });
+      if (!r.ok) throw new Error("HTTP " + r.status);
+      const data = await r.json();
+      if (hist !== h) return;
+      h.favorites = data.favorites || [];
+      if (h.saved) renderHist();
+      else updateHistFavoriteControls();
+    }
+    toast(res.message);
+  } catch (e) {
+    toast(saved ? "收藏已更新，重新打开侧栏后可查看" : "操作失败，本机服务没响应");
+  } finally {
+    h.saving = false; button.disabled = false;
+  }
+}
+function saveHistMessage(id, button, selected = "") {
+  const m = hist.items.find(item => item.id === id);
+  if (!m) return;
+  const saved = !selected && hist.favorites.find(b => b.messageId === id && !b.excerpt);
+  changeHistFavorite(hist.key, saved ? { on: false, id: saved.id } :
+    { messageId: id, kind: m.kind, ts: m.ts || 0, text: selected || m.text, excerpt: !!selected }, button);
+}
+function saveHistSelection(button) {
+  const selected = selectedHistText();
+  if (selected) saveHistMessage(selected.id, button, selected.text);
+}
+function openHistFavorite(index) {
+  const b = hist.favorites[index];
+  if (b) openHist(b.sessionKey, { favorite: b }, b.title);
+}
+function removeHistFavorite(index, button) {
+  const b = hist.favorites[index];
+  if (b) changeHistFavorite(b.sessionKey, { on: false, id: b.id }, button);
+}
+function histFavoriteRow(b, index) {
+  const source = b.kind === "you" ? "你" : b.sessionKey.startsWith("codex:") ? "Codex" : "Claude";
+  const meta = [!hist.key && b.title, source, b.ts && when(b.ts), b.excerpt ? "片段" : "整条消息"].filter(Boolean).join(" · ");
+  const md = !b.excerpt && b.kind === "it";
+  return '<article class="hist-saved"><div class="hist-saved-head"><span>' + esc(meta) + '</span><div class="hm-actions">' +
+    btn("定位原消息", "openHistFavorite(" + index + ")", "ghost xs") +
+    btn(ico("starOn", 15), "removeHistFavorite(" + index + ",this)", "ghost xs hist-star-saved", "取消收藏", 'aria-label="取消收藏"') +
+    '</div></div><div class="hist-saved-text ' + (md ? "md" : "tx") + '">' + (md ? mdHtml(b.text) : esc(b.text)) + "</div></article>";
+}
+function histAnchor(h) {
+  if (!h.hit || !h.items) return null;
+  const b = h.hit.favorite;
+  if (!b) return ctxFind(h.items, h.hit);
+  const index = h.items.findIndex(m => m.id === b.messageId);
+  if (index >= 0) return { items: h.items, at: index };
+  const later = h.items.findIndex(m => m.ts > b.ts);
+  const at = later < 0 ? h.items.length : later;
+  const saved = { kind: b.kind, ts: b.ts, text: b.text };
+  return { items: h.items.slice(0, at).concat([saved], h.items.slice(at)), at, lost: true };
 }
 function histMsg(m, at, lost, who) {
   if (m.kind === "handoff") return '<div class="tm-ho"><span>' + esc(hm(m.ts)) + " 上下文满了，压缩过一次</span></div>";
   const you = m.kind === "you", kind = at && hist.hit && NOTE_KIND[hist.hit.kind];
-  const tag = at ? (lost ? "台账记下的" : "搜到的" + (kind ? "「" + kind[0] + "」" : "")) + (m.ts ? " · " : "") : "";
+  const tag = at ? (hist.hit.favorite ? (lost ? "收藏时保存的" : "收藏的原消息") :
+    lost ? "台账记下的" : "搜到的" + (kind ? "「" + kind[0] + "」" : "")) + (m.ts ? " · " : "") : "";
   const imgs = (m.images || []).length ? '<div class="thumbs">' + m.images.map(f =>
     '<a href="/img/' + esc(f) + '" target="_blank" rel="noopener"><img src="/img/' + esc(f) + '" loading="lazy" alt=""></a>').join("") + "</div>" : "";
-  return '<div class="tm hmsg ' + (you ? "you" : "it") + (at ? " at" : "") + '"><div class="tm-h">' +
+  const star = m.id && m.text && m.text.trim() ? btn(ico("star", 15), "saveHistMessage(this.closest('.hmsg').dataset.messageId,this)",
+    "ghost xs hist-star", "收藏整条消息", 'aria-label="收藏整条消息" aria-pressed="false"') : "";
+  return '<div class="tm hmsg ' + (you ? "you" : "it") + (at ? " at" : "") + '"' +
+    (m.id ? ' data-message-id="' + esc(m.id) + '"' : "") + '><div class="tm-h">' +
     (you ? '<span class="who you">你</span>' : face("mark", 20) + '<span class="who">' + esc(who) + "</span>") +
-    "<span>" + esc(tag) + (m.ts ? esc(hm(m.ts)) : "") + "</span>" + btn(ico("copy", 13) + "复制", "copyClip(" + clip(m.text) + ")", "ghost xs cp") + "</div>" +
+    "<span>" + esc(tag) + (m.ts ? esc(hm(m.ts)) : "") + '</span><div class="hm-actions">' +
+    btn(ico("copy", 13) + "复制", "copyClip(" + clip(m.text) + ")", "ghost xs cp") + star + "</div></div>" +
     (you ? '<div class="tm-b you"><div class="tx">' + esc(m.text) + "</div>" + imgs + "</div>" : '<div class="tm-b md">' + mdHtml(m.text) + "</div>") + "</div>";
 }
 function renderHist() {
   const h = hist;
   if (!h) return;
   const it = findItem(h.key), title = it ? it.title : h.title || "（未命名会话）", who = h.key.startsWith("codex:") ? "Codex" : "Claude", k = clip(h.key);
-  const seg = '<div class="seg src" role="group" aria-label="筛选">' +
-    '<button type="button" aria-pressed="' + !h.only + '" onclick="setHistOnly(false)">全部' + (h.items ? '<span class="n">' + num((h.you || 0) + (h.it || 0)) + "</span>" : "") + "</button>" +
-    '<button type="button" aria-pressed="' + h.only + '" onclick="setHistOnly(true)">只看我说的' + (h.items ? '<span class="n">' + num(h.you || 0) + "</span>" : "") + "</button></div>";
-  document.getElementById("hist-h").innerHTML = '<div class="hist-t"><h2 id="hist-t">对话历史</h2><p title="' + esc(title) + '">' + esc(title) + "</p></div>" +
-    '<div class="hist-acts">' + seg + '<div class="hist-links">' +
-    btn("查看本会话产出物", "goHistOutputs()", "pri sm") +
-    btn("打开会话" + ico("open"), "openSession(clips[" + k + "],this)", "ghost sm") +
-    btn(ico("close", 16), "closeHist()", "ghost icon", "关闭（Esc）", 'aria-label="关闭"') + "</div></div>";
-  const box = document.getElementById("hist-body");
-  if (h.loading && !h.items) { box.innerHTML = '<span class="lmore">读取对话记录…</span>'; return; }
-  const f = h.hit && h.items ? ctxFind(h.items, h.hit) : null, all = f ? f.items : h.items || [], hitM = f && all[f.at];
-  const list = all.filter(m => !h.only || m.kind === "you");
-  const top = box.scrollTop, atEnd = box.scrollHeight - top - box.clientHeight < 40;
-  let html = '<span class="sec-l">' + (f && f.lost ? "这一轮的原文读不到了（Claude Code 默认只留 30 天对话记录），标出来的那条是台账记下的。" : "你说的每一句都在；它的只列每一轮最后的回复，中间干活的过程不列。") + "</span>", day = null;
-  if (!list.length) html += '<span class="lmore">' + (h.only ? "台账里没记到你在这个会话里说的话。" : "没读到这个会话的对话记录。") + "</span>";
-  list.forEach(m => {
-    if (m.ts && dayNo(m.ts) !== day) {
-      day = dayNo(m.ts);
-      const diff = day - dayNo(nowTs());
-      html += '<div class="tm-ho"><span>' + (diff === 0 ? "今天 " : diff === -1 ? "昨天 " : "") + md(m.ts) + " " + week(m.ts) + "</span></div>";
+  const seg = h.key ? '<div class="seg src" role="group" aria-label="筛选">' +
+    '<button type="button" aria-pressed="' + (!h.saved && !h.only) + '" onclick="setHistOnly(false)">全部' + (h.items ? '<span class="n">' + num(h.you + h.it) + "</span>" : "") + "</button>" +
+    '<button type="button" aria-pressed="' + (!h.saved && h.only) + '" onclick="setHistOnly(true)">只看我说的' + (h.items ? '<span class="n">' + num(h.you) + "</span>" : "") + "</button></div>" : "";
+  const links = h.key ? btn("查看本会话产出物", "goHistOutputs()", "pri sm") +
+    btn("打开会话" + ico("open"), "openSession(clips[" + k + "],this)", "ghost sm") : "";
+  document.getElementById("hist-h").innerHTML = '<div class="hist-t"><h2 id="hist-t">' + (h.key ? "对话历史" : "收藏的消息") + "</h2>" +
+    (h.key ? '<p title="' + esc(title) + '">' + esc(title) + "</p>" : "") + '</div><div class="hist-acts">' + seg + '<div class="hist-links">' +
+    links + btn(ico("close", 16), "closeHist()", "ghost icon", "关闭（Esc）", 'aria-label="关闭"') + "</div></div>";
+  const searchLabel = h.saved ? "搜索收藏的消息" : "搜索对话全文";
+  histQuery.placeholder = searchLabel; histQuery.setAttribute("aria-label", searchLabel);
+  document.getElementById("hist-foot").hidden = h.saved;
+  document.getElementById("hist-selection").hidden = true;
+  const top = histBody.scrollTop, atEnd = histBody.scrollHeight - top - histBody.clientHeight < 40;
+  const position = h.position || (!h.saved && !h.scroll ? histReadingPosition() : null);
+  let html = "";
+  if (h.loading && !h.items) html = '<span class="lmore">读取' + (h.saved ? "收藏的消息" : "对话记录") + "…</span>";
+  else if (h.failed) html = '<div class="lbar"><span class="lmore">本机服务暂时没取到记录</span>' + btn("重试", "loadHist()", "sec sm") + "</div>";
+  else if (h.saved) {
+    html = h.favorites.map(histFavoriteRow).join("") || '<span class="lmore">还没有收藏的消息。</span>';
+  } else {
+    const f = histAnchor(h), all = f ? f.items : h.items || [], hitM = f && all[f.at];
+    const list = all.filter(m => !h.only || m.kind === "you");
+    const note = f && f.lost ? (h.hit.favorite ? "下方显示收藏时保留的内容。" : "下方标出的是台账保存的命中片段。") :
+      "可搜索你说的话和 AI 每轮最后的回复。点星标收藏整条消息，选中文字可收藏片段。";
+    html = '<span class="sec-l">' + note + "</span>";
+    if (!list.length) html += '<span class="lmore">' + (h.only ? "台账里没记到你在这个会话里说的话。" : "没读到这个会话的对话记录。") + "</span>";
+    let day = null;
+    for (const m of list) {
+      if (m.ts && dayNo(m.ts) !== day) {
+        day = dayNo(m.ts);
+        const diff = day - dayNo(nowTs());
+        html += '<div class="tm-ho"><span>' + (diff === 0 ? "今天 " : diff === -1 ? "昨天 " : "") + md(m.ts) + " " + week(m.ts) + "</span></div>";
+      }
+      html += histMsg(m, m === hitM, f && f.lost, who);
     }
-    html += histMsg(m, m === hitM, f && f.lost, who);
-  });
-  box.innerHTML = html;
-  if (h.hit) markIn(box, h.hit.q || "", h.hit.url);
-  if (!h.scroll) { box.scrollTop = atEnd ? box.scrollHeight : top; return; }
+  }
+  histBody.innerHTML = html;
+  updateHistFavoriteControls();
+  const findOnOpen = h.scroll && !!h.query;
+  applyHistSearch(findOnOpen);
+  if ((h.loading && !h.items) || h.failed) return;
+  const opening = h.scroll;
   h.scroll = false;
-  const at = box.querySelector(".hmsg.at");
-  if (!at) { box.scrollTop = box.scrollHeight; return; }
+  h.position = null;
+  if (findOnOpen && h.matches.length) return;
+  if (h.saved) { histBody.scrollTop = opening ? 0 : top; return; }
+  if (position && (opening || !atEnd)) return restoreHistPosition(position);
+  const at = opening && histBody.querySelector(".hmsg.at");
+  if (!at) { histBody.scrollTop = opening || atEnd ? histBody.scrollHeight : top; return; }
   const ms = at.querySelectorAll("mark");   // 它问你的、替你定的多在回复末尾，滚到最后一个标亮的词；给链接的滚到那个链接
   (at.querySelector("a[data-hit]") || (ms.length ? ms[h.hit.kind === "ask" || h.hit.kind === "call" ? ms.length - 1 : 0] : at)).scrollIntoView({ block: "center" });
-}
-function convo(it) {
-  const d = it.details, k = esc(it.key);
-  const msgs = [];
-  if (d.firstPrompt) msgs.push({ kind: "you", label: "最初的要求", text: d.firstPrompt });
-  if (d.lastPrompt) msgs.push({ kind: "you", label: "最后说的", text: d.lastPrompt, ts: d.promptTs });
-  if (d.lastReply) msgs.push({ kind: "it", label: waitOf(it) ? "停下来前说的" : "最后说的", text: replyOf(it), ts: d.replyTs });
-  if (!msgs.length) return "";
-  return '<div class="part dsec"><div class="sec-hd"><span class="sec-t">对话</span>' +
-    btn("看全部对话" + ico("right"), "openHist('" + k + "')", "ghost xs", "在右边打开对话历史：你说过的每一句，和它每一轮的回复，一路滚着看") + "</div>" +
-    '<div class="thread">' + msgs.map((m, i) => tmHtml(m, domId(it.key) + "_" + i)).join("") + "</div></div>";
 }
 // 压缩时的交接：Claude 上下文满了压缩时写给自己接着干活的，只取最后一段。正文长，详情打开时再取
 // 以前的多是英文：浏览器自带翻译（Chrome 138 起的 Translator）在本机翻，不花 token；翻好的存在这台电脑的浏览器里
@@ -3454,9 +3717,9 @@ function ctxPanel(key) {
     '<span class="sec-l">' + note + '</span><div class="thread">' + body + "</div></div>";
 }
 // 前后对话里把搜索词标出来：它的回复按 Markdown 排过，不能像别处那样先拼好字符串再标，排好以后在文字节点上标
-function markIn(root, q, url) {
+function markIn(root, q, url, literal = false) {
   // 链接常写成 [MR !970](地址)，文字里没有地址：按 href 对上的把链接本身标出来
-  const qw = qWords(q), urls = qw.filter(w => /^https?:\/\//i.test(w)).concat(url ? [url] : []).map(u => u.toLowerCase());
+  const qw = literal ? [q].filter(Boolean) : qWords(q), urls = qw.filter(w => /^https?:\/\//i.test(w)).concat(url ? [url] : []).map(u => u.toLowerCase());
   if (urls.length) root.querySelectorAll("a[href]").forEach(a => {
     const href = (a.getAttribute("href") || "").toLowerCase();
     if (!urls.some(u => href.includes(u))) return;
@@ -3759,6 +4022,8 @@ document.addEventListener("keydown", e => {
   if (hist) {   // 对话历史开着：Esc 关掉，⌘K 去搜索，别的键不碰后面的看板
     if (e.key === "Escape") { e.preventDefault(); closeHist(); }
     else if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") { e.preventDefault(); goSearch(); }
+    else if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "f") { e.preventDefault(); histQuery.focus(); histQuery.select(); }
+    else if (e.target === histQuery && e.key === "Enter") { e.preventDefault(); stepHistMatch(e.shiftKey ? -1 : 1); }
     return;
   }
   if (e.key === "Escape") {
@@ -3787,6 +4052,14 @@ document.addEventListener("keydown", e => {
 });
 ["rail", "queue", "detail"].forEach(id => document.getElementById(id).addEventListener("scroll", closeMenu, { passive: true }));
 document.getElementById("detail").addEventListener("scroll", spySec, { passive: true });
+histBody.addEventListener("scroll", () => {
+  clearTimeout(histReadTimer);
+  histReadTimer = setTimeout(rememberHistPosition, 250);
+}, { passive: true });
+document.addEventListener("selectionchange", () => {
+  if (hist) document.getElementById("hist-selection").hidden = !selectedHistText();
+});
+window.addEventListener("pagehide", rememberHistPosition);
 addEventListener("scroll", spySec, { passive: true });   // 窄屏时详情跟着整页滚
 window.addEventListener("resize", closeMenu);
 // 切回来时拉一次新的；5 秒内来回切就不拉了，省得每切一次整页重画一次

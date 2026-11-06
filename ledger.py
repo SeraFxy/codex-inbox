@@ -122,6 +122,10 @@ CREATE TABLE IF NOT EXISTS doc_titles (token TEXT PRIMARY KEY, title TEXT, at RE
 CREATE TABLE IF NOT EXISTS web_titles (url TEXT PRIMARY KEY, title TEXT, at REAL);
 CREATE TABLE IF NOT EXISTS output_names (key TEXT PRIMARY KEY, title TEXT, at REAL);
 CREATE TABLE IF NOT EXISTS output_fav_places (key TEXT PRIMARY KEY, project TEXT NOT NULL, topic_id INTEGER);
+CREATE TABLE IF NOT EXISTS message_favorites (
+  id TEXT PRIMARY KEY, session_key TEXT NOT NULL, message_id TEXT NOT NULL, kind TEXT NOT NULL,
+  ts REAL NOT NULL, text TEXT NOT NULL, excerpt INTEGER NOT NULL, saved_at REAL NOT NULL);
+CREATE INDEX IF NOT EXISTS message_favorites_session ON message_favorites(session_key, saved_at);
 CREATE TABLE IF NOT EXISTS mr_state (ref TEXT PRIMARY KEY, state TEXT, title TEXT, at REAL);
 CREATE TABLE IF NOT EXISTS images (session_key TEXT, sha TEXT, ts REAL, file TEXT, bytes INTEGER, PRIMARY KEY (session_key, sha));
 CREATE INDEX IF NOT EXISTS images_session ON images(session_key, ts);
@@ -2574,6 +2578,41 @@ def transcript_replies(tool, paths):
     return out
 
 
+def history_id(*parts):
+    return hashlib.sha256(json.dumps(parts).encode("ascii")).hexdigest()
+
+
+def message_favorites(conn, key=""):
+    rows = conn.execute("SELECT * FROM message_favorites" + (" WHERE session_key=?" if key else "") +
+                        " ORDER BY saved_at DESC, id", (key,) if key else ()).fetchall()
+    briefs = session_briefs(conn, list(dict.fromkeys(r["session_key"] for r in rows)), time.time()) if not key else {}
+    return [{"id": r["id"], "sessionKey": r["session_key"], "messageId": r["message_id"], "kind": r["kind"],
+             "ts": r["ts"], "text": r["text"], "excerpt": bool(r["excerpt"]),
+             "title": briefs.get(r["session_key"], {}).get("title", "")} for r in rows]
+
+
+def save_message_favorite(conn, key, arg, now):
+    if not isinstance(key, str) or not key.startswith(("codex:", "claude:")):
+        return False, "找不到消息所在的会话"
+    if arg.get("on") is False:
+        ident = arg.get("id")
+        if not isinstance(ident, str):
+            return False, "找不到这条收藏"
+        conn.execute("DELETE FROM message_favorites WHERE id=? AND session_key=?", (ident, key))
+        conn.commit()
+        return True, "已取消收藏"
+    message, kind, ts, text = (arg.get(k) for k in ("messageId", "kind", "ts", "text"))
+    excerpt = arg.get("excerpt") is True
+    if (not isinstance(message, str) or not re.fullmatch(r"[0-9a-f]{64}", message) or kind not in ("you", "it")
+            or type(ts) not in (int, float) or not 0 <= ts < 1e12 or not isinstance(text, str) or not text.strip()):
+        return False, "找不到要收藏的消息正文"
+    ident = history_id(key, message, text if excerpt else None)
+    conn.execute("INSERT OR IGNORE INTO message_favorites VALUES (?,?,?,?,?,?,?,?)",
+                 (ident, key, message, kind, ts, text, int(excerpt), now))
+    conn.commit()
+    return True, "已收藏选中的片段" if excerpt else "已收藏整条消息"
+
+
 def safe_stat(path):
     try:
         return os.stat(path)
@@ -4247,6 +4286,8 @@ class App:
                 return True, "已收藏，在左栏「收藏的产出物」里" if arg.get("on") else "已取消收藏"
             if action == "out_fav_place" and isinstance(arg, dict):
                 return save_out_fav_place(c, arg, now)
+            if action == "message_fav" and isinstance(arg, dict):
+                return save_message_favorite(c, key, arg, now)
             if action == "pin" and key and isinstance(arg, dict):
                 pins = [k for k in load_pins(c) if k != key]
                 if arg.get("on"):
@@ -4624,15 +4665,28 @@ class Handler(BaseHTTPRequestHandler):
                 r = APP.conn.execute("SELECT ts, text FROM handoffs WHERE session_key=?", ((q.get("key") or [""])[0],)).fetchone()
             return self._send(200, json.dumps({"ts": r["ts"], "text": r["text"]} if r else {}, ensure_ascii=False))
         if u.path == "/api/transcript":
-            key = (parse_qs(u.query).get("key") or [""])[0]
+            q = parse_qs(u.query)
+            key = (q.get("key") or [""])[0]
+            history = q.get("favorites") == ["1"]
             with APP.lock:
                 rows = APP.conn.execute("SELECT * FROM prompts WHERE session_key=? ORDER BY ts", (key,)).fetchall()
                 you = [{"kind": "you", "ts": x["ts"], "text": x["text"], "images": x.get("images") or []}
                        for x in prompt_rows_to_items(APP.conn, rows, time.time())]
                 paths = [r["path"] for r in APP.conn.execute("SELECT path FROM files WHERE session_key=?", (key,))]
+                favorites = message_favorites(APP.conn, key) if history and key else []
             its = transcript_replies(key.split(":", 1)[0], paths) if ":" in key else []
             items = sorted(you + its, key=lambda x: (x["ts"] or 0, x["kind"] != "you"))
-            return self._send(200, json.dumps({"items": items, "you": len(you), "it": sum(1 for x in its if x["kind"] == "it")}, ensure_ascii=False))
+            result = {"items": items, "you": len(you), "it": sum(1 for x in its if x["kind"] == "it")}
+            if history:
+                result["favorites"] = favorites
+                result["items"] = [dict(m, id=history_id(m["kind"], m["ts"] or 0, m["text"]))
+                                   if m["kind"] != "handoff" else m for m in items]
+            return self._send(200, json.dumps(result, ensure_ascii=False))
+        if u.path == "/api/message-favorites":
+            key = (parse_qs(u.query).get("key") or [""])[0]
+            with APP.lock:
+                favorites = message_favorites(APP.conn, key)
+            return self._send(200, json.dumps({"favorites": favorites}, ensure_ascii=False))
         if u.path == "/api/session":
             q = parse_qs(u.query)
             with APP.lock:
