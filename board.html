@@ -294,6 +294,9 @@ kbd.k.lg { min-width: 22px; height: 22px; padding: 0 6px; border-radius: 6px; fo
 .dtitle h2 { margin: 0; font-size: 22px; line-height: 30px; font-weight: 600; letter-spacing: -.01em; word-break: break-word; }
 .dmeta { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; font: 12px/18px var(--bk-mono); color: var(--bk-ink-3); }
 .dacts { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.session-labels { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 4px; min-width: 0; max-width: 100%; }
+.session-labels .chip { max-width: 100%; white-space: normal; overflow-wrap: anywhere; }
+.historic-task-bar { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; font-size: 13px; color: var(--bk-ink-3); }
 .menu {
   position: fixed; z-index: 35; width: 240px; padding: 6px; display: flex; flex-direction: column; gap: 2px;
   border: 1px solid var(--bk-line); border-radius: 14px; background: var(--bk-surface); box-shadow: var(--bk-e3); animation: bk-drop .14s var(--bk-ease);
@@ -831,7 +834,7 @@ mark { background: var(--bk-lime-mark); color: #1B2026; border-radius: 3px; box-
     <label for="q" class="sr-only">搜索我说过的话和 AI 给的产出物</label>
     <div class="search">
       <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
-      <input id="q" type="search" autocomplete="off" placeholder="搜你说过的话和 AI 给的产出物：原话、链接、标题、会话名，多个词用空格隔开">
+      <input id="q" type="search" autocomplete="off" placeholder="搜原话、链接、标题、会话名或搜索标签，多个词用空格隔开">
       <button type="button" class="btn ghost xs" id="q-clear" aria-label="清空搜索" hidden onclick="clearSearch()" style="width: 28px; padding: 0"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12"/></svg></button>
       <kbd class="k lg">/</kbd>
     </div>
@@ -960,6 +963,7 @@ let view = store("ledger.view") || "you";
 if (!TABS.includes(view) && view !== "hidden") view = "you";   // 以前有个「收藏」视图，存着它的回到「轮到你」
 if (!VIEWS[view]) view = "you";
 let selKey = null, selIdx = 0, menu = null, drag = null, iconRed = null;
+let historicTask = null;  // 当前打开的历史详情，独立于近期队列
 let hopNow = new Set();
 // 左栏筛选：all 全部 / p 一个项目 / t 一个主题 / n 一个项目里没归主题的
 let scope = store("ledger.scope") || { t: "all" };
@@ -1002,6 +1006,10 @@ function wd(ts) { return new Date((ts + tzOff(ts)) * 1000); }  // 用 getUTC* �
 function dayNo(ts) { return Math.floor((ts + tzOff(ts)) / 86400); }
 function pad(n) { return (n < 10 ? "0" : "") + n; }
 function hm(ts) { const d = wd(ts); return pad(d.getUTCHours()) + ":" + pad(d.getUTCMinutes()); }
+function messageTime(ts) {
+  const d = wd(ts);
+  return d.getUTCFullYear() + "-" + pad(d.getUTCMonth() + 1) + "-" + pad(d.getUTCDate()) + " " + hm(ts);
+}
 function md(ts) { const d = wd(ts); return (d.getUTCMonth() + 1) + "月" + d.getUTCDate() + "日"; }
 function week(ts) { return "周" + WEEK[wd(ts).getUTCDay()]; }
 function when(ts) {
@@ -1155,7 +1163,8 @@ function alsoOf(it) {
 
 // ---------------- 数据
 function allItems(s) { return s ? s.groups.reduce((a, g) => a.concat(g.items), []).concat(s.hidden) : []; }
-function findItem(key) { return key ? allItems(state).find(it => it.key === key) || null : null; }
+function findBoardItem(key) { return key ? allItems(state).find(it => it.key === key) || null : null; }
+function findItem(key) { return findBoardItem(key) || (key && historicTask?.key === key ? historicTask.item : null); }
 const TOOLS = { claude: "CC", codex: "Codex" };
 function toolName(x) { return TOOLS[x.tool] || x.toolLabel || ""; }
 function toolChip(x) { return '<span class="chip sm tool" title="' + (x.tool === "codex" ? "Codex" : "Claude Code") + '">' + esc(toolName(x)) + "</span>" + autoChip(x); }
@@ -1718,6 +1727,38 @@ async function saveOutputName(reset) {
   } catch (e) { toast("保存失败：本机服务没响应，输入的名称仍保留"); }
   finally { editing.saving = false; }
 }
+function sessionLabelChips(item, query = "") {
+  const tags = (item.labels || []).map(label => '<span class="chip" title="' + esc(label) + '">' + hl("#" + label, query) + "</span>");
+  return '<span class="session-labels">' + tags.join("") +
+    btn(ico("plus", 12) + "标签", "editSessionLabels(clips[" + clip(item.key) + "],this)", "ghost xs session-label-edit",
+      "添加或编辑搜索标签", 'aria-label="编辑搜索标签"') + "</span>";
+}
+function editSessionLabels(key, anchor) {
+  const item = findItem(key) || hSessions.find(s => s.key === key);
+  if (!item) return;
+  closeMenu();
+  tagEdit = { kind: "session-labels", key };
+  openPop(anchor, '<label for="session-label-value">会话的搜索标签</label>' +
+    '<input id="session-label-value" maxlength="512" value="' + esc((item.labels || []).join("，")) + '">' +
+    '<p class="note">写下次可能搜的词，用逗号隔开。留空可清除标签。</p><div class="bar end">' +
+    btn("取消", "closeTag()", "sec xs") + btn("保存", "saveSessionLabelEdit()", "pri xs") + "</div>", saveSessionLabelEdit);
+}
+async function saveSessionLabelEdit() {
+  const editing = tagEdit, input = document.getElementById("session-label-value");
+  if (editing?.kind !== "session-labels" || editing.saving || !input) return;
+  editing.saving = true;
+  try {
+    const res = await post("session_labels", editing.key, { labels: input.value.split(/[，,]/) });
+    if (!res.ok) { toast(res.message || "标签没保存成功"); return; }
+    if (tagEdit === editing) closeTag();
+    if (findBoardItem(editing.key)) await load();
+    if (historicTask?.key === editing.key) await loadHistoricTask(historicTask);
+    if (tab === "history" || tab === "search") await search(hq);
+    else hLoaded = false;
+    toast(res.message);
+  } catch (e) { toast("暂时读不到保存结果，请刷新后核对"); }
+  finally { editing.saving = false; }
+}
 function toggleOutFav(l) {
   closeMenu();
   const on = !outFavOn(l.key), had = oCat === "fav";
@@ -1864,7 +1905,7 @@ function goFav(key) {
 }
 function locate(key) {
   // 在看板上找到这个会话并打开它的详情：来源筛选、左栏范围、标签页不对就切过去。不在看板上返回 false
-  const it = findItem(key);
+  const it = findBoardItem(key);
   if (!it) return false;
   if (tab !== "board") setTab("board");
   if (!srcOk(it)) { src = "all"; store("ledger.src", src); }
@@ -1877,6 +1918,37 @@ function locate(key) {
   const r = document.getElementById("row-" + domId(key));
   if (r) r.scrollIntoView({ block: "nearest" });
   return true;
+}
+function goTaskDetail(key) {
+  if (locate(key)) return;
+  const target = { key, from: tab, top: window.scrollY, previous: selKey, item: null, error: "" };
+  historicTask = target;
+  selKey = key;
+  setTab("board");
+  if (state) renderQueue();
+  renderDetail();
+  const detail = document.getElementById("detail");
+  detail.scrollTop = 0;
+  if (window.innerWidth <= 960) detail.scrollIntoView({ block: "start" });
+  loadHistoricTask(target);
+}
+async function loadHistoricTask(target) {
+  try {
+    const r = await fetch("/api/session-detail?key=" + encodeURIComponent(target.key), { cache: "no-store" });
+    if (!r.ok) {
+      target.error = r.status === 404 ? "没有找到这条会话的任务记录" : "暂时读不到任务详情";
+    } else {
+      target.item = (await r.json()).item;
+      target.error = "";
+    }
+  } catch (e) { target.error = "暂时读不到任务详情"; }
+  if (historicTask === target && selKey === target.key && tab === "board") renderDetail();
+}
+function backFromHistoricTask() {
+  const target = historicTask;
+  if (!target) return;
+  setTab(target.from);
+  requestAnimationFrame(() => window.scrollTo(0, target.top));
 }
 function topicRow(x, label) {
   return '<div class="rt">' + railItem(label, { t: "t", id: x.t.id }, x.c, "sub", x.t.id) +
@@ -2151,7 +2223,8 @@ function renderQueue() {
   document.getElementById("qhint").innerHTML = view === "hidden" ? "最近 " + doneDays() + " 天完成或不再跟踪的" + (scope.t === "all" ? "，所有项目的都在这里" : "") + "。你再和它说话，它会自己回到看板。"
     : esc(v.hint);
 
-  if (!items.some(it => it.key === selKey)) { const it = items[Math.min(selIdx, items.length - 1)]; selKey = it ? it.key : null; }
+  if (historicTask && historicTask.key !== selKey) historicTask = null;
+  if (!historicTask && !items.some(it => it.key === selKey)) { const it = items[Math.min(selIdx, items.length - 1)]; selKey = it ? it.key : null; }
   selIdx = Math.max(0, items.findIndex(it => it.key === selKey));
 
   let html = "";
@@ -2200,6 +2273,7 @@ function row(it, i) {
 }
 function pick(key) {
   if (selecting()) return;
+  historicTask = null;
   selKey = key; closeMenu();
   render();
   const r = document.getElementById("row-" + domId(key));
@@ -2306,28 +2380,40 @@ function bulkUntrack() {
 
 // ---------------- 看板：详情
 function renderDetail() {
-  const el = document.getElementById("detail"), it = findItem(selKey);
+  const el = document.getElementById("detail");
+  const old = historicTask?.key === selKey ? historicTask : null;
+  const it = old ? old.item : findItem(selKey);
+  const bar = old ? '<div class="historic-task-bar"><span>历史会话</span>' +
+    btn("‹ 返回搜索结果", "backFromHistoricTask()", "ghost sm") + "</div>" : "";
   if (!it) {
+    if (old) {
+      el.innerHTML = '<div class="detail-in">' + bar + '<div class="dempty"><b>' + esc(old.error || "正在读取任务详情…") +
+        "</b>" + (old.error ? btn("重试", "loadHistoricTask(historicTask)", "sec sm") : "") + "</div></div>";
+      return;
+    }
     el.innerHTML = '<div class="detail-in"><div class="dempty">' + face("logo", 56) + "<b>这一栏空着</b><span>左边选一条，详情会出现在这里。</span></div></div>";
     return;
   }
   const f = faceOf(it), d = it.details, k = esc(it.key), hidden = it.group === "hidden";
   let acts = btn((waitOf(it) ? waitOf(it)[0] : "打开会话") + ico("open"), "openSession('" + k + "',this)", "pri", "", 'id="open-btn"');
-  if (hidden) acts += btn("恢复跟踪", "act('" + k + "','restore')", "sec");
-  else {
+  if (!old && hidden) acts += btn("恢复跟踪", "act('" + k + "','restore')", "sec");
+  else if (!old) {
     if (f !== "run") acts += btn("推迟" + ico("down"), "openMenu(this,'" + k + "')", "ghost", "",
       'id="snooze-btn" aria-haspopup="menu" aria-expanded="false" style="padding: 0 8px 0 12px"');
     acts += btn(ico("check", 14, 2.2) + (f === "review" ? "确认完成" : "完成"), "act('" + k + "','done')", "ghost", "挪到「已完成」；你再和这个会话说话，它会自动回到看板");
   }
   acts += btn(ico(favOn(it.key) ? "starOn" : "star", 16), "toggleFav('" + k + "')", "ghost icon", favOn(it.key) ? "取消收藏" : "放进左栏「收藏的对话」",
     'aria-pressed="' + favOn(it.key) + '" aria-label="收藏"');
-  let html = '<div class="dhead"><span class="fc' + (hopNow.has(it.key) ? " bk-hop" : "") + '">' + face(f, 44, 0, REASON[f]) + "</span>" +
-    '<div class="dtitle"><h2 title="双击改名" ondblclick="renameSession(\'' + k + "',this)\">" + esc(it.title) + '</h2><div class="dmeta">' + toolChip(it) + tagChip(it) + topicChip(it) +
-    '<span>' + (it.auto ? esc(it.auto.paused ? "定时已暂停" : it.auto.when ? it.auto.when + " 跑" : "定时任务") + " · " : "") + "最后动静 " + esc(it.last ? when(it.last) : "—") + "</span></div></div>" +
+  const title = old ? "<h2>" : '<h2 title="双击改名" ondblclick="renameSession(\'' + k + "',this)\">";
+  const topic = old ? (it.topic ? '<span class="chip">' + esc(it.topic.name) + "</span>" : "") : topicChip(it);
+  let html = bar + '<div class="dhead"><span class="fc' + (hopNow.has(it.key) ? " bk-hop" : "") + '">' + face(f, 44, 0, REASON[f]) + "</span>" +
+    '<div class="dtitle">' + title + esc(it.title) + '</h2><div class="dmeta">' + toolChip(it) + tagChip(it) + topic +
+    '<span>' + (it.auto ? esc(it.auto.paused ? "定时已暂停" : it.auto.when ? it.auto.when + " 跑" : "定时任务") + " · " : "") + "最后动静 " + esc(it.last ? when(it.last) : "—") +
+    "</span>" + sessionLabelChips(it) + "</div></div>" +
     '<div class="dacts">' + acts + "</div></div>";
   html += sumCard(it);
   const secs = [
-    ["reply", decisionsOf(it).length ? (todoOf(it) ? "要你做、待你决定" : "待你决定") : todoOf(it) ? "要你做" : oldAsksOf(it).length ? "没答的" : "推它一下", replyBox(it)],
+    ["reply", decisionsOf(it).length ? (todoOf(it) ? "要你做、待你决定" : "待你决定") : todoOf(it) ? "要你做" : oldAsksOf(it).length ? "没答的" : "推它一下", old ? "" : replyBox(it)],
     ["calls", "替你定的", callsSec(it)],
     ["convo", "对话"],
     ["handoff", "上下文压缩", handoffSec(it)],
@@ -2349,7 +2435,7 @@ function sumCard(it) {
   const d = it.details, f = faceOf(it), hidden = it.group === "hidden", ink = INK[f];
   const loud = it.kind === "approval" || it.kind === "sched_failed" || it.kind === "wake_stuck" || f === "stuck" || ((d.doneAsk || alsoOf(it)) && f === "wait");
   let html = '<div class="sum"><div class="sum-now"><span class="sum-st"' + (ink ? ' style="color:var(--bk-' + ink + '-ink)"' : "") + ' title="' + esc(whyOf(it)) + '">' +
-    esc(badgeOf(it)) + "</span>" + (hidden ? '<p class="sum-why">' + esc(whyOf(it)) + "</p>"
+    esc(it.historical ? "最后记录" : badgeOf(it)) + "</span>" + (hidden ? '<p class="sum-why">' + esc(whyOf(it)) + "</p>"
       : '<p class="now">' + esc(it.headline) + "</p>" + (loud || (f === "run" && (it.bg || it.bang)) ? '<p class="sum-why">' + esc(whyOf(it)) + "</p>" : "") +
         (d.statusNote ? '<p class="sum-why">' + esc(d.statusNote) + "</p>" : "") +
         (ctxHot(it) ? '<p class="sum-why">上下文已用 <span class="mono">' + ctxOf(it) + "%</span>，这件做完换个新会话接着做，省 token。</p>" : "")) + "</div>";
@@ -2358,7 +2444,7 @@ function sumCard(it) {
     html += '<dl class="sum-goal"><div><dt>目标' + (d.goalStatus ? '<span class="pill">' + esc(d.goalStatus) + "</span>" : "") + "</dt><dd>" + mdInline(d.goal) +
       (src ? '<span class="sum-src">' + esc(src) + "</span>" : "") + "</dd></div>" +
       (d.criteria ? "<div><dt>完成标准</dt><dd>" + mdInline(d.criteria) + "</dd></div>" : "") + "</dl>";
-  } else if (!hidden)
+  } else if (!hidden && !it.historical)
     html += '<div class="sum-goal nogoal"><span>还没写目标。有了一句目标，它跑偏的时候台账才能提醒你。</span>' +
       btn("让它补一句", "copyOpen(GOAL_ASK,'" + esc(it.key) + "')", "sec sm", "复制一句提示并打开会话，你粘贴发出去") + "</div>";
   return html + "</div>";
@@ -2566,7 +2652,7 @@ function tmHtml(m, id, full, re) {
   if (m.kind === "handoff") return '<div class="tm-ho"><span>' + esc(when(m.ts)) + " 上下文满了，压缩过一次</span></div>";
   const you = m.kind === "you";
   const head = '<div class="tm-h">' + (you ? '<span class="who you">你</span>' : face("mark", 20) + '<span class="who">它</span>') +
-    "<span>" + (m.label ? m.label + (m.ts ? " · " : "") : "") + (m.ts ? esc(when(m.ts)) : "") + "</span>" +
+    "<span>" + (m.label ? m.label + (m.ts ? " · " : "") : "") + (m.ts ? esc(messageTime(m.ts)) : "") + "</span>" +
     (full && you ? btn(ico("copy", 13) + "复制", "copyClip(" + clip(m.text) + ")", "ghost xs cp") : "") + "</div>";
   const long = you ? m.text.split("\n").length > 3 || m.text.length > 160 : m.text.split("\n").length > 30 || m.text.length > 1800;
   const imgs = (m.images || []).length ? '<div class="thumbs">' + m.images.map(f =>
@@ -2655,7 +2741,7 @@ function goHistOutputs() {
   const { key } = hist;
   closeHist();
   const it = findItem(key);
-  if (it && it.details.linksTotal && locate(key) && selKey === key) {
+  if (it && it.details.linksTotal && ((tab === "board" && selKey === key) || locate(key))) {
     const out = document.getElementById("ds-out");
     if (out) {
       if (!outData(key) && it.details.linksTotal > it.details.links.length) expandOut(key, true);
@@ -2842,7 +2928,7 @@ function histFavoriteTitle(b) {
 }
 function histFavoriteTool(b) { return b.sessionKey.startsWith("codex:") ? "Codex" : "Claude"; }
 function histFavoriteMeta(b) {
-  return [b.kind === "you" ? "你" : histFavoriteTool(b), b.ts && when(b.ts), b.excerpt ? "片段" : "整条消息"].filter(Boolean).join(" · ");
+  return [b.kind === "you" ? "你" : histFavoriteTool(b), b.ts && messageTime(b.ts), b.excerpt ? "片段" : "整条消息"].filter(Boolean).join(" · ");
 }
 function histFavoriteGroups(favorites) {
   const groups = new Map();
@@ -3043,7 +3129,7 @@ function histMsg(m, at, lost, who) {
   return '<div class="tm hmsg ' + (you ? "you" : "it") + (at ? " at" : "") + '"' +
     (m.id ? ' data-message-id="' + esc(m.id) + '"' : "") + '><div class="tm-h">' +
     (you ? '<span class="who you">你</span>' : face("mark", 20) + '<span class="who">' + esc(who) + "</span>") +
-    "<span>" + esc(tag) + (m.ts ? esc(hm(m.ts)) : "") + '</span><div class="hm-actions">' +
+    "<span>" + esc(tag) + (m.ts ? esc(messageTime(m.ts)) : "") + '</span><div class="hm-actions">' +
     btn(ico("copy", 13) + "复制", "copyClip(" + clip(m.text) + ")", "ghost xs cp") + star + "</div></div>" +
     (you ? '<div class="tm-b you"><div class="tx">' + esc(m.text) + "</div>" + imgs + "</div>" : '<div class="tm-b md">' + mdHtml(m.text) + "</div>") + "</div>";
 }
@@ -3257,13 +3343,13 @@ function handoffSec(it) {
 function infoSec(it) {
   const d = it.details, k = esc(it.key);
   const rows = [
-    ["原标题", d.originalTitle], ["位置", d.cwd, "path", d.projectDirMine ? btn("恢复默认", "setProjectDir('" + k + "'," + clip(d.projectDir) + ",true)", "ghost xs", "去掉你点的这一层，回到默认的取法") : ""],
+    ["原标题", d.originalTitle], ["位置", d.cwd, it.historical ? "wrap" : "path", !it.historical && d.projectDirMine ? btn("恢复默认", "setProjectDir('" + k + "'," + clip(d.projectDir) + ",true)", "ghost xs", "去掉你点的这一层，回到默认的取法") : ""],
     ["分支", d.branch], ["上下文", ctxOf(it) != null ? "已用 " + ctxOf(it) + "%" : "", "mono"], ["状态行", d.status, "wrap"],
     ["恢复命令", d.resume, "mono", btn(ico("copy", 13) + "复制", "copyClip(" + clip(d.resume) + ",'恢复命令已复制')", "ghost xs")]
   ].filter(r => r[1]);
   let foot = "";
   if (it.scheduleId) foot += btn("取消定时唤醒", "act('" + k + "','cancel_schedule')", "ghost sm");
-  if (it.group !== "hidden") foot += btn("不再跟踪这个会话", "act('" + k + "','untrack')", "ghost sm");
+  if (!it.historical && it.group !== "hidden") foot += btn("不再跟踪这个会话", "act('" + k + "','untrack')", "ghost sm");
   return '<div class="part dsec"><span class="sec-t">会话信息</span><div class="info">' + rows.map(r =>
     '<div><span class="k">' + r[0] + '</span><span class="v ' + (r[2] || "") + '" title="' + esc(r[1]) + '">' + (r[2] === "path" ? pathSegs(it) : esc(r[1])) + "</span>" + (r[3] || "<span></span>") + "</div>").join("") +
     "</div>" + (foot ? '<div class="dfoot">' + foot + "</div>" : "") + "</div>";
@@ -3717,12 +3803,17 @@ const TAB_HASH = { search: "#search", history: "#history", outputs: "#outputs" }
 let tab = Object.keys(TAB_HASH).find(t => TAB_HASH[t] === location.hash) || store("ledger.tab") || "board";
 let sq = "";   // 搜索框里的词：「我说过的话」和「产出物」共用，切换标签页不清空
 let hMode = "", hPromptTotal = 0;   // 上次搜的是哪个标签：只有「全部」带上压缩时的交接
-let hq = "", hSessions = [], hTotal = 0, hAll = 0, hAllSessions = 0, hSince = "", hOutHits = 0, hOuts = [], hTimer = null, hLoaded = false, hReady = false;
+let hq = "", hSessions = [], hTotal = 0, hAll = 0, hAllSessions = 0, hSince = "", hOutHits = 0, hOuts = [], hTimer = null, hLoaded = false, hReady = false, hRequest = 0;
 const hFull = {};      // 会话 key -> 这个会话里你说过的全部话、目标
 const hOpen = {};      // 展开的会话
 const hLong = {};      // 展开全文的单条
 function setTab(t) {
   if (tab !== t) closeMenu();
+  if (t !== "board" && historicTask) {
+    selKey = historicTask.previous;
+    historicTask = null;
+    if (state) { renderQueue(); renderDetail(); }
+  }
   tab = t; store("ledger.tab", t);
   document.getElementById("view-board").hidden = t !== "board";
   document.getElementById("view-history").hidden = t === "board";
@@ -3761,19 +3852,20 @@ function clearSearch() {
   if (tab === "outputs") searchOut(""); else search("");
 }
 async function search(q, more) {
+  const request = ++hRequest;
   hq = q; hLoaded = true; hMode = tab;
   if (tab === "history" || tab === "search") document.getElementById("q-clear").hidden = !q;
   const off = more ? hSessions.length : 0;
   // 搜索是全局的：不跟看板页头的「CC / Codex」筛选走（搜索页上看不到那个筛选，跟着走会悄悄漏掉另一个工具的）
   const r = await fetch("/api/sessions?q=" + encodeURIComponent(q) + "&offset=" + off + (tab === "search" ? "&handoff=1" : ""), { cache: "no-store" });
   const res = await r.json();
-  if (q !== hq) return;  // 打字快时旧结果晚到，丢掉
+  if (request !== hRequest) return;  // 换词或重新保存标签后，只显示最近一次查询
   if (!more) Object.keys(hCtx).forEach(k => delete hCtx[k]);   // 换了搜索词：前后对话是跟着上一次搜到的那句开的，收起
   hSessions = more ? hSessions.concat(res.sessions) : res.sessions;
   hTotal = res.total; hAll = res.all; hAllSessions = res.allSessions; hSince = res.since;
   if (!more) { hOutHits = res.outputHits || 0; hOuts = res.outputs || []; hPromptTotal = res.promptTotal != null ? res.promptTotal : res.total; }
   hReady = true;
-  renderHistory();
+  if (tab === "history" || tab === "search") renderHistory();
 }
 async function toggleSession(key) {
   if (selecting()) return;
@@ -3832,7 +3924,7 @@ function hitSpot() {
   (el.querySelector("mark") || el).scrollIntoView({ block: "center" });
 }
 function hitBtn(key, hit, title, cls) {
-  const on = !!findItem(key);
+  const on = !!findBoardItem(key);
   return btn(on ? "在看板里看" : "看对话", "goHit(clips[" + clip(key) + "],clips[" + clip(hit) + "],clips[" + clip(title || "") + "])", cls || "ghost xs",
     (on ? "回到看板，" : "打开对话历史，") + (hit ? "定位到这一条" : "打开这个会话"));
 }
@@ -4009,17 +4101,20 @@ function scard(s, si, faces) {
   const k = esc(s.key), open = hOpen[s.key], full = hFull[s.key];
   const items = open ? (full ? full.items : []) : s.preview;
   const fk = faces[s.key];
-  const meta = [hq && s.hits ? "命中 " + s.hits : "", hq && s.handoff ? "压缩摘要里有" : "", s.count + " 句", s.lastTs ? when(s.lastTs) : s.lastText].filter(Boolean).join(" · ");
+  const meta = [hq && s.hits ? "命中 " + s.hits : "", hq && s.labelHit ? "标签匹配" : "", hq && s.handoff ? "压缩摘要里有" : "",
+    s.count + " 句", s.lastTs ? when(s.lastTs) : s.lastText].filter(Boolean).join(" · ");
   const more = open ? "收起" + ico("up") : (s.count > 1 ? "展开全部 " + s.count + " 句" : "展开") + (s.goal ? "和目标" : "") + ico("down");
   // 命中不止一条时，每条都能单独跳过去；只有一条就用底部的按钮
   const each = items.length + (s.handoff ? 1 : 0) + (s.notes || []).length > 1 ? s.title : null;
   return '<article class="hcard" id="hs-' + domId(s.key) + '"><div class="fc">' + (fk ? face(fk, 24, si, REASON[fk]) : "") + "</div>" +
-    '<div class="hbody"><div class="htop">' + tagChip(s) + "<h3>" + hl(s.title) + '</h3>' + toolChip(s) + '<span class="hm">' + esc(meta) + "</span></div>" +
+    '<div class="hbody"><div class="htop">' + tagChip(s) + "<h3>" + hl(s.title) + '</h3>' + toolChip(s) +
+    sessionLabelChips(s, hq) + '<span class="hm">' + esc(meta) + "</span></div>" +
     (open ? sessExtra(full) : "") +
     '<div class="hlines">' + items.map((it, i) => line(it, (open ? "f" : "p") + si + "_" + i, s.key, each)).join("") + (s.handoff ? hoLine(s.handoff, s.key, each) : "") +
     (s.notes || []).map(n => noteLine(n, s.key, each)).join("") + "</div>" + ctxPanel(s.key) +
     '<div class="hfoot">' + btn(more, "toggleSession('" + k + "')", "ghost sm") +
-    hitBtn(s.key, firstHit(s), s.title, "ghost sm") +
+    btn("任务详情", "goTaskDetail(clips[" + clip(s.key) + "])", "sec sm") +
+    (firstHit(s) || !findBoardItem(s.key) ? hitBtn(s.key, firstHit(s), s.title, "ghost sm") : "") +
     btn("打开会话" + ico("open"), "openSession('" + k + "',this)", "ghost sm") +
     (s.linksTotal ? btn("AI 给的产出物 " + num(s.linksTotal) + " 个", "goOutputs('', '" + k + "')", "ghost sm", "到「产出物」里只看这个会话的") : "") + "</div></div></article>";
 }
@@ -4036,8 +4131,8 @@ function renderHistory() {
   document.getElementById("hsum").innerHTML = (hq
     ? '<span class="mono hit">找到 ' + (all ? num(hOutHits) + " 个产出物、" : "") + num(hTotal) + " 个会话</span>"
     : '<span class="mono">共 ' + num(hAllSessions) + " 个会话 · " + num(hAll) + " 句 · 最早到 " + esc(hSince) + "</span>") +
-    '<span class="note">' + ico("info", 13) + (all ? "同时搜你说过的话、AI 给的产出物，和它问你的、替你定的、状态、目标、上下文压缩时的摘要；只看一边就点上面的标签"
-      : "Claude Code 默认只保留最近 30 天的对话记录，更早的只剩台账另存的你说过的话") + "</span>";
+    '<span class="note">' + ico("info", 13) + (all ? "同时搜你说过的话、会话标签、产出物和任务记录"
+      : "搜索你说过的话和会话标签") + "</span>";
   const list = document.getElementById("hlist");
   const cross = all && hq && hOuts.length ? xblock("AI 给的产出物", "产出物", hOutHits, "goOutputs(sq)", hOuts.map(o => orow(o, hq)).join("")) : "";
   if (hq && !hSessions.length) {
@@ -4292,9 +4387,9 @@ document.addEventListener("keydown", e => {
   if (k === "j") move(1);
   else if (k === "k") move(-1);
   else if (k === "o" && it) openSession(it.key, document.getElementById("open-btn"));
-  else if (k === "e" && it && it.group !== "hidden") act(it.key, "done");
-  else if (k === "p" && it) togglePin(it.key);
-  else if (k === "s" && it && it.group !== "hidden" && faceOf(it) !== "run") openMenu(document.getElementById("snooze-btn"), it.key);
+  else if (k === "e" && it && !historicTask && it.group !== "hidden") act(it.key, "done");
+  else if (k === "p" && it && !historicTask) togglePin(it.key);
+  else if (k === "s" && it && !historicTask && it.group !== "hidden" && faceOf(it) !== "run") openMenu(document.getElementById("snooze-btn"), it.key);
 });
 ["rail", "queue", "detail"].forEach(id => document.getElementById(id).addEventListener("scroll", closeMenu, { passive: true }));
 document.getElementById("detail").addEventListener("scroll", spySec, { passive: true });

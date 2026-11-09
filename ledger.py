@@ -114,6 +114,8 @@ CREATE TABLE IF NOT EXISTS prompts (id TEXT PRIMARY KEY, session_key TEXT, tool 
 CREATE INDEX IF NOT EXISTS prompts_ts ON prompts(ts);
 CREATE INDEX IF NOT EXISTS prompts_session ON prompts(session_key, ts);
 CREATE TABLE IF NOT EXISTS names (session_key TEXT PRIMARY KEY, title TEXT, at REAL);
+CREATE TABLE IF NOT EXISTS session_labels (
+  session_key TEXT NOT NULL, label TEXT NOT NULL, folded TEXT NOT NULL, PRIMARY KEY (session_key, folded));
 CREATE TABLE IF NOT EXISTS cmux_open (session_key TEXT PRIMARY KEY);
 CREATE TABLE IF NOT EXISTS tags (project TEXT PRIMARY KEY, label TEXT, color TEXT);
 CREATE TABLE IF NOT EXISTS goals (session_key TEXT PRIMARY KEY, goal TEXT, criteria TEXT, status TEXT, at REAL);
@@ -2339,6 +2341,42 @@ def merge_batches(items, gap=3):
     return out
 
 
+def session_known(conn, key):
+    if not isinstance(key, str):
+        return False
+    tool, _, sid = key.partition(":")
+    if tool not in ("claude", "codex") or not sid:
+        return False
+    return any(conn.execute("SELECT 1 FROM " + table + " WHERE " + col + "=? LIMIT 1", (key,)).fetchone()
+               for table, col in (("sessions", "key"), ("prompts", "session_key"), ("links", "session_key"),
+                                  ("goals", "session_key"), ("handoffs", "session_key"), ("ai_notes", "session_key")))
+
+
+def session_labels(conn, key):
+    return [r[0] for r in conn.execute("SELECT label FROM session_labels WHERE session_key=? ORDER BY rowid", (key,))]
+
+
+def save_session_labels(conn, key, labels):
+    if not session_known(conn, key):
+        return False, "找不到这个会话"
+    if not isinstance(labels, list) or any(not isinstance(x, str) for x in labels):
+        return False, "标签格式不对"
+    unique = {}
+    for raw in labels:
+        label = " ".join(raw.strip().lstrip("#＃").split())
+        if len(label) > 32:
+            return False, "每个标签最多 32 个字"
+        if label:
+            unique.setdefault(label.casefold(), label)
+    if len(unique) > 12:
+        return False, "一个会话最多 12 个标签"
+    with conn:
+        conn.execute("DELETE FROM session_labels WHERE session_key=?", (key,))
+        conn.executemany("INSERT INTO session_labels (session_key,label,folded) VALUES (?,?,?)",
+                         [(key, label, folded) for folded, label in unique.items()])
+    return True, "搜索标签已保存"
+
+
 def session_extras(conn, key):
     g = conn.execute("SELECT goal, criteria, status FROM goals WHERE session_key=?", (key,)).fetchone()
     n = conn.execute("SELECT COUNT(DISTINCT " + OUT_KEY.replace("l.", "") + ") FROM links WHERE session_key=? AND cat != 'mr'", (key,)).fetchone()[0]
@@ -2346,6 +2384,7 @@ def session_extras(conn, key):
         "goal": g["goal"] if g else "", "criteria": g["criteria"] if g else "",
         "goalStatus": GOAL_STATUS.get(g["status"], g["status"]) if g and g["status"] else "",
         "linksTotal": n,
+        "labels": session_labels(conn, key),
     }
 
 
@@ -2438,14 +2477,26 @@ def link_target(q):
     return "(l.mr LIKE ? OR l.url LIKE ?)", ["%!" + n, "%/" + n], True, n
 
 
-def _like_where(q):
+def _label_term(word):
+    return word.lstrip("#＃").casefold()
+
+
+LABEL_MATCH = "session_key IN (SELECT session_key FROM session_labels WHERE folded LIKE ? ESCAPE '\\')"
+
+
+def _like_where(q, include_labels=False):
     conds, args = [], []
     for w in search_words(q):
         like = _like(w)
-        conds.append("(text LIKE ? ESCAPE '\\' OR title LIKE ? ESCAPE '\\' OR project LIKE ? ESCAPE '\\' OR session_key IN "
-                     "(SELECT session_key FROM names WHERE title LIKE ? ESCAPE '\\') OR project IN "
-                     "(SELECT project FROM tags WHERE label LIKE ? ESCAPE '\\'))")
+        cond = ("(text LIKE ? ESCAPE '\\' OR title LIKE ? ESCAPE '\\' OR project LIKE ? ESCAPE '\\' OR session_key IN "
+                "(SELECT session_key FROM names WHERE title LIKE ? ESCAPE '\\') OR project IN "
+                "(SELECT project FROM tags WHERE label LIKE ? ESCAPE '\\')")
         args += [like, like, like, like, like]
+        label = _label_term(w) if include_labels else ""
+        if label:
+            cond += " OR " + LABEL_MATCH
+            args.append(_like(label))
+        conds.append(cond + ")")
     return conds, args
 
 
@@ -2479,20 +2530,34 @@ def search_sessions(conn, q, limit=50, offset=0, tool="", cross=True, handoff=Fa
     handoff：也搜 Claude 压缩时的交接、AI 问你的 ❓、替你定的 🧭、📌 状态和目标（「全部」标签用）。
     只在这些里对上的会话，命中数记 0，排序按它们写的时间。搜的是一个链接或编号时，也列给过它的会话（AI 的回复正文不进索引）。"""
     now = time.time()
-    conds, args = _like_where(q)
+    terms = search_words(q)
+    labels = [_label_term(w) for w in terms]
+    plain, plain_args = _like_where(q)
+    conds, args = _like_where(q, include_labels=True)
     by_tool = (" WHERE tool=?", [tool]) if tool in ("claude", "codex") else ("", [])
     if by_tool[1]:
         conds.append("tool=?")
         args.append(tool)
     sql_where = (" WHERE " + " AND ".join(conds)) if conds else ""
-    prompt_total = conn.execute("SELECT COUNT(DISTINCT session_key) FROM prompts" + sql_where, args).fetchone()[0]
-    grouped, gargs = "SELECT session_key, COUNT(*) AS hits, MAX(ts) AS last_ts FROM prompts" + sql_where + " GROUP BY session_key", list(args)
-    words = search_words(q) if handoff else []
+    # 标签可和正文混搜。命中标签时，原话的命中数仍按原话的搜索条件计算。
+    hits = "SUM(CASE WHEN " + " AND ".join(plain) + " THEN 1 ELSE 0 END)" if plain else "COUNT(*)"
+    grouped = "SELECT session_key, " + hits + " AS hits, MAX(ts) AS last_ts FROM prompts" + sql_where + " GROUP BY session_key"
+    gargs = plain_args + args
+    tw, targ = (" AND session_key LIKE ?", [tool + ":%"]) if tool in ("claude", "codex") else ("", [])
+    if labels and all(labels):
+        labeled = ("SELECT DISTINCT session_key, 0, COALESCE("
+                   "(SELECT last_activity FROM sessions WHERE key=sl.session_key), "
+                   "(SELECT MAX(ts) FROM prompts WHERE session_key=sl.session_key), "
+                   "(SELECT MAX(ts) FROM links WHERE session_key=sl.session_key), 0) "
+                   "FROM session_labels sl WHERE " + " AND ".join([LABEL_MATCH] * len(labels)) + tw)
+        grouped = "SELECT session_key, SUM(hits) AS hits, MAX(last_ts) AS last_ts FROM (" + grouped + " UNION ALL " + labeled + ") GROUP BY session_key"
+        gargs += [_like(label) for label in labels] + targ
+    prompt_total = conn.execute("SELECT COUNT(*) FROM (" + grouped + ")", gargs).fetchone()[0]
+    words = terms if handoff else []
     target = link_target(q) if words else None
     hwhere = " AND ".join(["text LIKE ? ESCAPE '\\'"] * len(words))
     gwhere = " AND ".join(["(COALESCE(goal, '') || ' ' || COALESCE(criteria, '')) LIKE ? ESCAPE '\\'"] * len(words))
     hargs = [_like(w) for w in words]
-    tw, targ = (" AND session_key LIKE ?", [tool + ":%"]) if tool in ("claude", "codex") else ("", [])
     if words:
         parts = [grouped]
         if tool != "codex":
@@ -2509,14 +2574,16 @@ def search_sessions(conn, q, limit=50, offset=0, tool="", cross=True, handoff=Fa
     out = []
     for r in rows:
         key = r["session_key"]
+        ex = session_extras(conn, key)
+        label_hit = any(word and word in label.casefold() for word in labels for label in ex["labels"])
         n = conn.execute("SELECT COUNT(*) FROM prompts WHERE session_key=?", (key,)).fetchone()[0]
         extra = (" AND " + " AND ".join(conds)) if conds else ""
         prev = conn.execute("SELECT * FROM prompts WHERE session_key=?" + extra + " ORDER BY ts DESC LIMIT ?",
-                            [key] + args + [8 if conds else 4]).fetchall() if r["hits"] or not conds else []
+                            [key] + args + [8 if conds else 4]).fetchall() if r["hits"] or label_hit or not conds else []
         items = prompt_rows_to_items(conn, prev, now)[:3 if conds else 1]
         if items:
             head = items[0]
-        else:   # 只在交接里对上：标题、项目按这个会话最近一句取
+        else:   # 没有命中的原话预览时，标题、项目按这个会话最近一句取
             last = prompt_rows_to_items(conn, conn.execute("SELECT * FROM prompts WHERE session_key=? ORDER BY ts DESC LIMIT 1", (key,)).fetchall(), now)
             head = last[0] if last else dict(session_briefs(conn, [key], now)[key], resume="")
         ho, notes = None, []
@@ -2532,11 +2599,11 @@ def search_sessions(conn, q, limit=50, offset=0, tool="", cross=True, handoff=Fa
             if target:
                 for x in conn.execute("SELECT l.url, l.ctx, l.ts FROM links l WHERE l.session_key=? AND (" + target[0] + ") ORDER BY l.ts DESC LIMIT 3", [key] + target[1]):
                     notes.append({"kind": "link", "ts": x["ts"] or 0, "url": x["url"], "text": link_name(x["url"]) + ("：" + x["ctx"] if x["ctx"] else "")})
-        ex = session_extras(conn, key)
         out.append({"key": key, "title": head["title"], "project": head["project"], "projectKey": head["projectKey"],
                     "color": head["color"], "tool": head["tool"], "toolLabel": head["toolLabel"], "auto": head["auto"], "count": n,
                     "hits": r["hits"], "lastTs": r["last_ts"], "lastText": fmt_time(r["last_ts"], now), "resume": head["resume"],
-                    "goal": ex["goal"], "linksTotal": ex["linksTotal"], "handoff": ho, "notes": notes,
+                    "goal": ex["goal"], "linksTotal": ex["linksTotal"], "labels": ex["labels"], "labelHit": label_hit,
+                    "handoff": ho, "notes": notes,
                     "preview": [{"ts": it["ts"], "timeText": it["timeText"], "text": it["text"], "images": it["images"]}
                                 for it in items]})
     first = conn.execute("SELECT MIN(ts), COUNT(*), COUNT(DISTINCT session_key) FROM prompts" + by_tool[0], by_tool[1]).fetchone()
@@ -3152,12 +3219,12 @@ def preview_outputs(links, favs, n):
     return sorted(pin_favs(ordered, favs, n), key=lambda l: l["cat"] != "feishu")
 
 
-def make_item(st, now, cfg, ov, sched, titles, goals, ctx):
+def make_item(st, now, cfg, ov, sched, titles, goals, ctx, historical=False):
     key = "%s:%s" % (st["tool"], st["id"])
     last = st.get("last_ts") or 0
     idle = now - last
     due = 0
-    if idle > cfg["window_days"] * 86400 and not sched and not done_by(ov, last):
+    if not historical and idle > cfg["window_days"] * 86400 and not sched and not done_by(ov, last):
         status = st.get("status") or {}
         if status.get("kind") not in ("peer", "time", "sched"):
             return None
@@ -3634,6 +3701,73 @@ def board_refs(conn, keys, items, now):
     return out
 
 
+def board_links(conn, now, key=None):
+    # 队列只带近期会话的预览。点开历史详情时，单独取该会话的产出物。
+    scope = "l.session_key = ?" if key is not None else "l.session_key IN (SELECT key FROM sessions WHERE last_activity >= ?)"
+    links = {}
+    seen_out = set()
+    for r in conn.execute("SELECT l.session_key, l.url, l.label, l.ts, l.doc, " + OUT_TITLE + " AS title, n.title AS custom_title, " + OUT_TITLE_AT + " AS title_at, m.state" + OUT_FROM +
+                          " WHERE " + scope + " ORDER BY l.ts DESC", (key if key is not None else now - 30 * 86400,)):
+        if (r["session_key"], r["doc"] or r["url"]) in seen_out:
+            continue   # 同一篇飞书文档的别的写法（带锚点等），只留最近一次
+        seen_out.add((r["session_key"], r["doc"] or r["url"]))
+        links.setdefault(r["session_key"], []).append(out_brief(r["url"], r["label"], r["title"], r["ts"], now, r["state"], r["custom_title"], r["title_at"]))
+    arch = archive_info(conn, list({l["url"] for ls in links.values() for l in ls if l["cat"] == "file"}))
+    for ls in links.values():
+        for l in ls:
+            a = arch.get(l["url"])
+            if a:
+                l["arch"] = {"n": a["n"], "ts": a["ts"]}
+                l["gone"] = not os.path.exists(l["url"])
+                if a["title"] and not l["customTitle"]:   # 和展开后同一个名字；手动名称始终优先
+                    l["text"] = a["title"]
+    return links
+
+
+def history_task_detail(conn, cfg, key, now=None):
+    if not session_known(conn, key):
+        return None
+    now = now or time.time()
+    titles, goals = codex_extras()
+    links = board_links(conn, now, key)
+    row = conn.execute("SELECT data FROM sessions WHERE key=?", (key,)).fetchone()
+    goal = conn.execute("SELECT * FROM goals WHERE session_key=?", (key,)).fetchone()
+    handoff = conn.execute("SELECT ts, substr(text, 1, 3000) AS head FROM handoffs WHERE session_key=?", (key,)).fetchone()
+    moved = load_moved(conn)
+    if row:
+        st = json.loads(row["data"])
+    else:
+        tool, sid = key.split(":", 1)
+        st = new_state(tool, sid, "")
+        brief = session_briefs(conn, [key], now)[key]
+        first = conn.execute("SELECT text FROM prompts WHERE session_key=? ORDER BY ts LIMIT 1", (key,)).fetchone()
+        last = conn.execute("SELECT text, ts, cwd FROM prompts WHERE session_key=? ORDER BY ts DESC LIMIT 1", (key,)).fetchone()
+        st["custom_title"] = brief["title"]
+        output_ts = conn.execute("SELECT MAX(ts) FROM links WHERE session_key=?", (key,)).fetchone()[0]
+        st["last_ts"] = max((last["ts"] if last else 0) or 0, (goal["at"] if goal else 0) or 0,
+                            (handoff["ts"] if handoff else 0) or 0, output_ts or 0)
+        if last:
+            st.update(cwd=last["cwd"], last_user_ts=last["ts"], last_prompt=last["text"],
+                      first_prompt=first["text"], n_prompts=conn.execute(
+                          "SELECT COUNT(*) FROM prompts WHERE session_key=?", (key,)).fetchone()[0])
+            moved.setdefault(key, brief["projectKey"])
+    ctx = {"names": name_map(conn), "tags": tag_map(conn), "moved": moved, "links": links,
+           "out_favs": set(meta_keys(conn, "out_favs")), "live": {}, "bangs": {},
+           "goals": {key: dict(goal)} if goal else {}, "ask_dismiss": {},
+           "handoffs": {key: handoff["ts"]} if handoff else {},
+           "ho_goals": {key: handoff_goal(handoff["head"])} if handoff else {}}
+    override = conn.execute("SELECT * FROM overrides WHERE key=?", (key,)).fetchone()
+    item = make_item(st, now, cfg, override, None, titles, goals, ctx, historical=True)
+    if not row:
+        item["headline"] = "台账保留了这个会话的历史记录"
+    pinned = conn.execute("SELECT 1 FROM session_topics WHERE session_key=?", (key,)).fetchone() is not None
+    topic = saved_session_topic(conn, key) if pinned else topic_by_tag(
+        conn, load_topics(conn), item["projectKey"], st.get("hashtags") or [], now, create=False)
+    item.update(historical=True, labels=session_labels(conn, key), topicPinned=pinned,
+                topic={k: topic[k] for k in ("id", "name", "project")} if topic and not topic.get("deleted") else None)
+    return item
+
+
 def build_board(conn, cfg, now=None):
     now = now or time.time()
     titles, goals = codex_extras()
@@ -3647,27 +3781,12 @@ def build_board(conn, cfg, now=None):
                 r["status"] != "pending" and cur["status"] != "pending" and (r["done_at"] or 0) > (cur["done_at"] or 0)):
             scheds[r["session_key"]] = r
     items, hidden, hashtags = [], [], {}
-    ctx = {"names": name_map(conn), "tags": tag_map(conn), "moved": load_moved(conn), "links": {}, "out_favs": set(meta_keys(conn, "out_favs")), "live": claude_live(), "bangs": claude_bangs(),
+    ctx = {"names": name_map(conn), "tags": tag_map(conn), "moved": load_moved(conn), "links": board_links(conn, now),
+           "out_favs": set(meta_keys(conn, "out_favs")), "live": claude_live(), "bangs": claude_bangs(),
            "goals": {r["session_key"]: dict(r) for r in conn.execute("SELECT * FROM goals")},
            "handoffs": {r["session_key"]: r["ts"] for r in conn.execute("SELECT session_key, ts FROM handoffs")},
            "ho_goals": {r["session_key"]: handoff_goal(r["head"]) for r in conn.execute("SELECT session_key, substr(text, 1, 3000) AS head FROM handoffs")},
            "ask_dismiss": load_ask_dismiss(conn)}
-    seen_out = set()
-    for r in conn.execute("SELECT l.session_key, l.url, l.label, l.ts, l.doc, " + OUT_TITLE + " AS title, n.title AS custom_title, " + OUT_TITLE_AT + " AS title_at, m.state" + OUT_FROM +
-                          " WHERE l.session_key IN (SELECT key FROM sessions WHERE last_activity >= ?) ORDER BY l.ts DESC", (now - 30 * 86400,)):
-        if (r["session_key"], r["doc"] or r["url"]) in seen_out:
-            continue   # 同一篇飞书文档的别的写法（带锚点等），只留最近一次
-        seen_out.add((r["session_key"], r["doc"] or r["url"]))
-        ctx["links"].setdefault(r["session_key"], []).append(out_brief(r["url"], r["label"], r["title"], r["ts"], now, r["state"], r["custom_title"], r["title_at"]))
-    arch = archive_info(conn, list({l["url"] for ls in ctx["links"].values() for l in ls if l["cat"] == "file"}))
-    for ls in ctx["links"].values():
-        for l in ls:
-            a = arch.get(l["url"])
-            if a:
-                l["arch"] = {"n": a["n"], "ts": a["ts"]}
-                l["gone"] = not os.path.exists(l["url"])
-                if a["title"] and not l["customTitle"]:   # 和展开后同一个名字；手动名称始终优先
-                    l["text"] = a["title"]
     for r in conn.execute("SELECT data FROM sessions WHERE last_activity >= ?", (now - 30 * 86400,)):
         st = json.loads(r["data"])
         if not include_session(st):
@@ -3694,6 +3813,7 @@ def build_board(conn, cfg, now=None):
             t = topic_by_tag(conn, topics, it["projectKey"], tags, now) if tags else None
         it["topic"] = {"id": t["id"], "name": t["name"], "project": t["project"]} if t and not t["deleted"] else None
         it["topicPinned"] = it["key"] in pinned
+        it["labels"] = session_labels(conn, it["key"])
     if len(topics) > known:
         conn.commit()
     groups = []
@@ -4228,6 +4348,8 @@ class App:
         now = time.time()
         with self.lock:
             c = self.conn
+            if action == "session_labels" and isinstance(arg, dict):
+                return save_session_labels(c, key, arg.get("labels"))
             if action == "out_name" and isinstance(arg, dict):
                 if not c.execute("SELECT 1 FROM links l WHERE " + OUT_KEY + "=? LIMIT 1", (key,)).fetchone():
                     return False, "找不到这个产出物"
@@ -4692,6 +4814,11 @@ class Handler(BaseHTTPRequestHandler):
             with APP.lock:
                 res = session_prompts(APP.conn, (q.get("key") or [""])[0])
             return self._send(200, json.dumps(res, ensure_ascii=False))
+        if u.path == "/api/session-detail":
+            key = (parse_qs(u.query).get("key") or [""])[0]
+            with APP.lock:
+                item = history_task_detail(APP.conn, APP.cfg, key)
+            return self._send(200 if item else 404, json.dumps({"item": item}, ensure_ascii=False))
         if u.path == "/api/state":
             q = parse_qs(u.query)
             if q.get("refresh"):
