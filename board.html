@@ -212,7 +212,7 @@ kbd.k.lg { min-width: 22px; height: 22px; padding: 0 6px; border-radius: 6px; fo
 .rfav-head { display: flex; align-items: center; gap: 4px; margin-top: 16px; }
 .rfav-head .rsec { flex: 1; min-width: 0; margin-top: 0; padding-right: 0; }
 .rfav-head .rsec > span:first-of-type { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.rfav-head .btn { flex: none; padding: 0 4px; }
+.rfav-head .btn { flex: none; height: 28px; }
 .ri.fav { padding-left: 26px; gap: 6px; }
 .rfg { flex: none; padding: 8px 10px 2px 26px; font-size: 12px; line-height: 16px; color: var(--bk-ink-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }   /* 收藏里的主题小标题 */
 .rof-tree .of-fold { gap: 4px; padding-left: 12px; }
@@ -1605,8 +1605,8 @@ function renderRail() {
   }
   html += '<div class="rfav-head"><button type="button" class="rsec" id="out-fav-toggle" aria-expanded="' + outFavsOpen +
     '" onclick="toggleOutFavs()">' + ico(outFavsOpen ? "down" : "right", 14) + '<span>收藏的产出物</span><span class="n">' + num(ofavs.length) + "</span></button>" +
-    '<a href="#favorite-outputs" class="btn ghost xs" aria-label="查看收藏的产出物列表" onclick="event.preventDefault();goOutFavList()">列表</a>' +
-    (ofavs.length ? btn("改分类", "openOutFavEditor()", "ghost xs", "批量修改收藏的产出物分类", 'id="out-fav-manage" aria-haspopup="dialog"') : "") + "</div>";
+    '<a href="#favorite-outputs" class="btn ghost icon" title="打开收藏列表" aria-label="查看收藏的产出物列表" onclick="event.preventDefault();goOutFavList()">' +
+    ico("send", 16) + "</a></div>";
   if (outFavsOpen) html += ofavs.length ? outFavTree(ofavs, (state.order || {}).rail || []) : '<div class="rfg">还没有收藏的产出物</div>';
   html += autoSec();
   const nDone = viewItems("hidden", true).length;
@@ -1849,7 +1849,7 @@ function outFavMore(el, x) {
   const hit = { kind: "link", ts: x.ts, url: x.url, text: x.railText };
   showMenu(el, x.key, mi(ico("open", 14) + "打开", "closeMenu();openOutFav(clips[" + clip(x) + "])") +
     (x.sessionKey ? mi("看它是在哪说的", "closeMenu();goHit(clips[" + clip(x.sessionKey) + "],clips[" + clip(hit) + "])") : "") +
-    mi("改分类…", "openOutFavEditor(clips[" + clip(x.key) + "])") +
+    (tab === "favoriteOutputs" ? mi("改分类…", "openOutFavEditor(clips[" + clip(x.key) + "])") : "") +
     mi("取消收藏", "toggleOutFav(clips[" + clip(x) + "])"));
 }
 function goOutFavList() {
@@ -1933,7 +1933,7 @@ function openOutFavEditor(key) {
   outFavEditorError("");
   renderOutFavTopics(current && current.topic);
   renderOutFavPicks();
-  if (current) document.getElementById(tab === "favoriteOutputs" ? "out-fav-list-manage" : "out-fav-manage").focus({ preventScroll: true });
+  if (current) document.getElementById("out-fav-list-manage").focus({ preventScroll: true });
   outFavEditor.showModal();
   if (current) f.project.focus();
 }
@@ -1996,25 +1996,16 @@ async function saveOutFavPlaces(auto = false) {
     await load();
     if (failed) return outFavEditorError("分类已保存。列表暂时没更新，可以再试一次。");
     const moved = (state.outFavs || []).filter(x => keys.has(x.key));
-    let firstGroup = null;
     for (const p of outFavGroups(moved, (state.order || {}).rail || [])) {
       outFavOpen.add(JSON.stringify(["project", p.key]));
-      for (const g of p.groups) {
-        const k = JSON.stringify(["group", p.key, g.key]);
-        outFavOpen.add(k);
-        if (!firstGroup) firstGroup = k;
-      }
+      for (const g of p.groups) outFavOpen.add(JSON.stringify(["group", p.key, g.key]));
     }
     outFavsOpen = true;
     store("ledger.outfavx", false);
     store("ledger.outfav.open", [...outFavOpen]);
     outFavEditor.close();
     renderRail();
-    if (tab === "favoriteOutputs") renderOutFavList();
-    else {
-      const target = [...document.querySelectorAll("#out-fav-tree [data-out-fav-fold]")].find(b => b.dataset.outFavFold === firstGroup);
-      if (target) { target.focus({ preventScroll: true }); target.scrollIntoView({ block: "nearest" }); }
-    }
+    renderOutFavList();
     toast(res.message);
   } catch (e) {
     outFavEditorError("操作失败，本机服务没响应。可以重试。");
