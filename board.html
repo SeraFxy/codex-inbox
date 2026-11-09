@@ -145,10 +145,12 @@ kbd.k.lg { min-width: 22px; height: 22px; padding: 0 6px; border-radius: 6px; fo
 /* 看板：左栏项目与主题，中间队列，右边详情 */
 .board { display: flex; flex-direction: column; min-height: 100vh; }
 .bhead { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px 16px; padding: 12px clamp(16px, 2vw, 24px); }
-.split { flex: 1; min-width: 0; display: flex; flex-wrap: wrap; align-items: stretch; border-top: 1px solid var(--bk-line); }
+.split { --rail-width: 232px; flex: 1; min-width: 0; display: flex; flex-wrap: wrap; align-items: stretch; border-top: 1px solid var(--bk-line); }
 .queue { flex: 0 1 420px; min-width: 0; padding: 16px 12px; border-right: 1px solid var(--bk-line); display: flex; flex-direction: column; gap: 14px; }
 .queue > * { flex-shrink: 0; }   /* 这一栏自己滚动：提示折行时别被压扁、压到下面的卡片上 */
 .detail { flex: 999 1 540px; min-width: 0; padding: 0 clamp(16px, 3vw, 44px) 40px; background: var(--bk-surface); }
+.favorite-pane { flex: 1 1 0; min-width: 0; }
+.favorite-pane .railbtn { display: none; }
 /* 上边距放在里面这层：详情栏是滚动容器，它自己有上内边距的话，贴顶的导航在有的浏览器里会停在内边距下面，上面露出一条正文 */
 .detail-in { width: 100%; max-width: 900px; min-height: 100%; padding-top: 24px; display: flex; flex-direction: column; gap: 26px; }
 /* 详情的页内导航：贴在顶上，点一下滚到那一段 */
@@ -165,15 +167,20 @@ kbd.k.lg { min-width: 22px; height: 22px; padding: 0 6px; border-radius: 6px; fo
 @media (min-width: 961px) {
   .board { height: 100vh; height: 100dvh; min-height: 0; }
   .split { flex-wrap: nowrap; min-height: 0; }
-  .rail, .queue, .detail { overflow-y: auto; overscroll-behavior: contain; }
+  .rail, .queue, .detail, .favorite-pane { overflow-y: auto; overscroll-behavior: contain; }
+  .split.railx .favorite-pane .railbtn { display: inline-flex; }
 }
 @media (max-width: 960px) {
   .queue { flex-basis: 100%; border-right: 0; border-bottom: 1px solid var(--bk-line); }
 }
 
 /* 左栏：点项目或主题，中间只剩它的会话；红色数字 = 里面有轮到你的事。收起后队列顶上留展开按钮和切换下拉 */
-.rail { flex: 0 0 232px; min-width: 0; display: flex; flex-direction: column; gap: 2px; padding: 16px 12px; border-right: 1px solid var(--bk-line); }
-.split.railx .rail { display: none; }
+.rail { flex: 0 0 var(--rail-width); min-width: 0; display: flex; flex-direction: column; gap: 2px; padding: 16px 12px; }
+.rail-sizer { position: relative; z-index: 4; flex: 0 0 8px; margin-right: -7px; border-left: 1px solid var(--bk-line); cursor: col-resize; touch-action: none; }
+.rail-sizer::after { content: ""; position: absolute; left: 1px; top: calc(50% - 12px); width: 3px; height: 24px; border-radius: 2px; background: var(--bk-line-strong); }
+.rail-sizer:is(:hover, :focus-visible, .resizing) { border-color: var(--bk-ink-3); }
+.rail-sizer:focus-visible { outline: 2px solid var(--bk-ring); outline-offset: -2px; }
+.split.railx :is(.rail, .rail-sizer) { display: none; }
 .rhead { display: flex; align-items: center; gap: 2px; padding: 0 0 6px 10px; }
 .rhead > span { flex: 1; font-size: 12px; line-height: 16px; font-weight: 600; color: var(--bk-ink-3); }
 .rhead .btn.icon { width: 28px; height: 28px; }
@@ -227,7 +234,7 @@ kbd.k.lg { min-width: 22px; height: 22px; padding: 0 6px; border-radius: 6px; fo
 .scopebtn { max-width: 100%; padding: 0 8px 0 10px; font-weight: 600; }
 .scopebtn > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 @media (max-width: 960px) {
-  .rail { display: none; }
+  .rail, .rail-sizer { display: none; }
   .qtop { display: flex; }
   .qtop .railbtn { display: none; }
 }
@@ -804,19 +811,26 @@ mark { background: var(--bk-lime-mark); color: #1B2026; border-radius: 3px; box-
 <div class="board" id="view-board">
   <header class="bhead">
     <div class="brand">
+      <button type="button" class="btn ghost sm" id="favorite-back" title="回到看板（Esc）" onclick="setTab('board')" hidden><span aria-hidden="true">‹</span>看板</button>
       <span id="logo-b"></span>
       <h1>AI 任务台账</h1>
       <span class="metam js-date"></span>
     </div>
-    <div class="tools">
+    <div class="tools" id="board-tools">
       <div class="seg src" id="srcseg" role="group" aria-label="只看哪个工具的会话"></div>
       <button type="button" class="btn sec searchbtn" onclick="goSearch()"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg><span>搜说过的话和产出物</span><kbd class="k md">⌘K</kbd></button>
       <a class="btn ghost" href="#history" onclick="event.preventDefault();setTab('history')"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 5.5h14a1.5 1.5 0 0 1 1.5 1.5v8a1.5 1.5 0 0 1-1.5 1.5h-8l-4.5 3.5V16.5H5A1.5 1.5 0 0 1 3.5 15V7A1.5 1.5 0 0 1 5 5.5Z"/></svg>我说过的话</a>
       <a class="btn ghost" href="#outputs" title="AI 给你的链接和文件，能搜、能跳回会话" onclick="event.preventDefault();goOutputs()"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 3.5H7A2.5 2.5 0 0 0 4.5 6v12A2.5 2.5 0 0 0 7 20.5h10a2.5 2.5 0 0 0 2.5-2.5V9L14 3.5Z"/><path d="M14 3.5V9h5.5"/><path d="M8.5 13.5h7M8.5 17h4"/></svg>产出物</a>
     </div>
+    <div class="tools" id="favorite-tools" hidden>
+      <span class="js-sync"></span>
+      <button type="button" class="btn sec hd" onclick="refresh()">刷新</button>
+    </div>
   </header>
   <main class="split" id="split">
     <nav class="rail" id="rail" aria-label="项目与主题"></nav>
+    <div class="rail-sizer" id="rail-sizer" role="separator" tabindex="0" aria-orientation="vertical" aria-controls="rail"
+      aria-label="调整左侧导航宽度" aria-valuemin="184" aria-valuemax="440" aria-valuenow="232" title="拖动调整侧栏宽度"></div>
     <section class="queue" id="queue" aria-label="队列">
       <div class="qtop">
         <button type="button" class="btn ghost icon railbtn" aria-label="展开侧栏" title="展开侧栏（[）" onclick="toggleRail()"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3.5" y="4.5" width="17" height="15" rx="2.5"/><path d="M9.5 4.5v15"/><path d="m14 10 2 2-2 2"/></svg></button>
@@ -842,6 +856,37 @@ mark { background: var(--bk-lime-mark); color: #1B2026; border-radius: 3px; box-
       </div>
     </section>
     <section class="detail" id="detail" aria-label="会话详情"></section>
+    <section class="favorite-pane" id="favorite-pane" aria-labelledby="out-fav-list-title" hidden>
+      <div class="history of-list" id="out-fav-list">
+        <div class="of-list-head">
+          <div class="brand">
+            <button type="button" class="btn ghost icon railbtn" aria-label="展开侧栏" title="展开侧栏（[）" onclick="toggleRail()"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3.5" y="4.5" width="17" height="15" rx="2.5"/><path d="M9.5 4.5v15"/><path d="m14 10 2 2-2 2"/></svg></button>
+            <h2 id="out-fav-list-title" tabindex="-1">收藏的产出物</h2>
+          </div>
+          <button type="button" class="btn sec sm" id="out-fav-list-manage" aria-haspopup="dialog" onclick="openOutFavEditor()" hidden>改分类</button>
+        </div>
+        <div class="of-list-filters">
+          <div class="search">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+            <input id="out-fav-list-q" type="search" autocomplete="off" aria-label="搜索收藏的产出物" placeholder="搜标题、链接、项目或主题" oninput="renderOutFavList()">
+          </div>
+          <select class="lfilter" id="out-fav-list-project" aria-label="按项目筛选" onchange="renderOutFavList()"><option value="">全部项目</option></select>
+          <select class="lfilter" id="out-fav-list-group" aria-label="按主题或分类筛选" onchange="renderOutFavList()"><option value="">全部主题 / 分类</option></select>
+        </div>
+        <div class="of-list-status">
+          <span class="mono" id="out-fav-list-count" role="status"></span>
+          <button type="button" class="btn ghost xs" id="out-fav-list-clear" onclick="clearOutFavList()" hidden>清空筛选</button>
+        </div>
+        <div class="of-list-table" id="out-fav-list-table" hidden>
+          <table aria-labelledby="out-fav-list-title">
+            <colgroup><col><col class="of-project-col"><col class="of-group-col"><col class="of-time-col"><col class="of-actions-col"></colgroup>
+            <thead><tr><th scope="col">产出物</th><th scope="col" class="of-desktop">项目</th><th scope="col" class="of-desktop">主题 / 分类</th><th scope="col" class="of-desktop">产出时间</th><th scope="col"><span class="sr-only">操作</span></th></tr></thead>
+            <tbody id="out-fav-list-rows"></tbody>
+          </table>
+        </div>
+        <p class="of-list-empty" id="out-fav-list-empty" hidden></p>
+      </div>
+    </section>
   </main>
 </div>
 
@@ -859,13 +904,13 @@ mark { background: var(--bk-lime-mark); color: #1B2026; border-radius: 3px; box-
         <button type="button" class="btn sec hd" onclick="refresh()"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/></svg>刷新</button>
       </div>
     </header>
-    <nav class="seg" id="search-nav" aria-label="搜哪一边">
+    <nav class="seg" aria-label="搜哪一边">
       <a href="#search" id="seg-search" aria-current="page" onclick="event.preventDefault();setTab('search')">全部</a>
       <a href="#history" id="seg-history" onclick="event.preventDefault();setTab('history')">我说过的话</a>
       <a href="#outputs" id="seg-outputs" onclick="event.preventDefault();setTab('outputs')">产出物</a>
     </nav>
   </div>
-  <div class="hsearch" id="global-search">
+  <div class="hsearch">
     <label for="q" class="sr-only">搜索我说过的话和 AI 给的产出物</label>
     <div class="search">
       <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
@@ -888,32 +933,6 @@ mark { background: var(--bk-lime-mark); color: #1B2026; border-radius: 3px; box-
     </div>
   </div>
   <div class="days" id="hlist"></div>
-  <section class="of-list" id="out-fav-list" aria-labelledby="out-fav-list-title" hidden>
-    <div class="of-list-head">
-      <h2 id="out-fav-list-title" tabindex="-1">收藏的产出物</h2>
-      <button type="button" class="btn sec sm" id="out-fav-list-manage" aria-haspopup="dialog" onclick="openOutFavEditor()" hidden>改分类</button>
-    </div>
-    <div class="of-list-filters">
-      <div class="search">
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
-        <input id="out-fav-list-q" type="search" autocomplete="off" aria-label="搜索收藏的产出物" placeholder="搜标题、链接、项目或主题" oninput="renderOutFavList()">
-      </div>
-      <select class="lfilter" id="out-fav-list-project" aria-label="按项目筛选" onchange="renderOutFavList()"><option value="">全部项目</option></select>
-      <select class="lfilter" id="out-fav-list-group" aria-label="按主题或分类筛选" onchange="renderOutFavList()"><option value="">全部主题 / 分类</option></select>
-    </div>
-    <div class="of-list-status">
-      <span class="mono" id="out-fav-list-count" role="status"></span>
-      <button type="button" class="btn ghost xs" id="out-fav-list-clear" onclick="clearOutFavList()" hidden>清空筛选</button>
-    </div>
-    <div class="of-list-table" id="out-fav-list-table" hidden>
-      <table aria-labelledby="out-fav-list-title">
-        <colgroup><col><col class="of-project-col"><col class="of-group-col"><col class="of-time-col"><col class="of-actions-col"></colgroup>
-        <thead><tr><th scope="col">产出物</th><th scope="col" class="of-desktop">项目</th><th scope="col" class="of-desktop">主题 / 分类</th><th scope="col" class="of-desktop">产出时间</th><th scope="col"><span class="sr-only">操作</span></th></tr></thead>
-        <tbody id="out-fav-list-rows"></tbody>
-      </table>
-    </div>
-    <p class="of-list-empty" id="out-fav-list-empty" hidden></p>
-  </section>
 </div>
 
 <div class="hist" id="hist" role="dialog" aria-modal="true" aria-labelledby="hist-t" hidden>
@@ -1029,6 +1048,8 @@ let hopNow = new Set();
 // 左栏筛选：all 全部 / p 一个项目 / t 一个主题 / n 一个项目里没归主题的
 let scope = store("ledger.scope") || { t: "all" };
 let railOpen = store("ledger.rail") !== false;
+let railWidth = Number(store("ledger.rail.width")) || 232, railResize = null;
+const railSizer = document.getElementById("rail-sizer");
 const railFold = new Set(store("ledger.fold") || []);   // 收起的项目
 let archOpen = store("ledger.arch") === true;            // 左栏「归档」展开着
 let src = store("ledger.src") || "all";                  // 只看哪个工具的会话：all / claude / codex
@@ -1575,7 +1596,7 @@ function setView(v) {
 function cntHtml(c) { return c.hot ? '<span class="count hot">' + c.hot + "</span>" : c.n ? '<span class="n">' + c.n + "</span>" : ""; }
 function sameScope(a, b) { return a.t === b.t && a.p === b.p && a.id === b.id; }
 function doneAll() { return view === "hidden" && scope.t === "all"; }   // 在看「归档」里的「已完成的会话」
-function scopeData(sc) { return ' data-scope="' + esc(JSON.stringify(sc)) + '" aria-current="' + (sameScope(sc, scope) && !(sc.t === "all" && doneAll())) + '"'; }
+function scopeData(sc) { return ' data-scope="' + esc(JSON.stringify(sc)) + '" aria-current="' + (tab === "board" && sameScope(sc, scope) && !(sc.t === "all" && doneAll())) + '"'; }
 function railItem(label, sc, c, cls, drop) {
   return '<button type="button" class="ri ' + cls + '"' + scopeData(sc) + (drop != null ? ' data-drop="' + drop + '"' : "") + ' onclick="setScope(this,event)">' +
     '<span class="nm" title="' + esc(label) + '">' + esc(label) + "</span>" + cntHtml(c) + "</button>";
@@ -1605,7 +1626,8 @@ function renderRail() {
   }
   html += '<div class="rfav-head"><button type="button" class="rsec" id="out-fav-toggle" aria-expanded="' + outFavsOpen +
     '" onclick="toggleOutFavs()">' + ico(outFavsOpen ? "down" : "right", 14) + '<span>收藏的产出物</span><span class="n">' + num(ofavs.length) + "</span></button>" +
-    '<a href="#favorite-outputs" class="btn ghost icon" title="打开收藏列表" aria-label="查看收藏的产出物列表" onclick="event.preventDefault();goOutFavList()">' +
+    '<a href="#favorite-outputs" class="btn ghost icon' + (tab === "favoriteOutputs" ? " on" : "") +
+    '" aria-current="' + (tab === "favoriteOutputs" ? "page" : "false") + '" title="打开收藏列表" aria-label="查看收藏的产出物列表" onclick="event.preventDefault();goOutFavList()">' +
     ico("send", 16) + "</a></div>";
   if (outFavsOpen) html += ofavs.length ? outFavTree(ofavs, (state.order || {}).rail || []) : '<div class="rfg">还没有收藏的产出物</div>';
   html += autoSec();
@@ -1614,7 +1636,7 @@ function renderRail() {
     html += '<button type="button" class="rsec" aria-expanded="' + archOpen + '" onclick="toggleArch()">' + ico(archOpen ? "down" : "right", 14) +
       "<span>归档</span><span class=\"n\">" + (arch.length + d.archTopics.length + (nDone ? 1 : 0)) + "</span></button>";
     if (archOpen) {
-      if (nDone) html += '<button type="button" class="ri sub" aria-current="' + doneAll() + '" title="最近 ' + doneDays() +
+      if (nDone) html += '<button type="button" class="ri sub" aria-current="' + (tab === "board" && doneAll()) + '" title="最近 ' + doneDays() +
         ' 天点了完成或不再跟踪的会话，所有项目的都在这里；你再和它说话，它会自己回到看板" onclick="goDone()"><span class="nm">已完成的会话</span><span class="n">' + nDone + "</span></button>";
       arch.forEach(p => { html += railGroup(p); });
       html += d.archTopics.map(x => topicRow(x, plabel(x.t.project) + " · " + x.t.name)).join("");
@@ -1854,6 +1876,7 @@ function outFavMore(el, x) {
 }
 function goOutFavList() {
   setTab("favoriteOutputs");
+  document.getElementById("favorite-pane").scrollTop = 0;
   window.scrollTo(0, 0);
   document.getElementById("out-fav-list-title").focus({ preventScroll: true });
 }
@@ -2087,6 +2110,7 @@ function goDone() {
 }
 function setScope(el, e) {
   const sc = JSON.parse(el.dataset.scope);
+  if (tab !== "board") setTab("board");
   // 双击项目或主题改名。第一下点击已经重画了左栏，所以看第二下的 detail，不用 dblclick
   if (e && e.detail === 2 && sameScope(sc, scope) && (sc.t === "p" || sc.t === "t")) {
     e.stopPropagation();
@@ -2114,6 +2138,23 @@ function toggleRail() {
   railOpen = !railOpen; store("ledger.rail", railOpen);
   closeMenu();
   renderRail();
+}
+function updateRailWidth(width = railWidth, save = false) {
+  // 临时缩小窗口时只收窄显示，窗口放大后恢复用户选的宽度。
+  const min = 184, max = Math.max(min, Math.min(440, Math.floor(window.innerWidth / 3)));
+  const next = Math.round(Math.max(min, Math.min(max, width)));
+  railSizer.parentElement.style.setProperty("--rail-width", next + "px");
+  railSizer.setAttribute("aria-valuemax", max);
+  railSizer.setAttribute("aria-valuenow", next);
+  if (save) { railWidth = next; store("ledger.rail.width", next); }
+}
+function finishRailResize(e) {
+  if (e.pointerId !== railResize?.id) return;
+  const delta = e.clientX - railResize.x;
+  if (e.type === "pointerup" && delta) updateRailWidth(railResize.width + delta, true);
+  else updateRailWidth();
+  railResize = null;
+  railSizer.classList.remove("resizing");
 }
 function openScopes(el) {
   // 侧栏收起或窄屏时，用这个下拉切换项目和主题
@@ -3925,20 +3966,22 @@ const hOpen = {};      // 展开的会话
 const hLong = {};      // 展开全文的单条
 function setTab(t) {
   if (tab !== t) closeMenu();
+  const wasFavorites = tab === "favoriteOutputs";
   if (t !== "board" && historicTask) {
     selKey = historicTask.previous;
     historicTask = null;
     if (state) { renderQueue(); renderDetail(); }
   }
   tab = t; store("ledger.tab", t);
-  const favorites = t === "favoriteOutputs";
-  document.getElementById("view-board").hidden = t !== "board";
-  document.getElementById("view-history").hidden = t === "board";
-  for (const id of ["search-nav", "global-search", "hlist"]) document.getElementById(id).hidden = favorites;
-  document.getElementById("out-fav-list").hidden = !favorites;
+  const board = t === "board", favorites = t === "favoriteOutputs";
+  document.getElementById("view-board").hidden = !board && !favorites;
+  document.getElementById("view-history").hidden = board || favorites;
+  for (const id of ["board-tools", "queue", "detail"]) document.getElementById(id).hidden = !board;
+  for (const id of ["favorite-back", "favorite-tools", "favorite-pane"]) document.getElementById(id).hidden = !favorites;
   document.getElementById("out-filters").hidden = t !== "outputs";
   history.replaceState(null, "", TAB_HASH[t] || "#");
-  if (t === "board") return;
+  if (state && wasFavorites !== favorites) renderRail();
+  if (board) return;
   if (favorites) { renderOutFavList(); return; }
   // 三个标签页共用一个搜索框和同一个词：切过去就按这个词搜那一边
   const q = document.getElementById("q"), out = t === "outputs";
@@ -4503,10 +4546,13 @@ document.addEventListener("keydown", e => {
     else goSearch();
     return;
   }
+  // [ 收起或展开左栏：按键位认，按着 ⇧ 或开着中文输入法（出来的是 { 或 【）也算
+  if (state && (tab === "board" || tab === "favoriteOutputs") &&
+      (e.code === "BracketLeft" || (e.key.length === 1 && "[{【「".includes(e.key))) && !e.target.closest("#menu")) {
+    e.preventDefault(); toggleRail(); return;
+  }
   if (tab !== "board" || !state) return;
   const k = e.key.toLowerCase(), it = findItem(selKey);
-  // [ 收起或展开左栏：按键位认，按着 ⇧ 或开着中文输入法（出来的是 { 或 【）也算
-  if ((e.code === "BracketLeft" || (e.key.length === 1 && "[{【「".includes(e.key))) && !e.target.closest("#menu")) { e.preventDefault(); toggleRail(); return; }
   if ((e.key === "Enter" || e.key === " ") && e.target.classList.contains("row")) { e.preventDefault(); pick(e.target.dataset.key); return; }
   if (e.target.closest("#menu, button, a")) return;
   if (k === "j") move(1);
@@ -4516,7 +4562,25 @@ document.addEventListener("keydown", e => {
   else if (k === "p" && it && !historicTask) togglePin(it.key);
   else if (k === "s" && it && !historicTask && it.group !== "hidden" && faceOf(it) !== "run") openMenu(document.getElementById("snooze-btn"), it.key);
 });
-["rail", "queue", "detail"].forEach(id => document.getElementById(id).addEventListener("scroll", closeMenu, { passive: true }));
+railSizer.addEventListener("pointerdown", e => {
+  if (!e.isPrimary || e.button !== 0) return;
+  e.preventDefault();
+  closeMenu();
+  railResize = { id: e.pointerId, x: e.clientX, width: Number(railSizer.getAttribute("aria-valuenow")) };
+  railSizer.setPointerCapture(e.pointerId);
+  railSizer.classList.add("resizing");
+});
+railSizer.addEventListener("pointermove", e => {
+  if (e.pointerId === railResize?.id) updateRailWidth(railResize.width + e.clientX - railResize.x);
+});
+for (const event of ["pointerup", "lostpointercapture"]) railSizer.addEventListener(event, finishRailResize);
+railSizer.addEventListener("keydown", e => {
+  if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
+  e.preventDefault();
+  const width = Number(railSizer.getAttribute("aria-valuenow"));
+  updateRailWidth(width + (e.key === "ArrowRight" ? 16 : -16), true);
+});
+["rail", "queue", "detail", "favorite-pane"].forEach(id => document.getElementById(id).addEventListener("scroll", closeMenu, { passive: true }));
 document.getElementById("detail").addEventListener("scroll", spySec, { passive: true });
 histBody.addEventListener("scroll", () => {
   clearTimeout(histReadTimer);
@@ -4527,11 +4591,12 @@ document.addEventListener("selectionchange", () => {
 });
 window.addEventListener("pagehide", rememberHistPosition);
 addEventListener("scroll", spySec, { passive: true });   // 窄屏时详情跟着整页滚
-window.addEventListener("resize", closeMenu);
+window.addEventListener("resize", () => { closeMenu(); updateRailWidth(); });
 // 切回来时拉一次新的；5 秒内来回切就不拉了，省得每切一次整页重画一次
 document.addEventListener("visibilitychange", () => { if (!document.hidden && Date.now() - loadedAt > 5000) load("1"); });
 setInterval(() => { if (!document.hidden && !tagEdit) load("1"); }, 60000);  // 顺带读新记录，服务端一分钟最多读一次
 document.getElementById("split").classList.toggle("railx", !railOpen);
+updateRailWidth();
 load("1");
 setTab(tab);
 </script>
