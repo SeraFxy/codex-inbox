@@ -77,6 +77,23 @@ class SessionLabelsTest(unittest.TestCase):
         self.assertIsNone(ledger.history_task_detail(self.conn, ledger.DEFAULTS, "codex:missing"))
         self.assertFalse(ledger.save_session_labels(self.conn, "codex:missing", ["orphan"])[0])
 
+    def test_board_lists_every_labeled_session_for_the_rail_and_list_page(self):
+        output_only = "codex:output-only"
+        self.conn.execute("INSERT INTO links (session_key,url,label,ts,cat) VALUES (?,?,?,?,?)",
+                          (output_only, "https://example.com/summary", "Summary", 250, "web"))
+        self.assertTrue(ledger.save_session_labels(self.conn, self.old, ["Find draft", "Pricing"])[0])
+        self.assertTrue(ledger.save_session_labels(self.conn, output_only, ["Pricing"])[0])
+        board = ledger.build_board(self.conn, ledger.DEFAULTS, 50 * 86400)
+        labeled = {x["key"]: x for x in board["labeled"]}
+        self.assertEqual(list(labeled), [output_only, self.old])   # 最近有动静的在前
+        self.assertEqual(labeled[self.old]["labels"], ["Find draft", "Pricing"])
+        self.assertEqual((labeled[self.old]["title"], labeled[self.old]["onBoard"]), ("Review", False))
+        self.assertEqual((labeled[output_only]["last"], labeled[output_only]["labels"]), (250, ["Pricing"]))
+        self.assertNotIn(self.other, labeled)
+        ledger.meta_set(self.conn, "favs", json.dumps([self.old]))
+        fav = ledger.build_board(self.conn, ledger.DEFAULTS, 50 * 86400)["favs"][0]
+        self.assertEqual((fav["key"], fav["labels"], fav["projectKey"]), (self.old, ["Find draft", "Pricing"], labeled[self.old]["projectKey"]))
+
 
 if __name__ == "__main__":
     unittest.main()

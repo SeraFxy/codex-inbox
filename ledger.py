@@ -128,6 +128,7 @@ CREATE TABLE IF NOT EXISTS message_favorites (
   id TEXT PRIMARY KEY, session_key TEXT NOT NULL, message_id TEXT NOT NULL, kind TEXT NOT NULL,
   ts REAL NOT NULL, text TEXT NOT NULL, excerpt INTEGER NOT NULL, saved_at REAL NOT NULL);
 CREATE INDEX IF NOT EXISTS message_favorites_session ON message_favorites(session_key, saved_at);
+CREATE TABLE IF NOT EXISTS message_marks (favorite_id TEXT PRIMARY KEY, marks TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS mr_state (ref TEXT PRIMARY KEY, state TEXT, title TEXT, at REAL);
 CREATE TABLE IF NOT EXISTS images (session_key TEXT, sha TEXT, ts REAL, file TEXT, bytes INTEGER, PRIMARY KEY (session_key, sha));
 CREATE INDEX IF NOT EXISTS images_session ON images(session_key, ts);
@@ -2650,11 +2651,11 @@ def history_id(*parts):
 
 
 def message_favorites(conn, key=""):
-    rows = conn.execute("SELECT * FROM message_favorites" + (" WHERE session_key=?" if key else "") +
-                        " ORDER BY saved_at DESC, id", (key,) if key else ()).fetchall()
+    rows = conn.execute("SELECT f.*, k.marks FROM message_favorites f LEFT JOIN message_marks k ON k.favorite_id=f.id" +
+                        (" WHERE f.session_key=?" if key else "") + " ORDER BY f.saved_at DESC, f.id", (key,) if key else ()).fetchall()
     briefs = session_briefs(conn, list(dict.fromkeys(r["session_key"] for r in rows)), time.time()) if not key else {}
     return [{"id": r["id"], "sessionKey": r["session_key"], "messageId": r["message_id"], "kind": r["kind"],
-             "ts": r["ts"], "text": r["text"], "excerpt": bool(r["excerpt"]),
+             "ts": r["ts"], "text": r["text"], "excerpt": bool(r["excerpt"]), "marks": json.loads(r["marks"] or "[]"),
              "title": briefs.get(r["session_key"], {}).get("title", "")} for r in rows]
 
 
@@ -2665,7 +2666,8 @@ def save_message_favorite(conn, key, arg, now):
         ident = arg.get("id")
         if not isinstance(ident, str):
             return False, "找不到这条收藏"
-        conn.execute("DELETE FROM message_favorites WHERE id=? AND session_key=?", (ident, key))
+        if conn.execute("DELETE FROM message_favorites WHERE id=? AND session_key=?", (ident, key)).rowcount:
+            conn.execute("DELETE FROM message_marks WHERE favorite_id=?", (ident,))
         conn.commit()
         return True, "已取消收藏"
     message, kind, ts, text = (arg.get(k) for k in ("messageId", "kind", "ts", "text"))
@@ -2678,6 +2680,36 @@ def save_message_favorite(conn, key, arg, now):
                  (ident, key, message, kind, ts, text, int(excerpt), now))
     conn.commit()
     return True, "已收藏选中的片段" if excerpt else "已收藏整条消息"
+
+
+def save_message_marks(conn, key, arg):
+    """收藏的消息里标黄的几段：页面算好合并后的全部区间整组发来，这里校验后整组替换。
+    start / end 是这条收藏显示出来的正文里的字符位置，text 是那段原文，正文排版变了时页面按 text 重新找。"""
+    ident, marks = arg.get("id"), arg.get("marks")
+    if not isinstance(ident, str) or not conn.execute(
+            "SELECT 1 FROM message_favorites WHERE id=? AND session_key=?", (ident, key)).fetchone():
+        return False, "这条收藏已经不在了"
+    if not isinstance(marks, list) or len(marks) > 200:
+        return False, "标黄的格式不对"
+    clean = []
+    for m in marks:
+        start, end, text = (m.get(k) for k in ("start", "end", "text")) if isinstance(m, dict) else (None,) * 3
+        if (type(start) is not int or type(end) is not int or not 0 <= start < end <= 10**7
+                or not isinstance(text, str) or not text.strip() or len(text) > 20000):
+            return False, "标黄的格式不对"
+        clean.append({"start": start, "end": end, "text": text})
+    clean.sort(key=lambda m: m["start"])
+    if any(a["end"] > b["start"] for a, b in zip(clean, clean[1:])):
+        return False, "标黄的几段有重叠"
+    old = conn.execute("SELECT marks FROM message_marks WHERE favorite_id=?", (ident,)).fetchone()
+    before = len(json.loads(old[0])) if old else 0
+    with conn:
+        if clean:
+            conn.execute("INSERT INTO message_marks (favorite_id, marks) VALUES (?, ?) ON CONFLICT(favorite_id) DO UPDATE SET marks=excluded.marks",
+                         (ident, json.dumps(clean, ensure_ascii=False)))
+        else:
+            conn.execute("DELETE FROM message_marks WHERE favorite_id=?", (ident,))
+    return True, "已取消标黄" if len(clean) < before else "已标黄"
 
 
 def safe_stat(path):
@@ -3683,21 +3715,34 @@ def board_autos(conn, items, now):
     return out
 
 
+def board_labeled(conn, items, now):
+    """打过搜索标签的会话（左栏「标签」和它的列表页用），最近有动静的在前。没记过你说的话的也列上，标题按会话名取。"""
+    keys = [r[0] for r in conn.execute("SELECT session_key FROM session_labels GROUP BY session_key")]
+    got = {x["key"]: x for x in board_refs(conn, keys, items, now)}
+    missing = [k for k in keys if k not in got]
+    for k, b in session_briefs(conn, missing, now).items() if missing else ():
+        last = conn.execute("SELECT MAX(t) FROM (SELECT last_activity AS t FROM sessions WHERE key=? UNION ALL "
+                            "SELECT MAX(ts) FROM links WHERE session_key=?)", (k, k)).fetchone()[0]
+        got[k] = {"key": k, "title": b["title"], "tool": b["tool"], "project": b["project"], "projectKey": b["projectKey"], "last": last or 0,
+                  "onBoard": False, "auto": b["auto"], "topic": saved_session_topic(conn, k), "labels": session_labels(conn, k)}
+    return sorted(got.values(), key=lambda x: -(x["last"] or 0))
+
+
 def board_refs(conn, keys, items, now):
     """左栏列的会话（收藏、定时任务）：在看板上的直接取；完成了、过了 30 天不在看板上的，标题和项目从「我说过的话」里取。"""
     by_key, out = {it["key"]: it for it in items}, []
     for k in keys:
         it = by_key.get(k)
         if it:
-            out.append({"key": k, "title": it["title"], "tool": it["tool"], "project": it["project"], "last": it["last"], "onBoard": True, "auto": it["auto"],
-                        "topic": it.get("topic")})
+            out.append({"key": k, "title": it["title"], "tool": it["tool"], "project": it["project"], "projectKey": it["projectKey"], "last": it["last"],
+                        "onBoard": True, "auto": it["auto"], "topic": it.get("topic"), "labels": session_labels(conn, k)})
             continue
         row = conn.execute("SELECT * FROM prompts WHERE session_key=? ORDER BY ts DESC LIMIT 1", (k,)).fetchone()
         if row:
             x = prompt_rows_to_items(conn, [row], now)[0]
             # 不在看板上的：只认你手动放进去的主题（#主题 要读对话记录才知道）
-            out.append({"key": k, "title": x["title"], "tool": x["tool"], "project": x["project"], "last": x["ts"], "onBoard": False, "auto": x["auto"],
-                        "topic": saved_session_topic(conn, k)})
+            out.append({"key": k, "title": x["title"], "tool": x["tool"], "project": x["project"], "projectKey": x["projectKey"], "last": x["ts"],
+                        "onBoard": False, "auto": x["auto"], "topic": saved_session_topic(conn, k), "labels": session_labels(conn, k)})
     return out
 
 
@@ -3855,7 +3900,7 @@ def build_board(conn, cfg, now=None):
         "tzOffsetMin": int(clock(now).astimezone(WORK_TZ).utcoffset().total_seconds() // 60),
         "staleHours": cfg["stale_hours"], "interruptedMin": cfg["interrupted_min"], "ctxWarn": CTX_WARN_PCT, "windowDays": cfg["window_days"], "doneDays": max(cfg["window_days"], DONE_KEEP_DAYS),
         "scanMs": int(meta_get(conn, "last_scan_ms", 0) or 0), "scanIntervalMin": cfg["scan_interval_min"],
-        "groups": groups, "hidden": hidden, "order": load_order(conn), "pins": pins, "archived": archived, "archivedTopics": archived_topics, "favs": board_favs(conn, items + hidden, now), "outFavs": board_out_favs(conn, now, items + hidden), "autos": board_autos(conn, items + hidden, now), "digestTime": cfg["digest_time"], "tzText": tz_text(cfg), "home": HOME, "projectDirs": USER_DIRS,
+        "groups": groups, "hidden": hidden, "order": load_order(conn), "pins": pins, "archived": archived, "archivedTopics": archived_topics, "favs": board_favs(conn, items + hidden, now), "outFavs": board_out_favs(conn, now, items + hidden), "autos": board_autos(conn, items + hidden, now), "labeled": board_labeled(conn, items + hidden, now), "digestTime": cfg["digest_time"], "tzText": tz_text(cfg), "home": HOME, "projectDirs": USER_DIRS,
         "topics": [{"id": t["id"], "name": t["name"], "project": t["project"], "projectLabel": tag_of(ctx["tags"], t["project"])[0]}
                    for t in topics if not t["deleted"]],
     }
@@ -4410,6 +4455,8 @@ class App:
                 return save_out_fav_place(c, arg, now)
             if action == "message_fav" and isinstance(arg, dict):
                 return save_message_favorite(c, key, arg, now)
+            if action == "message_marks" and isinstance(arg, dict):
+                return save_message_marks(c, key, arg)
             if action == "pin" and key and isinstance(arg, dict):
                 pins = [k for k in load_pins(c) if k != key]
                 if arg.get("on"):
