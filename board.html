@@ -3075,7 +3075,8 @@ function closeHist() {
   histFavoriteBar.replaceChildren();
   document.body.classList.remove("hist-on");
   histInert(false);
-  if (back && back.isConnected) back.focus({ preventScroll: true });
+  const trigger = back && (back.isConnected ? back : document.getElementById(back.id));
+  trigger?.focus({ preventScroll: true });
 }
 function goHistOutputs() {
   if (!hist) return;
@@ -4559,7 +4560,7 @@ function ctxAfterRender(list) {
 }
 function scard(s, si, faces) {
   const k = esc(s.key), open = hOpen[s.key], full = hFull[s.key];
-  const key = "clips[" + clip(s.key) + "]", hit = firstHit(s);
+  const id = "hs-" + domId(s.key), key = "clips[" + clip(s.key) + "]", hit = firstHit(s);
   const items = open ? (full ? full.items : []) : s.preview;
   const fk = faces[s.key];
   const meta = [hq && s.hits ? "命中 " + s.hits : "", hq && s.labelHit ? "标签匹配" : "", hq && s.handoff ? "压缩摘要里有" : "",
@@ -4567,7 +4568,7 @@ function scard(s, si, faces) {
   const more = open ? "收起" + ico("up") : (s.count > 1 ? "展开全部 " + s.count + " 句" : "展开") + (s.goal ? "和目标" : "") + ico("down");
   // 命中不止一条时，每条都能单独跳过去；只有一条就用底部的按钮
   const each = items.length + (s.handoff ? 1 : 0) + (s.notes || []).length > 1 ? s.title : null;
-  return '<article class="hcard" id="hs-' + domId(s.key) + '"><div class="fc">' + (fk ? face(fk, 24, si, REASON[fk]) : "") + "</div>" +
+  return '<article class="hcard" id="' + id + '"><div class="fc">' + (fk ? face(fk, 24, si, REASON[fk]) : "") + "</div>" +
     '<div class="hbody"><div class="htop">' + tagChip(s) + "<h3>" + hl(s.title) + '</h3>' + toolChip(s) +
     sessionLabelChips(s, hq) + '<span class="hm">' + esc(meta) + "</span></div>" +
     (open ? sessExtra(full) : "") +
@@ -4576,7 +4577,8 @@ function scard(s, si, faces) {
     '<div class="hfoot">' + btn(more, "toggleSession('" + k + "')", "ghost sm") +
     (hit ? hitBtn(s.key, hit, s.title, "ghost sm", "定位命中") : "") +
     btn("任务详情", "goTaskDetail(" + key + ")", "sec sm") +
-    btn(ico("chat", 14) + "查看对话历史", "openHist(" + key + ",null,clips[" + clip(s.title) + "])", "sec sm", "", 'aria-haspopup="dialog" aria-controls="hist"') +
+    btn(ico("chat", 14) + "查看对话历史", "openHist(" + key + ",null,clips[" + clip(s.title) + "])", "sec sm", "",
+      'id="' + id + '-history" aria-haspopup="dialog" aria-controls="hist"') +
     btn(openSessionLabel(s.key) + ico("open"), "openSession(" + key + ",this)", "ghost sm") +
     (s.linksTotal ? btn("AI 给的产出物 " + num(s.linksTotal) + " 个", "goOutputs('', '" + k + "')", "ghost sm", "到「产出物」里只看这个会话的") : "") + "</div></div></article>";
 }
