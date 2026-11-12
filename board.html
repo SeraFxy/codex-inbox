@@ -706,9 +706,12 @@ body.hist-on { overflow: hidden; }
 .orow.done .ot { color: var(--bk-ink-2); font-weight: 400; }
 .orow .os1 { display: inline-flex; align-items: center; gap: 6px; min-width: 0; max-width: 100%; }
 mark { background: var(--bk-lime-mark); color: #1B2026; border-radius: 3px; box-shadow: 0 0 0 2px var(--bk-lime-mark); }
-mark.kmark { background: var(--bk-mark); color: inherit; border-radius: 2px; box-shadow: 0 0 0 1px var(--bk-mark); }
-.hist-saved-text mark.kmark { cursor: pointer; }
-.mark-btn { position: absolute; z-index: 2; gap: 6px; box-shadow: var(--bk-e2); }
+.text-mark { cursor: pointer; }
+.text-mark[data-style="bold"] { font-weight: 700; }
+.text-mark[data-style="highlight"] { background: var(--bk-mark); border-radius: 2px; box-shadow: 0 0 0 1px var(--bk-mark); }
+.annotation-tools { position: fixed; z-index: 34; display: flex; gap: 4px; padding: 4px; border: 1px solid var(--bk-line);
+  border-radius: 12px; background: var(--bk-surface); box-shadow: var(--bk-e3); }
+.annotation-tools .btn[aria-pressed="true"] { background: var(--bk-sunken); color: var(--bk-ink-1); }
 .mark-dot { width: 12px; height: 12px; flex: none; border-radius: 4px; background: var(--bk-mark); box-shadow: inset 0 0 0 1px var(--bk-line-strong); }
 
 /* 改项目短码、新建或改名主题 */
@@ -986,7 +989,6 @@ mark.kmark { background: var(--bk-mark); color: inherit; border-radius: 2px; box
 <div class="hist" id="hist" role="dialog" aria-modal="true" aria-labelledby="hist-t" hidden>
   <div class="hist-scrim" onclick="closeHist()"></div>
   <aside class="hist-panel">
-    <button type="button" class="btn sec xs mark-btn" id="mark-btn" hidden onpointerdown="event.preventDefault()" onclick="markHistSelection()"><span class="mark-dot" aria-hidden="true"></span>标黄</button>
     <div class="hist-h" id="hist-h"></div>
     <div class="hist-tools">
       <button type="button" class="btn sec sm" id="hist-fav-back" hidden onclick="returnHistFavorites()">‹ 返回收藏列表</button>
@@ -1045,6 +1047,10 @@ mark.kmark { background: var(--bk-mark); color: inherit; border-radius: 2px; box
     <p class="of-err" id="of-error" role="status" hidden></p>
   </form>
 </dialog>
+<div class="annotation-tools" id="annotation-tools" role="group" aria-label="选中文字的标记" hidden onpointerdown="event.preventDefault()">
+  <button type="button" class="btn ghost xs" data-style="bold" aria-pressed="false" onclick="applyContentMark('bold')"><span>加粗</span></button>
+  <button type="button" class="btn ghost xs" data-style="highlight" aria-pressed="false" onclick="applyContentMark('highlight')"><span class="mark-dot" aria-hidden="true"></span><span>标黄</span></button>
+</div>
 <div class="menu" id="menu" role="menu" hidden></div>
 <div class="tagpop" id="tagpop" hidden></div>
 <div class="toast" id="toast" role="status" hidden></div>
@@ -1397,6 +1403,7 @@ function setSrc(t) {
 }
 
 let localAt = 0;   // 本地最近一次改顺序、置顶的时间
+let contentMarksRevision = 0;
 // 鼠标按着的时候不重画：刷新正好落在按下和松开之间，按钮被换掉，这一下就点空了。松开后再补画
 let pressing = false, owedRender = false, loadedAt = 0;
 function laterRender(fn) { if (pressing) owedRender = true; else fn(); }
@@ -1406,12 +1413,13 @@ for (const ev of ["pointerup", "pointercancel"]) document.addEventListener(ev, r
 window.addEventListener("blur", released);   // 按着鼠标切走了，收不到松开，也别一直不画
 function setLocal(patch) { Object.assign(state, patch); localAt = Date.now(); }
 async function load(refresh) {
-  const t0 = Date.now();
+  const t0 = Date.now(), marksRevision = contentMarksRevision;
   loadedAt = t0;
   try {
     const r = await fetch("/api/state" + (refresh ? "?refresh=" + refresh : ""), { cache: "no-store" });
     const next = await r.json();
     if (state && localAt >= t0) { next.order = state.order; next.pins = state.pins; next.archived = state.archived; next.archivedTopics = state.archivedTopics; next.favs = state.favs; next.outFavs = state.outFavs; }   // 拉取途中你刚调过顺序、置顶：先用本地的，免得被旧数据盖回去
+    if (state && contentMarksRevision !== marksRevision) next.contentMarks = state.contentMarks;
     failed = false;
     hopNow = new Set();
     allItems(next).forEach(it => {
@@ -1641,6 +1649,7 @@ function render() {
   if (tab === "outputs" && oReady) renderOutputs();
   if (tab === "favoriteOutputs") renderOutFavList();
   if (SESS_PAGES[tab]) renderSessList();
+  if (hist) paintContentMarks(histBody);
 }
 function setView(v) {
   view = v; store("ledger.view", v);
@@ -2801,6 +2810,7 @@ function renderDetail() {
   fitText(document.getElementById("rtext"));
   if (jumpTo && Date.now() < spyHold) goJump(); else spySec();   // 平滑滚动途中重画了（松开鼠标时补画、定时刷新）：接着滚过去
   hitSpot();
+  paintContentMarks(el);
   if (hist && hist.key && !hist.loading && hist.ts !== histSig(hist.key)) loadHist(true);   // 又说了新的：悄悄重取
 }
 // 详情顶上的概要：它现在什么状态、下一步是什么、这个会话的目标，一眼看完。状态的解释放在悬停提示里，要你特别处理的才直接写出来
@@ -2810,14 +2820,15 @@ function sumCard(it) {
   const loud = it.kind === "approval" || it.kind === "sched_failed" || it.kind === "wake_stuck" || f === "stuck" || ((d.doneAsk || alsoOf(it)) && f === "wait");
   let html = '<div class="sum"><div class="sum-now"><span class="sum-st"' + (ink ? ' style="color:var(--bk-' + ink + '-ink)"' : "") + ' title="' + esc(whyOf(it)) + '">' +
     esc(it.historical ? "最后记录" : badgeOf(it)) + "</span>" + (hidden ? '<p class="sum-why">' + esc(whyOf(it)) + "</p>"
-      : '<p class="now">' + esc(it.headline) + "</p>" + (loud || (f === "run" && (it.bg || it.bang)) ? '<p class="sum-why">' + esc(whyOf(it)) + "</p>" : "") +
+      : '<p class="now"' + markAttrs(it.key, "summary:" + d.replyTs) + '>' + esc(it.headline) + "</p>" + (loud || (f === "run" && (it.bg || it.bang)) ? '<p class="sum-why">' + esc(whyOf(it)) + "</p>" : "") +
         (d.statusNote ? '<p class="sum-why">' + esc(d.statusNote) + "</p>" : "") +
         (ctxHot(it) ? '<p class="sum-why">上下文已用 <span class="mono">' + ctxOf(it) + "%</span>，这件做完换个新会话接着做，省 token。</p>" : "")) + "</div>";
   if (d.goal) {
     const src = d.goalFrom === "handoff" ? "取自 " + when(d.goalTs) + " 上下文压缩时的摘要" : d.goalTs ? "写于 " + when(d.goalTs) : "";
-    html += '<dl class="sum-goal"><div><dt>目标' + (d.goalStatus ? '<span class="pill">' + esc(d.goalStatus) + "</span>" : "") + "</dt><dd>" + mdInline(d.goal) +
+    html += '<dl class="sum-goal"><div><dt>目标' + (d.goalStatus ? '<span class="pill">' + esc(d.goalStatus) + "</span>" : "") +
+      "</dt><dd><span" + markAttrs(it.key, "goal:" + (d.goalTs || 0)) + ">" + mdInline(d.goal) + "</span>" +
       (src ? '<span class="sum-src">' + esc(src) + "</span>" : "") + "</dd></div>" +
-      (d.criteria ? "<div><dt>完成标准</dt><dd>" + mdInline(d.criteria) + "</dd></div>" : "") + "</dl>";
+      (d.criteria ? "<div><dt>完成标准</dt><dd" + markAttrs(it.key, "criteria:" + (d.goalTs || 0)) + ">" + mdInline(d.criteria) + "</dd></div>" : "") + "</dl>";
   } else if (!hidden && !it.historical)
     html += '<div class="sum-goal nogoal"><span>还没写目标。有了一句目标，它跑偏的时候台账才能提醒你。</span>' +
       btn("让它补一句", "copyOpen(GOAL_ASK,'" + esc(it.key) + "')", "sec sm", "复制一句提示并打开会话，你粘贴发出去") + "</div>";
@@ -3021,7 +3032,7 @@ function replyOf(it) {
   return d.lastReply;
 }
 // 对话里的一条：你说的放浅灰底（长的先露 3 行），它说的按 Markdown 排（长的先露一屏）。re = 展开、收起后重画哪一页
-function tmHtml(m, id, full, re) {
+function tmHtml(m, id, full, re, key) {
   const open = bubOpen[id];
   if (m.kind === "handoff") return '<div class="tm-ho"><span>' + esc(when(m.ts)) + " 上下文满了，压缩过一次</span></div>";
   const you = m.kind === "you";
@@ -3031,8 +3042,9 @@ function tmHtml(m, id, full, re) {
   const long = you ? m.text.split("\n").length > 3 || m.text.length > 160 : m.text.split("\n").length > 30 || m.text.length > 1800;
   const imgs = (m.images || []).length ? '<div class="thumbs">' + m.images.map(f =>
     '<a href="/img/' + esc(f) + '" target="_blank" rel="noopener"><img src="/img/' + esc(f) + '" loading="lazy" alt=""></a>').join("") + "</div>" : "";
-  const body = you ? '<div class="tm-b you"><div class="tx' + (long && !open ? " fold3" : "") + '">' + esc(m.text) + "</div>" + imgs + "</div>"
-    : '<div class="tm-b md' + (long && !open ? " fold" : "") + '">' + mdHtml(m.text) + "</div>";
+  const attrs = markAttrs(key, m.id);
+  const body = you ? '<div class="tm-b you"' + attrs + '><div class="tx' + (long && !open ? " fold3" : "") + '">' + esc(m.text) + "</div>" + imgs + "</div>"
+    : '<div class="tm-b md' + (long && !open ? " fold" : "") + '"' + attrs + ">" + mdHtml(m.text) + "</div>";
   return '<div class="tm">' + head + body + (long ? '<div class="tm-a">' + btn(open ? "收起" + ico("up") : "展开全文" + ico("down"),
     "bubOpen['" + id + "']=!bubOpen['" + id + "'];" + (re || "renderDetail") + "()", "ghost xs") + "</div>" : "") + "</div>";
 }
@@ -3096,13 +3108,14 @@ function openHist(key = "", hit = null, title = "", favoriteReturn = null) {
 }
 function closeHist() {
   if (!hist) return;
+  closeMenu();
   rememberHistPosition();
   clearTimeout(histReadTimer);
   clearTimeout(histFindTimer); histFindTimer = 0;
   const back = hist.back;
   hist = null;
   document.getElementById("hist").hidden = true;
-  document.getElementById("mark-btn").hidden = true;
+  annotationTools.hidden = true;
   histBody.replaceChildren();
   histSessionList.replaceChildren();
   histSessionPicker.replaceChildren();
@@ -3187,7 +3200,8 @@ function applyHistSearch(scroll) {
     renderHistSaved(true);
     return;
   }
-  const marks = histBody.querySelectorAll("mark:not(.kmark)");
+  histBody.querySelectorAll("[data-mark-id]").forEach(clearPaintedMarks);
+  const marks = histBody.querySelectorAll("mark");
   marks.forEach(m => m.replaceWith(...m.childNodes));
   if (marks.length) histBody.normalize();   // 下一个词可以跨过上次高亮拆开的文字
   histBody.querySelectorAll("a[data-hit]").forEach(a => delete a.dataset.hit);
@@ -3198,7 +3212,7 @@ function applyHistSearch(scroll) {
       const text = body.textContent.toLowerCase();
       if (!words.every(w => text.includes(w) || (/^https?:\/\//.test(w) && [...body.querySelectorAll("a[href]")].some(a => a.href.toLowerCase().includes(w))))) continue;
       markIn(body, h.query);
-      const hits = body.querySelectorAll("mark:not(.kmark)");
+      const hits = body.querySelectorAll("mark");
       h.matches.push(...(hits.length ? hits : [body]));
     }
   } else if (h.hit) {
@@ -3209,6 +3223,7 @@ function applyHistSearch(scroll) {
     } else if (!b) markIn(histBody, h.hit.q || "", h.hit.url);
   }
   h.matchIndex = Math.max(0, Math.min(h.matchIndex, h.matches.length - 1));
+  paintContentMarks(histBody);
   showHistMatch(scroll);
 }
 function showHistMatch(scroll) {
@@ -3243,18 +3258,46 @@ function selectedHistText() {
   const text = selection.toString().trim();
   return body && histBody.contains(body) && text ? { id: body.parentElement.dataset.messageId, text } : null;
 }
-// 标黄：在收藏的消息里选中文字点「标黄」。存的是这条收藏显示出来的正文里的位置和那段原文，几段重叠或挨着的合成一段
-function markSpans(text, marks) {
+// 标记以正文里的位置为准，保留原字用于校对。搜索预览可能从原话中间开始。
+function markSpans(text, marks, offset = 0) {
   const out = [];
   (marks || []).forEach((m, i) => {
-    let start = m.start, end = m.end;
-    if (text.slice(start, end) !== m.text) { start = text.indexOf(m.text); end = start + m.text.length; }   // 排版变了，按原文找
-    if (start >= 0 && end > start) out.push({ start, end, i });
+    let start = Math.max(0, m.start - offset), end = offset ? Math.min(text.length, m.end - offset) : m.end;
+    const quote = offset ? m.text.slice(start + offset - m.start, end + offset - m.start) : m.text;
+    if (end <= start || text.slice(start, end) !== quote) {
+      if (offset) return;
+      start = text.indexOf(m.text);
+      if (start < 0 || text.indexOf(m.text, start + 1) >= 0) return;
+      end = start + m.text.length;
+    }
+    if (end > start) out.push({ start, end, i, style: m.style || "highlight" });
   });
   return out.sort((a, b) => a.start - b.start);
 }
-function paintMarks(root, marks) {
-  const spans = markSpans(root.textContent, marks);
+function editMarkRanges(marks, selection, style, remove) {
+  const styled = marks.filter(m => m.style === style), others = marks.filter(m => m.style !== style);
+  const { start, end } = selection;
+  const changed = [];
+  if (remove) {
+    for (const m of styled) {
+      if (m.end <= start || m.start >= end) { changed.push(m); continue; }
+      if (m.start < start) changed.push({ ...m, end: start, text: m.text.slice(0, start - m.start) });
+      if (m.end > end) changed.push({ ...m, start: end, text: m.text.slice(end - m.start) });
+    }
+  } else {
+    styled.push({ ...selection, style });
+    for (const m of styled.sort((a, b) => a.start - b.start)) {
+      const prev = changed[changed.length - 1];
+      if (!prev || m.start > prev.end) changed.push({ ...m });
+      else if (m.end > prev.end) {
+        prev.text += m.text.slice(prev.end - m.start);
+        prev.end = m.end;
+      }
+    }
+  }
+  return others.concat(changed.filter(m => m.text.trim())).sort((a, b) => a.style.localeCompare(b.style) || a.start - b.start);
+}
+function paintMarks(root, spans, style) {
   if (!spans.length) return;
   const walk = document.createTreeWalker(root, NodeFilter.SHOW_TEXT), nodes = [];
   while (walk.nextNode()) nodes.push(walk.currentNode);
@@ -3269,8 +3312,9 @@ function paintMarks(root, marks) {
       const a = Math.max(sp.start, cur), z = Math.min(sp.end, ne);
       if (z <= a) continue;
       if (a > cur) f.append(n.data.slice(cur - ns, a - ns));
-      const mk = document.createElement("mark");
-      mk.className = "kmark"; mk.dataset.mark = sp.i; mk.textContent = n.data.slice(a - ns, z - ns);
+      const mk = document.createElement("span");
+      mk.className = "text-mark"; mk.dataset.mark = sp.i; mk.dataset.style = style;
+      mk.textContent = n.data.slice(a - ns, z - ns);
       f.append(mk);
       cur = z;
     }
@@ -3279,67 +3323,125 @@ function paintMarks(root, marks) {
     n.replaceWith(f);
   }
 }
+const annotationTools = document.getElementById("annotation-tools");
+const paintedMarks = new WeakMap(), NO_MARKS = [];
+const MARK_NAMES = { bold: "加粗", highlight: "标黄" };
+let markSaving = false, markFrame = 0;
+function markAttrs(key, id, offset = 0) {
+  return key && id ? ' data-mark-key="' + esc(key) + '" data-mark-id="' + esc(id) + '"' +
+    (offset ? ' data-mark-offset="' + offset + '"' : "") : "";
+}
+function contentMarksFor(body) {
+  return state?.contentMarks?.[body.dataset.markKey]?.[body.dataset.markId] || NO_MARKS;
+}
+function clearPaintedMarks(body) {
+  const marks = body.querySelectorAll(".text-mark");
+  marks.forEach(m => m.replaceWith(...m.childNodes));
+  if (marks.length) body.normalize();
+  paintedMarks.delete(body);
+}
+function paintContentMarks(root = document) {
+  for (const body of root.querySelectorAll("[data-mark-id]")) {
+    const marks = contentMarksFor(body);
+    if (paintedMarks.get(body) === marks) continue;
+    if (paintedMarks.has(body)) clearPaintedMarks(body);
+    paintedMarks.set(body, marks);
+    if (!marks.length) continue;
+    const spans = markSpans(body.textContent, marks, Number(body.dataset.markOffset || 0));
+    for (const style of ["highlight", "bold"]) paintMarks(body, spans.filter(s => s.style === style), style);
+  }
+}
 function textAt(root, node, offset) {
   const r = document.createRange();
   r.selectNodeContents(root);
   r.setEnd(node, offset);
   return r.toString().length;
 }
-function favSelection() {
+function contentSelection() {
   const selection = window.getSelection();
-  if (!hist || !hist.saved || !selection || selection.isCollapsed || !selection.rangeCount) return null;
+  if (!state || !selection || selection.isCollapsed || !selection.rangeCount) return null;
   const range = selection.getRangeAt(0), node = range.commonAncestorContainer;
   const element = node.nodeType === Node.ELEMENT_NODE ? node : node.parentElement;
-  const body = element && element.closest(".hist-saved-text[data-fav]");
-  if (!body || !histBody.contains(body)) return null;
+  const body = element?.closest("[data-mark-id]");
+  if (!body || !body.isConnected || body.closest("[hidden], [inert]")) return null;
   const text = body.textContent;
   let start = textAt(body, range.startContainer, range.startOffset), end = textAt(body, range.endContainer, range.endOffset);
   while (start < end && /\s/.test(text[start])) start++;
   while (end > start && /\s/.test(text[end - 1])) end--;
-  return end > start ? { body, id: body.dataset.fav, start, end, rect: range.getBoundingClientRect() } : null;
+  if (end <= start) return null;
+  const offset = Number(body.dataset.markOffset || 0), previous = contentMarksFor(body);
+  return { body, text, start, end, offset, previous, spans: markSpans(text, previous, offset), range };
 }
-function placeMarkBtn() {
-  const button = document.getElementById("mark-btn"), sel = favSelection();
-  button.hidden = !sel;
-  if (!sel) return;
-  const panel = button.parentElement.getBoundingClientRect(), r = sel.rect, w = button.offsetWidth, h = button.offsetHeight;
-  button.style.left = Math.min(Math.max(8, r.left - panel.left + r.width / 2 - w / 2), panel.width - w - 8) + "px";
-  const above = r.top - panel.top - h - 8;
-  button.style.top = Math.min(Math.max(8, above >= 8 ? above : r.bottom - panel.top + 8), panel.height - h - 8) + "px";
+function selectionIsMarked(sel, style) {
+  let end = sel.start;
+  for (const span of sel.spans) {
+    if (span.style !== style || span.end <= end) continue;
+    if (span.start > end) break;
+    end = span.end;
+    if (end >= sel.end) return true;
+  }
+  return false;
 }
-async function saveFavMarks(h, b, marks, undo) {
-  if (h.marking) return;
-  h.marking = true;
+function positionAnnotationTools() {
+  markFrame = 0;
+  const sel = contentSelection();
+  if (!sel) { annotationTools.hidden = true; return; }
+  const r = sel.range.getBoundingClientRect();
+  const reader = sel.body.closest("#hist-body, #detail, .favorite-pane")?.getBoundingClientRect();
+  const top = Math.max(0, reader?.top || 0), bottom = Math.min(window.innerHeight, reader?.bottom ?? window.innerHeight);
+  if (!r.width || r.bottom <= top || r.top >= bottom) { annotationTools.hidden = true; return; }
+  const parent = sel.body.closest("#hist") || document.body;
+  if (annotationTools.parentElement !== parent) parent.append(annotationTools);
+  for (const button of annotationTools.querySelectorAll("button")) {
+    const marked = selectionIsMarked(sel, button.dataset.style);
+    button.setAttribute("aria-pressed", String(marked));
+    button.lastElementChild.textContent = (marked ? "取消" : "") + MARK_NAMES[button.dataset.style];
+  }
+  annotationTools.hidden = false;
+  const w = annotationTools.offsetWidth, h = annotationTools.offsetHeight;
+  const above = r.top - h - 8;
+  annotationTools.style.left = Math.max(8, Math.min(r.left + r.width / 2 - w / 2, window.innerWidth - w - 8)) + "px";
+  annotationTools.style.top = Math.max(top + 8, Math.min(above >= top + 8 ? above : r.bottom + 8, bottom - h - 8)) + "px";
+}
+function queueAnnotationTools() {
+  if (!markFrame) markFrame = requestAnimationFrame(positionAnnotationTools);
+}
+async function persistContentMarks(key, id, previous, marks, message, undo = true) {
+  if (markSaving) return;
+  markSaving = true;
   try {
-    const res = await post("message_marks", b.sessionKey, { id: b.id, marks });
-    if (!res.ok) return toast(res.message || "标黄没保存成功");
-    b.marks = marks;
-    if (hist === h && h.saved) renderHistSaved();
-    if (undo) toast(res.message, () => saveFavMarks(h, b, undo));
+    const res = await post("content_marks", key, { id, previous, marks });
+    if (!res.ok) {
+      toast(res.message || "标记没保存成功");
+      await load();
+      return;
+    }
+    const bySession = (state.contentMarks ||= {});
+    if (marks.length) (bySession[key] ||= {})[id] = marks;
+    else if (bySession[key]) delete bySession[key][id];
+    contentMarksRevision++;
+    paintContentMarks();
+    toast(message, undo ? () => persistContentMarks(key, id, marks, previous, "已撤销标记", false) : null);
   } catch (e) {
-    toast("操作失败，本机服务没响应");
+    toast("标记没保存成功，本机服务没响应");
   } finally {
-    h.marking = false;
+    markSaving = false;
   }
 }
-function markHistSelection() {
-  const h = hist, sel = favSelection(), b = sel && h.favorites.find(x => x.id === sel.id);
-  if (!b) return;
-  const text = sel.body.textContent, merged = [];
-  for (const sp of markSpans(text, b.marks).concat([{ start: sel.start, end: sel.end }]).sort((x, y) => x.start - y.start)) {
-    const last = merged[merged.length - 1];
-    if (last && sp.start <= last.end) last.end = Math.max(last.end, sp.end);
-    else merged.push({ start: sp.start, end: sp.end });
-  }
+function applyContentMark(style) {
+  const sel = contentSelection();
+  if (!sel || markSaving) return;
+  const { body, text, start, end, offset, previous, spans } = sel;
+  const remove = selectionIsMarked(sel, style);
+  const aligned = offset ? previous : spans.map(s => ({ start: s.start, end: s.end, text: text.slice(s.start, s.end), style: s.style }));
+  const marks = editMarkRanges(aligned, { start: start + offset, end: end + offset, text: text.slice(start, end) }, style, remove);
   window.getSelection().removeAllRanges();
-  document.getElementById("mark-btn").hidden = true;
-  saveFavMarks(h, b, merged.map(m => ({ start: m.start, end: m.end, text: text.slice(m.start, m.end) })));
+  annotationTools.hidden = true;
+  persistContentMarks(body.dataset.markKey, body.dataset.markId, previous, marks, "已" + (remove ? "取消" : "") + MARK_NAMES[style]);
 }
-function unmarkFav(id, i) {
+function removeContentMark({ key, id, previous, index }) {
   closeMenu();
-  const h = hist, b = h && h.favorites.find(x => x.id === id);
-  if (!b || !b.marks || !b.marks[i]) return;
-  saveFavMarks(h, b, b.marks.filter((_, j) => j !== i), b.marks.slice());
+  persistContentMarks(key, id, previous, previous.filter((_, i) => i !== index), "已取消" + MARK_NAMES[previous[index].style]);
 }
 function updateHistFavoriteControls() {
   const h = hist, button = document.getElementById("hist-favs");
@@ -3522,7 +3624,8 @@ function histFavoriteRow(b, words, lower) {
 }
 function histFavoriteText(b) {
   const md = !b.excerpt && b.kind === "it";
-  return '<div class="hist-saved-text ' + (md ? "md" : "tx") + '" data-fav="' + esc(b.id) + '">' + (md ? mdHtml(b.text) : esc(b.text)) + "</div>";
+  const id = b.excerpt ? "excerpt:" + b.id : b.messageId;
+  return '<div class="hist-saved-text ' + (md ? "md" : "tx") + '"' + markAttrs(b.sessionKey, id) + ">" + (md ? mdHtml(b.text) : esc(b.text)) + "</div>";
 }
 function histFavoriteDetail(b) {
   return '<article class="hist-saved-detail" data-id="' + esc(b.id) + '"><header class="hist-saved-detail-head">' +
@@ -3577,11 +3680,8 @@ function renderHistSaved(reset = false) {
       histBody.focus({ preventScroll: true });
     }
   }
-  for (const body of histBody.querySelectorAll(".hist-saved-text[data-fav]")) {
-    const b = h.favorites.find(x => x.id === body.dataset.fav);
-    if (b) paintMarks(body, b.marks);
-  }
   if (h.query) for (const body of histBody.querySelectorAll(".hist-saved-text")) markIn(body, h.query);
+  paintContentMarks(histBody);
   h.matches = [];
   showHistMatch(false);
   histBody.scrollTop = top;
@@ -3606,12 +3706,14 @@ function histMsg(m, at, lost, who) {
     '<a href="/img/' + esc(f) + '" target="_blank" rel="noopener"><img src="/img/' + esc(f) + '" loading="lazy" alt=""></a>').join("") + "</div>" : "";
   const star = m.id && m.text && m.text.trim() ? btn(ico("star", 15), "saveHistMessage(this.closest('.hmsg').dataset.messageId,this)",
     "ghost xs hist-star", "收藏整条消息", 'aria-label="收藏整条消息" aria-pressed="false"') : "";
+  const attrs = markAttrs(hist.key, m.id);
   return '<div class="tm hmsg ' + (you ? "you" : "it") + (at ? " at" : "") + '"' +
     (m.id ? ' data-message-id="' + esc(m.id) + '"' : "") + '><div class="tm-h">' +
     (you ? '<span class="who you">你</span>' : face("mark", 20) + '<span class="who">' + esc(who) + "</span>") +
     "<span>" + esc(tag) + (m.ts ? esc(messageTime(m.ts)) : "") + '</span><div class="hm-actions">' +
     btn(ico("copy", 13) + "复制", "copyClip(" + clip(m.text) + ")", "ghost xs cp") + star + "</div></div>" +
-    (you ? '<div class="tm-b you"><div class="tx">' + esc(m.text) + "</div>" + imgs + "</div>" : '<div class="tm-b md">' + mdHtml(m.text) + "</div>") + "</div>";
+    (you ? '<div class="tm-b you"' + attrs + '><div class="tx">' + esc(m.text) + "</div>" + imgs + "</div>"
+      : '<div class="tm-b md"' + attrs + ">" + mdHtml(m.text) + "</div>") + "</div>";
 }
 function histLoadNotice(h) {
   if (h.loading && !h.items) return '<span class="lmore">读取' + (h.saved ? "收藏的消息" : "对话记录") + "…</span>";
@@ -3637,7 +3739,7 @@ function renderHist() {
   document.getElementById("hist-fav-back").hidden = h.saved || !h.favoriteReturn;
   document.getElementById("hist-foot").hidden = h.saved;
   document.getElementById("hist-selection").hidden = true;
-  document.getElementById("mark-btn").hidden = true;
+  annotationTools.hidden = true;
   if (h.saved) {
     renderHistSaved(h.scroll);
     updateHistFavoriteControls();
@@ -3667,10 +3769,6 @@ function renderHist() {
     }
   }
   histBody.innerHTML = html;
-  for (const b of h.favorites) {
-    const body = !b.excerpt && (b.marks || []).length && histBody.querySelector('.hmsg[data-message-id="' + b.messageId + '"] > .tm-b');
-    if (body) paintMarks(body, b.marks);
-  }
   updateHistFavoriteControls();
   const findOnOpen = h.scroll && !!h.query;
   applyHistSearch(findOnOpen);
@@ -3682,7 +3780,7 @@ function renderHist() {
   if (position && (opening || !atEnd)) return restoreHistPosition(position);
   const at = opening && histBody.querySelector(".hmsg.at");
   if (!at) { histBody.scrollTop = opening || atEnd ? histBody.scrollHeight : top; return; }
-  const ms = at.querySelectorAll("mark:not(.kmark)");   // 它问你的、替你定的多在回复末尾，滚到最后一个标亮的词；给链接的滚到那个链接
+  const ms = at.querySelectorAll("mark");   // 它问你的、替你定的多在回复末尾，滚到最后一个标亮的词；给链接的滚到那个链接
   (at.querySelector("a[data-hit]") || (ms.length ? ms[h.hit.kind === "ask" || h.hit.kind === "call" ? ms.length - 1 : 0] : at)).scrollIntoView({ block: "center" });
 }
 // 压缩时的交接：Claude 上下文满了压缩时写给自己接着干活的，只取最后一段。正文长，详情打开时再取
@@ -3816,9 +3914,9 @@ function handoffSec(it) {
   if (!g || g.ts !== d.handoffTs || g.loading) body = '<span class="lmore">读取中…</span>';
   else if (!g.text) body = '<span class="lmore">没读到这段压缩摘要。</span>';
   else {
-    const text = g.showZh && g.zh ? g.zh : g.text, open = bubOpen[id];
+    const translated = g.showZh && g.zh, text = translated || g.text, open = bubOpen[id];
     acts = btn(ico("copy", 13) + "复制", "copyClip(" + clip(text) + ")", "ghost xs") + hoTr(it.key, g);
-    body = '<div class="handoff md' + (open ? "" : " fold") + '">' + mdHtml(text) + "</div>" +
+    body = '<div class="handoff md' + (open ? "" : " fold") + '"' + markAttrs(it.key, "handoff:" + g.ts + (translated ? ":zh" : "")) + ">" + mdHtml(text) + "</div>" +
       '<div class="tm-a">' + btn(open ? "收起" + ico("up") : "展开全文" + ico("down"), "bubOpen['" + id + "']=!bubOpen['" + id + "'];renderDetail()", "ghost xs") + "</div>";
   }
   return '<div class="part dsec"><div class="sec-hd"><span class="sec-t">上下文压缩时的摘要<span class="pill mono">' + esc(when(d.handoffTs)) + "</span></span>" +
@@ -4000,7 +4098,7 @@ function askCtxHtml(it, d, i, old) {
   if (!r.text.trim()) return '<span class="lmore">' + (lab ? esc(lab) + "：" : "") + "那一轮除了 ❓ 没写别的说明。</span>";
   const long = r.text.split("\n").length > 24 || r.text.length > 1400;
   return (lab ? '<span class="sec-l">' + esc(lab) + "</span>" : "") +
-    '<div class="md' + (long && !open ? " fold" : "") + '">' + mdHtml(r.text) + "</div>" +
+    '<div class="md' + (long && !open ? " fold" : "") + '"' + markAttrs(it.key, "ask:" + (ts || it.details.replyTs) + ":" + i) + ">" + mdHtml(r.text) + "</div>" +
     (long ? '<div class="tm-a">' + btn(open ? "收起" + ico("up") : "展开全文" + ico("down"), "bubOpen['" + id + "']=!bubOpen['" + id + "'];renderDetail()", "ghost xs") + "</div>" : "");
 }
 // ---------------- 待你决定 / 推它一下：选项拼成一条回复，框里能直接改，只复制并打开会话
@@ -4132,7 +4230,7 @@ function todoPart(it, p, nudges) {
   return '<div class="part"><div class="sec-hd"><span class="sec-t">要你做</span>' +
     btn((on ? "收起" : "它怎么说") + ico(on ? "up" : "down"), "togTodo('" + k + "')", "ghost xs dtog",
       on ? "" : "看它在回复里怎么讲这件事，不用往下翻对话", 'aria-expanded="' + on + '"') + "</div>" +
-    '<p class="todo">' + mdInline(todoOf(it)) + "</p>" +
+    '<p class="todo"' + markAttrs(it.key, "todo:" + it.details.replyTs) + ">" + mdInline(todoOf(it)) + "</p>" +
     (on ? '<div class="dctx">' + todoCtxHtml(it) + "</div>" : "") +
     '<span class="sec-l">它停在这里等你' + (ds ? "做这件事，同时等你拍板下面 " + ds + " 件" : "") +
     "。做完了回它一句，它才会接着做；不用它接着做了，点右上角「完成」。</span>" + quickRow(it, p, nudges) + "</div>";
@@ -4159,7 +4257,7 @@ function todoCtxHtml(it) {
   todoQuote[it.key] = quote;
   const long = r.text.split("\n").length > 24 || r.text.length > 1400;
   return (r.whole ? '<span class="sec-l">没找到专讲这件的一段，这是它这一轮的整段回复</span>' : "") +
-    '<div class="md' + (long && !open ? " fold" : "") + '">' + mdHtml(r.text) + "</div>" +
+    '<div class="md' + (long && !open ? " fold" : "") + '"' + markAttrs(it.key, "todo-context:" + it.details.replyTs) + ">" + mdHtml(r.text) + "</div>" +
     ((long || quote) ? '<div class="tm-a">' + (quote ? btn(ico("copy", 13) + "复制引用的话", "copyQuote('" + k + "')", "ghost xs", "复制上面 > 开头的那几行，比如要你转给别人的问题") : "") +
       (long ? btn(open ? "收起" + ico("up") : "展开全文" + ico("down"), "bubOpen['" + id + "']=!bubOpen['" + id + "'];renderDetail()", "ghost xs") : "") + "</div>" : "");
 }
@@ -4242,7 +4340,7 @@ function callsSec(it) {
   const k = esc(it.key), fresh = it.details.callsFresh || 0;
   return '<div class="part"><div class="sec-hd"><span class="sec-t">它替你定的 · ' + cs.length + "</span>" +
     (fresh ? '<span class="mono">最近一轮 ' + fresh + " 件</span>" : "") + "</div>" +
-    '<div class="dlist">' + cs.map((c, i) => '<div class="dq"><span class="q">' + esc(c.t) + (c.why ? '<span class="qw">' + esc(c.why) + "</span>" : "") +
+    '<div class="dlist">' + cs.map((c, i) => '<div class="dq"><span class="q"' + markAttrs(it.key, c.id) + ">" + esc(c.t) + (c.why ? '<span class="qw">' + esc(c.why) + "</span>" : "") +
       '</span><span class="opts"><span class="age">' + esc(when(c.ts)) + "</span>" +
       btn("改", "objectCall('" + k + "'," + i + ")", "ghost xs", "复制「关于你替我定的…」这句开头并打开会话，你接着写想怎么改") + "</span></div>").join("") + "</div></div>";
 }
@@ -4388,12 +4486,13 @@ function hl(text, q) {
   if (words.length) out = out.replace(new RegExp("(" + words.join("|") + ")", "gi"), "<mark>$1</mark>");
   return out;
 }
-function snippet(text, q) {
+function snippetStart(text, q) {
   // 折叠时从第一个命中词前面一点开始显示，免得命中的地方被折掉
   const words = qWords(q == null ? hq : q);
   let at = -1;
   for (const w of words) { const i = text.toLowerCase().indexOf(w.toLowerCase()); if (i >= 0 && (at < 0 || i < at)) at = i; }
-  return at > 120 ? "…" + text.slice(Math.max(0, at - 60)) : text;
+  const start = at > 120 ? at - 60 : 0;
+  return start && /[\udc00-\udfff]/.test(text[start]) ? start - 1 : start;
 }
 // 从搜索结果跳回看板：定位到命中的那一条。聊天记录（你说的、它问你的、替你定的、给过的链接）打开对话历史并停在那条；
 // 压缩摘要、目标、状态就在详情里，滚过去标亮。不在看板上的会话也能看对话历史
@@ -4434,13 +4533,14 @@ function firstHit(s) {
   return n ? { kind: n.kind, ts: n.ts, text: n.text, url: n.url } : null;
 }
 function line(it, id, key, title) {
-  const text = it.text;
+  const text = it.text.replace(/\r\n?/g, "\n");
   const long = text.length > 300 || text.split("\n").length > 6;
-  const open = hLong[id];
+  const open = hLong[id], start = long && !open ? snippetStart(text) : 0;
   const imgs = (it.images || []).length ? '<div class="thumbs">' + it.images.map(f =>
     '<a href="/img/' + esc(f) + '" target="_blank" rel="noopener"><img src="/img/' + esc(f) + '" loading="lazy" alt=""></a>').join("") + "</div>" : "";
   return '<div class="hline"><span class="ht">' + esc(it.ts ? when(it.ts) : it.timeText) + "</span>" +
-    '<div class="hx"><p class="htext' + (long && !open ? " clamp" : "") + '">' + hl(long && !open ? snippet(text) : text) + "</p>" + imgs + "</div>" +
+    '<div class="hx"><p class="htext' + (long && !open ? " clamp" : "") + '">' + (start ? "…" : "") +
+    "<span" + markAttrs(key, it.id, start) + ">" + hl(text.slice(start)) + "</span></p>" + imgs + "</div>" +
     '<span class="hacts">' + (long ? btn(open ? "收起" : "展开全文", "hLong['" + id + "']=!hLong['" + id + "'];renderHistory()", "ghost xs") : "") +
     ctxBtn(key, "you", it.ts, text) + (title != null ? hitBtn(key, { kind: "you", ts: it.ts, text }, title) : "") + btn("复制", "copyClip(" + clip(text) + ")", "ghost xs") + "</span></div>";
 }
@@ -4451,14 +4551,16 @@ function sessExtra(full) {
 }
 function hoLine(h, key, title) {
   // 搜索结果里：压缩时的交接对上的那一段
-  return '<div class="hline"><span class="ht" title="' + esc(when(h.ts)) + ' 上下文压缩时写的摘要">压缩摘要</span><div class="hx"><p class="htext">' + hl(h.text) + "</p></div>" +
+  return '<div class="hline"><span class="ht" title="' + esc(when(h.ts)) + ' 上下文压缩时写的摘要">压缩摘要</span><div class="hx"><p class="htext"' +
+    markAttrs(key, h.id) + ">" + hl(h.text) + "</p></div>" +
     '<span class="hacts">' + ctxBtn(key, "handoff", h.ts, h.text) + (title != null ? hitBtn(key, { kind: "handoff", ts: h.ts, text: h.text }, title) : "") + "</span></div>";
 }
 // 搜索结果里：AI 问你的 ❓、替你定的 🧭、📌 状态行、🎯 目标里对上的那一句（只在「全部」里搜）
 const NOTE_KIND = { ask: ["它问你", "它问你、要你拍板的事"], call: ["替你定", "它没问你、自己定了的事"], status: ["状态", "它最后写的状态行"], goal: ["目标", "这个会话的目标和完成标准"], link: ["给过链接", "它在这一轮回复里给过这个链接"] };
 function noteLine(n, key, title) {
   const k = NOTE_KIND[n.kind] || ["AI", ""];
-  return '<div class="hline"><span class="ht" title="' + esc((n.ts ? when(n.ts) + " · " : "") + k[1]) + '">' + k[0] + '</span><div class="hx"><p class="htext">' + hl(n.text) + "</p></div>" +
+  return '<div class="hline"><span class="ht" title="' + esc((n.ts ? when(n.ts) + " · " : "") + k[1]) + '">' + k[0] + '</span><div class="hx"><p class="htext"' +
+    markAttrs(key, n.id) + ">" + hl(n.text) + "</p></div>" +
     '<span class="hacts">' + ctxBtn(key, n.kind, n.ts, n.text) + (title != null ? hitBtn(key, { kind: n.kind, ts: n.ts, text: n.text, url: n.url }, title) : "") + "</span></div>";
 }
 // 前后对话：搜到的那一句（你说的、它问你的、替你定的、状态、目标、交接）在对话里前后各几条，就在结果卡片里展开。
@@ -4537,12 +4639,12 @@ function ctxPanel(key) {
     body = (s > 0 ? '<div class="tm-more">' + btn("再往前看 " + num(Math.min(CTX_MORE, s)) + " 条（还有 " + num(s) + " 条）" + ico("up"), "ctxMore('" + k + "',-1)", "ghost sm") + "</div>" : "") +
       items.slice(s, e).map((m, i) => {
         const j = s + i;
-        if (j !== at) return tmHtml(m, id(j), true, "renderHistory");
+        if (j !== at) return tmHtml(m, id(j), true, "renderHistory", key);
         // 状态、目标那两行看板显示时去掉了，回复正文里没有：单独列在下面。交接只是一条分隔线：把对上的那段列出来
         const extra = !f.lost && (c.a.kind === "status" || c.a.kind === "goal" || c.a.kind === "handoff") ? '<div class="ctx-hit"><span class="tg">' +
           (kind ? kind[0] : "压缩摘要") + '</span><p class="htext">' + esc(c.a.text) + "</p></div>" : "";
         const m2 = Object.assign({}, m, { label: f.lost ? "台账记下的" : "搜到的" + (kind ? "「" + kind[0] + "」" : "") });
-        return '<div class="ctx-at">' + tmHtml(m2, id(j), true, "renderHistory") + extra + "</div>";
+        return '<div class="ctx-at">' + tmHtml(m2, id(j), true, "renderHistory", key) + extra + "</div>";
       }).join("") +
       (e < items.length ? '<div class="tm-more">' + btn("再往后看 " + num(Math.min(CTX_MORE, items.length - e)) + " 条（还有 " + num(items.length - e) + " 条）" + ico("down"), "ctxMore('" + k + "',1)", "ghost sm") + "</div>" : "");
   }
@@ -4565,7 +4667,7 @@ function markIn(root, q, url, literal = false) {
   if (!words.length) return;
   const one = new RegExp(words.join("|"), "i"), all = new RegExp(words.join("|"), "gi");
   const walk = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
-    acceptNode: n => n.parentElement.closest("mark:not(.kmark), button") || !one.test(n.data) ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_ACCEPT });
+    acceptNode: n => n.parentElement.closest("mark, button") || !one.test(n.data) ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_ACCEPT });
   const nodes = [];
   while (walk.nextNode()) nodes.push(walk.currentNode);
   nodes.forEach(n => {
@@ -4639,6 +4741,7 @@ function renderHistory() {
       (cross || other ? "你没说过「" + esc(hq) + "」" : "翻遍了，没找到「" + esc(hq) + "」") + "</b><span>" +
       (cross ? "上面是 AI 给你的产出物里对得上的。" : other ? "AI 给你的产出物里有 " + num(hOutHits) + " 个对得上。" : "换个说法，或者少打几个词试试。") + "</span></span>" +
       (other ? btn("去产出物里看", "setTab('outputs')", "sec sm", "", 'style="margin-left: auto"') : "") + "</div>";
+    paintContentMarks(list);
     return;
   }
   const faces = {};
@@ -4654,6 +4757,7 @@ function renderHistory() {
   if (hSessions.length < hTotal) html += btn("再加载 50 个会话", "search(hq, true)", "sec hd", "", 'style="align-self: flex-start"');
   list.innerHTML = html;
   ctxAfterRender(list);
+  paintContentMarks(list);
 }
 
 // ---------------- 产出物：AI 在回复里给你的链接和本机文件，能搜，能跳回给出它的会话
@@ -4778,7 +4882,7 @@ function orow(o, q) {
     '<div class="om">' + outLink(o, "ot" + (o.gone && !o.arch ? " gone" : ""), hl(o.text, q)) + archMark(o) +
     (o.cat === "file" ? '<span class="op">' + hl(o.path || o.url, q) + (o.gone ? (o.arch ? "　原文件已经不在了，点开是看板留档的副本" : "　已经不在了") : o.twin === "file" ? "　原 worktree 已清理，这是主工作区里的同名文件"
       : o.twin === "web" ? "　原 worktree 已清理，点开是仓库默认分支上的版本" : "") + "</span>" : "") +
-    (o.ctx ? '<p class="oc" title="AI 给出它时说的话">「' + hl(o.ctx, q) + "」</p>" : "") +
+    (o.ctx ? '<p class="oc" title="AI 给出它时说的话">「<span' + markAttrs(s0?.key, o.ctxId) + ">" + hl(o.ctx, q) + "</span>」</p>" : "") +
     '<div class="os">' + (MR_STATE[o.state] ? '<span class="chip sm">' + MR_STATE[o.state] + "</span>" : "") + o.sessions.map(x => sessLink(x, q, o)).join("") + more + "</div></div>" +
     '<div class="oa"><span class="ostm">' + outEdit(o) + outStar(o) + '<span class="otm">' + esc(when(o.ts)) + '</span></span><span class="oacts">' + acts + "</span></div></div>";
 }
@@ -4834,7 +4938,9 @@ function renderOutputs() {
   });
   html += "</div></section>";
   if (oItems.length < oTotal) html += btn("再加载 100 个", "searchOut(oq, true)", "sec hd", "", 'style="align-self: flex-start"');
-  document.getElementById("hlist").innerHTML = html;
+  const list = document.getElementById("hlist");
+  list.innerHTML = html;
+  paintContentMarks(list);
 }
 
 // ---------------- 事件
@@ -4858,6 +4964,12 @@ document.addEventListener("click", e => {
 });
 document.addEventListener("keydown", e => {
   if (ime(e) || outFavEditor.open) return;
+  if (e.key === "Escape" && !annotationTools.hidden) {
+    e.preventDefault();
+    window.getSelection().removeAllRanges();
+    annotationTools.hidden = true;
+    return;
+  }
   if (hist) {   // 对话历史开着：Esc 关掉，⌘K 去搜索，别的键不碰后面的看板
     if (e.key === "Escape") { e.preventDefault(); closeHist(); }
     else if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") { e.preventDefault(); goSearch(); }
@@ -4919,26 +5031,30 @@ railSizer.addEventListener("keydown", e => {
 ["rail", "queue", "detail", "favorite-pane", "session-pane"].forEach(id => document.getElementById(id).addEventListener("scroll", closeMenu, { passive: true }));
 document.getElementById("detail").addEventListener("scroll", spySec, { passive: true });
 histBody.addEventListener("scroll", () => {
-  if (!document.getElementById("mark-btn").hidden) placeMarkBtn();
   clearTimeout(histReadTimer);
   histReadTimer = setTimeout(rememberHistPosition, 250);
 }, { passive: true });
 document.addEventListener("selectionchange", () => {
-  if (!hist) return;
-  document.getElementById("hist-selection").hidden = !selectedHistText();
-  placeMarkBtn();
+  if (hist) document.getElementById("hist-selection").hidden = !selectedHistText();
+  queueAnnotationTools();
 });
-histBody.addEventListener("click", e => {
-  // 点标黄的地方：可以取消这一段
-  const mk = e.target.closest(".hist-saved-text mark.kmark");
+document.addEventListener("scroll", queueAnnotationTools, { capture: true, passive: true });
+document.addEventListener("click", e => {
+  const mk = e.target.closest(".text-mark");
   if (!mk || e.target.closest("a") || selecting()) return;
-  e.stopPropagation();   // 页面上点外面会关菜单，这里刚打开的不能被它关掉
-  const body = mk.closest(".hist-saved-text");
-  showMenu(mk, "kmark", mi("取消标黄", "unmarkFav(clips[" + clip(body.dataset.fav) + "]," + Number(mk.dataset.mark) + ")"), { left: true });
+  const body = mk.closest("[data-mark-id]"), previous = paintedMarks.get(body);
+  if (!previous) return;
+  const { markKey: key, markId: id } = body.dataset;
+  let actions = "";
+  for (let el = mk; el && body.contains(el); el = el.parentElement.closest(".text-mark")) {
+    const index = Number(el.dataset.mark), mark = previous[index];
+    if (mark) actions += mi("取消" + MARK_NAMES[mark.style], "removeContentMark(clips[" + clip({ key, id, previous, index }) + "])");
+  }
+  if (actions) showMenu(mk, "content-mark", actions, { left: true });
 });
 window.addEventListener("pagehide", rememberHistPosition);
 addEventListener("scroll", spySec, { passive: true });   // 窄屏时详情跟着整页滚
-window.addEventListener("resize", () => { closeMenu(); updateRailWidth(); });
+window.addEventListener("resize", () => { closeMenu(); updateRailWidth(); queueAnnotationTools(); });
 // 切回来时拉一次新的；5 秒内来回切就不拉了，省得每切一次整页重画一次
 document.addEventListener("visibilitychange", () => { if (!document.hidden && Date.now() - loadedAt > 5000) load("1"); });
 setInterval(() => { if (!document.hidden && !tagEdit) load("1"); }, 60000);  // 顺带读新记录，服务端一分钟最多读一次

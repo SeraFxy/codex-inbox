@@ -129,6 +129,8 @@ CREATE TABLE IF NOT EXISTS message_favorites (
   ts REAL NOT NULL, text TEXT NOT NULL, excerpt INTEGER NOT NULL, saved_at REAL NOT NULL);
 CREATE INDEX IF NOT EXISTS message_favorites_session ON message_favorites(session_key, saved_at);
 CREATE TABLE IF NOT EXISTS message_marks (favorite_id TEXT PRIMARY KEY, marks TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS content_marks (
+  session_key TEXT NOT NULL, content_id TEXT NOT NULL, marks TEXT NOT NULL, PRIMARY KEY (session_key, content_id));
 CREATE TABLE IF NOT EXISTS mr_state (ref TEXT PRIMARY KEY, state TEXT, title TEXT, at REAL);
 CREATE TABLE IF NOT EXISTS images (session_key TEXT, sha TEXT, ts REAL, file TEXT, bytes INTEGER, PRIMARY KEY (session_key, sha));
 CREATE INDEX IF NOT EXISTS images_session ON images(session_key, ts);
@@ -199,6 +201,7 @@ def open_db():
     conn.row_factory = sqlite3.Row
     conn.executescript(SCHEMA)
     migrate_links(conn)
+    migrate_content_marks(conn)
     load_user_dirs(conn)
     return conn
 
@@ -2336,6 +2339,7 @@ def merge_batches(items, gap=3):
         if prev and prev["key"] == it["key"] and abs(prev["ts"] - it["ts"]) <= gap:
             a, b = (prev, it) if prev["ts"] <= it["ts"] else (it, prev)
             prev["text"] = a["text"] + "\n" + b["text"]
+            prev["_first_ts"] = min(prev.get("_first_ts", prev["ts"]), it["ts"])
             prev["images"] = a.get("images", []) + b.get("images", [])
             continue
         out.append(it)
@@ -2424,7 +2428,10 @@ def prompt_rows_to_items(conn, rows, now):
                       else "codex resume %s" % sid,
         })
     attach_images(conn, out)
-    return merge_batches(out)
+    items = merge_batches(out)
+    for it in items:
+        it["id"] = history_id("you", it.pop("_first_ts", it["ts"]) or 0, it["text"])
+    return items
 
 
 def _like(w):
@@ -2591,7 +2598,8 @@ def search_sessions(conn, q, limit=50, offset=0, tool="", cross=True, handoff=Fa
         if words:
             h = conn.execute("SELECT ts, text FROM handoffs WHERE session_key=? AND " + hwhere, [key] + hargs).fetchone()
             if h:
-                ho = {"ts": h["ts"], "text": handoff_snippet(h["text"], q)}
+                text = handoff_snippet(h["text"], q)
+                ho = {"ts": h["ts"], "text": text, "id": history_id("handoff-snippet", h["ts"], text)}
             notes = [{"kind": n["kind"], "ts": n["ts"] or 0, "text": n["text"]} for n in conn.execute(
                 "SELECT kind, ts, text FROM ai_notes WHERE session_key=? AND " + hwhere + " ORDER BY ts DESC LIMIT 3", [key] + hargs)]
             g = conn.execute("SELECT goal, criteria, at FROM goals WHERE session_key=? AND " + gwhere, [key] + hargs).fetchone()
@@ -2600,12 +2608,14 @@ def search_sessions(conn, q, limit=50, offset=0, tool="", cross=True, handoff=Fa
             if target:
                 for x in conn.execute("SELECT l.url, l.ctx, l.ts FROM links l WHERE l.session_key=? AND (" + target[0] + ") ORDER BY l.ts DESC LIMIT 3", [key] + target[1]):
                     notes.append({"kind": "link", "ts": x["ts"] or 0, "url": x["url"], "text": link_name(x["url"]) + ("：" + x["ctx"] if x["ctx"] else "")})
+            for note in notes:
+                note["id"] = history_id(note["kind"], note["ts"], note["text"])
         out.append({"key": key, "title": head["title"], "project": head["project"], "projectKey": head["projectKey"],
                     "color": head["color"], "tool": head["tool"], "toolLabel": head["toolLabel"], "auto": head["auto"], "count": n,
                     "hits": r["hits"], "lastTs": r["last_ts"], "lastText": fmt_time(r["last_ts"], now), "resume": head["resume"],
                     "goal": ex["goal"], "linksTotal": ex["linksTotal"], "labels": ex["labels"], "labelHit": label_hit,
                     "handoff": ho, "notes": notes,
-                    "preview": [{"ts": it["ts"], "timeText": it["timeText"], "text": it["text"], "images": it["images"]}
+                    "preview": [{"id": it["id"], "ts": it["ts"], "timeText": it["timeText"], "text": it["text"], "images": it["images"]}
                                 for it in items]})
     first = conn.execute("SELECT MIN(ts), COUNT(*), COUNT(DISTINCT session_key) FROM prompts" + by_tool[0], by_tool[1]).fetchone()
     res = {"q": q, "total": total, "promptTotal": prompt_total, "sessions": out, "all": first[1], "allSessions": first[2],
@@ -2689,17 +2699,10 @@ def save_message_marks(conn, key, arg):
     if not isinstance(ident, str) or not conn.execute(
             "SELECT 1 FROM message_favorites WHERE id=? AND session_key=?", (ident, key)).fetchone():
         return False, "这条收藏已经不在了"
-    if not isinstance(marks, list) or len(marks) > 200:
+    clean = clean_mark_ranges(marks)
+    if clean is None:
         return False, "标黄的格式不对"
-    clean = []
-    for m in marks:
-        start, end, text = (m.get(k) for k in ("start", "end", "text")) if isinstance(m, dict) else (None,) * 3
-        if (type(start) is not int or type(end) is not int or not 0 <= start < end <= 10**7
-                or not isinstance(text, str) or not text.strip() or len(text) > 20000):
-            return False, "标黄的格式不对"
-        clean.append({"start": start, "end": end, "text": text})
-    clean.sort(key=lambda m: m["start"])
-    if any(a["end"] > b["start"] for a, b in zip(clean, clean[1:])):
+    if overlapping_marks(clean):
         return False, "标黄的几段有重叠"
     old = conn.execute("SELECT marks FROM message_marks WHERE favorite_id=?", (ident,)).fetchone()
     before = len(json.loads(old[0])) if old else 0
@@ -2710,6 +2713,76 @@ def save_message_marks(conn, key, arg):
         else:
             conn.execute("DELETE FROM message_marks WHERE favorite_id=?", (ident,))
     return True, "已取消标黄" if len(clean) < before else "已标黄"
+
+
+def clean_mark_ranges(marks, styled=False):
+    if not isinstance(marks, list) or len(marks) > (400 if styled else 200):
+        return None
+    clean = []
+    for m in marks:
+        if not isinstance(m, dict):
+            return None
+        start, end, text = (m.get(k) for k in ("start", "end", "text"))
+        if (type(start) is not int or type(end) is not int or not 0 <= start < end <= 10**7
+                or not isinstance(text, str) or not text.strip() or len(text) > 20000):
+            return None
+        item = {"start": start, "end": end, "text": text}
+        if styled:
+            style = m.get("style")
+            if (style not in ("bold", "highlight") or re.search(r"[\ud800-\udfff]", text)
+                    or end - start != len(text.encode("utf-16-le")) // 2):
+                return None
+            item["style"] = style
+        clean.append(item)
+    clean.sort(key=lambda m: (m.get("style", ""), m["start"]))
+    return clean
+
+
+def overlapping_marks(marks):
+    return any(a.get("style") == b.get("style") and a["end"] > b["start"] for a, b in zip(marks, marks[1:]))
+
+
+def migrate_content_marks(conn):
+    """旧收藏的标黄复制到正文。整条收藏和对话用同一份标记，收藏片段按自己的正文保存。"""
+    if meta_get(conn, "content_marks_migrated"):
+        return
+    with conn:
+        for row in conn.execute("SELECT f.id, f.session_key, f.message_id, f.excerpt, m.marks "
+                                "FROM message_marks m JOIN message_favorites f ON f.id=m.favorite_id"):
+            ident = "excerpt:" + row["id"] if row["excerpt"] else row["message_id"]
+            marks = [dict(m, style="highlight") for m in json.loads(row["marks"])]
+            conn.execute("INSERT OR IGNORE INTO content_marks VALUES (?,?,?)",
+                         (row["session_key"], ident, json.dumps(marks, ensure_ascii=False)))
+        meta_set(conn, "content_marks_migrated", "1")
+
+
+def content_marks(conn):
+    out = {}
+    for key, ident, marks in conn.execute("SELECT session_key, content_id, marks FROM content_marks"):
+        out.setdefault(key, {})[ident] = json.loads(marks)
+    return out
+
+
+def save_content_marks(conn, key, arg):
+    ident = arg.get("id")
+    if not isinstance(ident, str) or not re.fullmatch(r"[a-zA-Z0-9:_.-]{1,160}", ident):
+        return False, "找不到这段正文"
+    if not isinstance(key, str) or (not session_known(conn, key) and not conn.execute(
+            "SELECT 1 FROM message_favorites WHERE session_key=? LIMIT 1", (key,)).fetchone()):
+        return False, "找不到正文所在的会话"
+    marks = clean_mark_ranges(arg.get("marks"), styled=True)
+    if marks is None or overlapping_marks(marks):
+        return False, "没能保存标记，试试选短一点的文字"
+    with conn:
+        row = conn.execute("SELECT marks FROM content_marks WHERE session_key=? AND content_id=?", (key, ident)).fetchone()
+        if (json.loads(row[0]) if row else []) != arg.get("previous"):
+            return False, "这段正文的标记刚有更新，请重新选择"
+        if marks:
+            conn.execute("INSERT INTO content_marks VALUES (?,?,?) ON CONFLICT(session_key,content_id) DO UPDATE SET marks=excluded.marks",
+                         (key, ident, json.dumps(marks, ensure_ascii=False)))
+        else:
+            conn.execute("DELETE FROM content_marks WHERE session_key=? AND content_id=?", (key, ident))
+    return True, "已保存标记"
 
 
 def safe_stat(path):
@@ -2859,6 +2932,8 @@ def search_outputs(conn, q, cat="", key="", tool="", limit=100, offset=0, priori
               "customTitle": head["custom_title"] or "", "titleAt": head["title_at"],
               "text": out_text(url, label, head["title"]), "ctx": head["ctx"] or "", "ts": r["ts"], "timeText": fmt_time(r["ts"], now),
               "nSessions": len(sess), "sessions": sess[:3], "state": head["state"] or ""}
+        if it["ctx"]:
+            it["ctxId"] = history_id("output-context", it["key"], it["ctx"])
         if it["cat"] == "file":
             it["path"] = home_rel(url)
             it["gone"] = not os.path.exists(url)
@@ -3543,7 +3618,8 @@ def make_item(st, now, cfg, ov, sched, titles, goals, ctx, historical=False):
             "decisions": decisions, "doneAsk": done_ask, "alsoWait": also, "alsoAt": also_at, "oldAsks": old_asks,
             # 「等你」写的那件事：没有 ❓ 要拍板时，详情里单列「要你做」，做完了回它一句
             "todo": (status.get("desc") or "") if status and status.get("kind") == "me" else "",
-            "calls": [{"t": c["t"], "why": c.get("why") or "", "ts": c.get("ts") or 0}   # 新的在前，同一轮的按原文顺序
+            "calls": [{"t": c["t"], "why": c.get("why") or "", "ts": c.get("ts") or 0,
+                       "id": history_id("call", c.get("ts"), c["t"], c.get("why"))}   # 新的在前，同一轮的按原文顺序
                       for c in sorted(calls[-20:], key=lambda c: -(c.get("ts") or 0))],
             "callsFresh": fresh_calls,
             "cwd": st.get("cwd") or "", "branch": st.get("branch") or "", "id": st["id"], "resume": resume,
@@ -4338,6 +4414,7 @@ class App:
             except Exception:
                 log("sync_cmux 出错：%s" % traceback.format_exc())
             board = build_board(self.conn, self.cfg)
+            board["contentMarks"] = content_marks(self.conn)
             for group in board["groups"]:
                 for item in group["items"]:
                     self.queue_web_titles(item["details"]["links"])
@@ -4462,6 +4539,8 @@ class App:
                 return save_message_favorite(c, key, arg, now)
             if action == "message_marks" and isinstance(arg, dict):
                 return save_message_marks(c, key, arg)
+            if action == "content_marks" and isinstance(arg, dict):
+                return save_content_marks(c, key, arg)
             if action == "pin" and key and isinstance(arg, dict):
                 pins = [k for k in load_pins(c) if k != key]
                 if arg.get("on"):
@@ -4844,17 +4923,16 @@ class Handler(BaseHTTPRequestHandler):
             history = q.get("favorites") == ["1"]
             with APP.lock:
                 rows = APP.conn.execute("SELECT * FROM prompts WHERE session_key=? ORDER BY ts", (key,)).fetchall()
-                you = [{"kind": "you", "ts": x["ts"], "text": x["text"], "images": x.get("images") or []}
+                you = [{"kind": "you", "id": x["id"], "ts": x["ts"], "text": x["text"], "images": x.get("images") or []}
                        for x in prompt_rows_to_items(APP.conn, rows, time.time())]
                 paths = [r["path"] for r in APP.conn.execute("SELECT path FROM files WHERE session_key=?", (key,))]
                 favorites = message_favorites(APP.conn, key) if history and key else []
             its = transcript_replies(key.split(":", 1)[0], paths) if ":" in key else []
             items = sorted(you + its, key=lambda x: (x["ts"] or 0, x["kind"] != "you"))
-            result = {"items": items, "you": len(you), "it": sum(1 for x in its if x["kind"] == "it")}
+            result = {"items": [dict(m, id=history_id("it", m["ts"] or 0, m["text"])) if m["kind"] == "it" else m for m in items],
+                      "you": len(you), "it": sum(1 for x in its if x["kind"] == "it")}
             if history:
                 result["favorites"] = favorites
-                result["items"] = [dict(m, id=history_id(m["kind"], m["ts"] or 0, m["text"]))
-                                   if m["kind"] != "handoff" else m for m in items]
             return self._send(200, json.dumps(result, ensure_ascii=False))
         if u.path == "/api/message-favorites":
             key = (parse_qs(u.query).get("key") or [""])[0]

@@ -54,10 +54,6 @@ class MessageFavoritesTest(unittest.TestCase):
                          {(self.key, 'Example Codex', self.body), (other, 'Example Claude', self.body)})
 
 
-if __name__ == '__main__':
-    unittest.main()
-
-
 class MessageMarksTest(unittest.TestCase):
     def setUp(self):
         self.conn = sqlite3.connect(':memory:')
@@ -100,3 +96,38 @@ class MessageMarksTest(unittest.TestCase):
         self.assertEqual(self.conn.execute('SELECT COUNT(*) FROM message_marks').fetchone()[0], 1)
         self.assertTrue(ledger.save_message_favorite(self.conn, self.key, {'on': False, 'id': self.fav['id']}, 3)[0])
         self.assertEqual(self.conn.execute('SELECT COUNT(*) FROM message_marks').fetchone()[0], 0)
+
+    def test_legacy_marks_migrate_once_to_the_message_or_the_saved_excerpt(self):
+        old = {'start': 0, 'end': 13, 'text': 'Organizations'}
+        self.assertTrue(self.mark([old])[0])
+        excerpt = {'messageId': self.fav['messageId'], 'kind': 'it', 'ts': 100, 'text': 'Each user', 'excerpt': True}
+        self.assertTrue(ledger.save_message_favorite(self.conn, self.key, excerpt, 2)[0])
+        excerpt_id = ledger.message_favorites(self.conn, self.key)[0]['id']
+        self.assertTrue(self.mark([{'start': 0, 'end': 4, 'text': 'Each'}], ident=excerpt_id)[0])
+        ledger.migrate_content_marks(self.conn)
+        migrated = ledger.content_marks(self.conn)[self.key]
+        self.assertEqual(migrated[self.fav['messageId']], [dict(old, style='highlight')])
+        self.assertEqual(migrated['excerpt:' + excerpt_id], [{'start': 0, 'end': 4, 'text': 'Each', 'style': 'highlight'}])
+        self.assertTrue(ledger.save_content_marks(self.conn, self.key, {
+            'id': self.fav['messageId'], 'previous': migrated[self.fav['messageId']], 'marks': [],
+        })[0])
+        ledger.migrate_content_marks(self.conn)
+        self.assertNotIn(self.fav['messageId'], ledger.content_marks(self.conn)[self.key])
+
+    def test_marks_can_be_saved_without_a_favorite_and_conflicting_edits_are_rejected(self):
+        ident = 'goal:150'
+        self.conn.execute('INSERT INTO sessions VALUES (?,?,?)', (self.key, 150, '{}'))
+        self.assertTrue(ledger.save_message_favorite(self.conn, self.key, {'on': False, 'id': self.fav['id']}, 3)[0])
+        bold = {'start': 0, 'end': 4, 'text': 'Plan', 'style': 'bold'}
+        yellow = {'start': 2, 'end': 6, 'text': 'an A', 'style': 'highlight'}
+        save = lambda previous, marks: ledger.save_content_marks(self.conn, self.key, {'id': ident, 'previous': previous, 'marks': marks})
+        self.assertTrue(save([], [yellow, bold])[0])
+        self.assertFalse(save([], [yellow])[0])
+        self.assertFalse(save([bold, yellow], [bold, dict(yellow, style='bold')])[0])
+        self.assertEqual(ledger.content_marks(self.conn), {self.key: {ident: [bold, yellow]}})
+        self.assertEqual(ledger.message_favorites(self.conn, self.key), [])
+        self.assertEqual(ledger.content_marks(self.conn)[self.key][ident], [bold, yellow])
+
+
+if __name__ == '__main__':
+    unittest.main()
