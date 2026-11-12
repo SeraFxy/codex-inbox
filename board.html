@@ -775,6 +775,8 @@ mark { background: var(--bk-lime-mark); color: #1B2026; border-radius: 3px; box-
 .of-list-table tr:hover td, .of-list-table tr:focus-within td { background: var(--bk-ground); }
 .of-list-table .of-name { color: var(--bk-ink-1); font-size: 14px; font-weight: 600; line-height: 22px; text-decoration: none; }
 .of-list-table .of-name:hover { text-decoration: underline; }
+.of-list-table .out-label-edit { margin-left: 4px; vertical-align: middle; }
+.links .out-label-edit { flex: none; }
 .of-list-table .of-project { font-family: var(--bk-mono); }
 .of-list-table .of-source, .of-list-table .of-time { color: var(--bk-ink-3); font-size: 12px; line-height: 16px; }
 .of-list-table .of-source { display: block; }
@@ -786,6 +788,7 @@ mark { background: var(--bk-lime-mark); color: #1B2026; border-radius: 3px; box-
 .list-labels { display: flex; flex-wrap: wrap; gap: 4px; }
 .list-labels .chip { max-width: 100%; height: auto; min-height: 18px; white-space: normal; overflow-wrap: anywhere; }
 #out-fav-list-rows .list-labels { margin-top: 4px; }
+.out-label-choices { max-height: 120px; overflow: auto; overscroll-behavior: contain; }
 .of-list-empty { margin: 0; padding: 24px; border: 1px solid var(--bk-line); border-radius: 14px; background: var(--bk-surface); color: var(--bk-ink-3); font-size: 14px; }
 @media (max-width: 640px) {
   .of-list-filters { grid-template-columns: repeat(2, minmax(0, 1fr)); }
@@ -811,7 +814,7 @@ mark { background: var(--bk-lime-mark); color: #1B2026; border-radius: 3px; box-
 
 @media (max-width: 640px) {
   .btn, .tab, .opt, .seg.src button, .dnav button, .rof-tree .ri, .rof-tree .ra, .of-edit .lfilter, .out-session-menu button,
-  .of-list-labels .btn, .list-labels .chip { min-height: 40px; }
+  .of-list-labels .btn, .list-labels button.chip { min-height: 40px; }
   .of-edit { padding: 16px; }
   .dq .dctx { margin-left: 0; }
   .row .s { min-height: 32px; padding-right: 40px; }
@@ -1547,7 +1550,8 @@ function outLink(l, cls, inner) {
 }
 function linkList(links) {
   return '<ul class="links">' + links.map(l => '<li class="' + (l.cat === "mr" && !mrLive(l) ? "done" : "") + (outFavOn(l.key) ? " fav" : "") + '"><span class="lk">' + esc(l.text !== l.name ? l.name : "") +
-    "</span>" + outLink(l, l.gone && !l.arch ? "gone" : "") + (MR_STATE[l.state] ? '<span class="chip sm lst">' + MR_STATE[l.state] + "</span>" : "") + archMark(l) + outEdit(l) + outStar(l) +
+    "</span>" + outLink(l, l.gone && !l.arch ? "gone" : "") + (MR_STATE[l.state] ? '<span class="chip sm lst">' + MR_STATE[l.state] + "</span>" : "") + archMark(l) +
+    (l.cat === "mr" ? "" : outLabelEdit(l)) + outEdit(l) + outStar(l) +
     '<span class="lt">' + esc(l.timeText) + "</span></li>").join("") + "</ul>";
 }
 // MR 和流水线：临时的，开着的 MR 列出来，合并了、关了的和流水线、提交收起来
@@ -1757,9 +1761,9 @@ function railListRow(kind, count, open, toggle) {
     '" onclick="event.preventDefault();' + action + '"><span class="nm" title="' + label + '">' + label + "</span>" + cntHtml({ n: count }, true) + ico("send", 16) + "</a></div>";
 }
 // 左栏「标签」：会话详情里打的搜索标签，每个标签几个会话；点一个标签进列表页只看它
-function labelGroups(items) {
+function labelGroups(items, labelsOf = x => x.labels || []) {
   const by = new Map();
-  for (const x of items) for (const label of x.labels || []) {
+  for (const x of items) for (const label of labelsOf(x)) {
     const k = label.toLowerCase();
     if (!by.has(k)) by.set(k, { key: k, label, n: 0 });
     by.get(k).n++;
@@ -1905,13 +1909,78 @@ async function saveOutputName(reset) {
     const res = await post("out_name", editing.key, { title });
     if (!res.ok) { toast(res.message || "名称没保存成功"); return; }
     if (tagEdit === editing) closeTag();
-    Object.values(dOut).forEach(data => { data.version = -1; });
-    oLoaded = false;
-    await load();
-    if (tab === "outputs") await searchOut(oq);
+    await refreshOutputViews();
     toast(res.message || "名称已保存");
   } catch (e) { toast("保存失败：本机服务没响应，输入的名称仍保留"); }
   finally { editing.saving = false; }
+}
+async function refreshOutputViews() {
+  Object.values(dOut).forEach(data => { data.version = -1; });
+  oLoaded = false;
+  await load();
+  if (tab === "outputs") await searchOut(oq);
+  if (tab === "search") await search(hq);
+  else hLoaded = false;
+}
+function outputLabels(key) { return state?.outputLabels?.[key] || []; }
+function outFavLabels(item) {
+  const labels = new Map();
+  for (const label of [...(item.labels || []), ...outputLabels(item.key)]) labels.set(label.toLowerCase(), label);
+  return [...labels.values()];
+}
+function outLabelEdit(item) {
+  return item.key ? btn(ico("plus", 12) + "标签", "editOutputLabels(this.dataset.outputKey,this)", "ghost xs out-label-edit",
+    "添加或编辑产出物标签", 'aria-label="编辑产出物标签" data-output-key="' + esc(item.key) + '"') : "";
+}
+function editOutputLabels(key, anchor) {
+  closeMenu();
+  const previous = outputLabels(key), inherited = state?.outFavs?.find(x => x.key === key)?.labels || [];
+  const choices = labelGroups([...(state?.labeled || []), ...Object.values(state?.outputLabels || {}).map(labels => ({ labels }))]);
+  tagEdit = { kind: "output-labels", key, previous };
+  const input = openPop(anchor, '<label for="out-label-value">产出物标签</label>' +
+    '<input id="out-label-value" maxlength="800" placeholder="输入标签，用逗号隔开" value="' + esc(previous.join("，")) + '">' +
+    (choices.length ? '<span class="note">已有标签</span><div class="of-list-labels out-label-choices" role="group" aria-label="已有标签">' +
+      choices.map(x => btn(esc("#" + x.label), "toggleOutputLabel(this.dataset.label)", "sec xs", "",
+        'data-label="' + esc(x.label) + '" aria-pressed="false"')).join("") + "</div>" : "") +
+    (inherited.length ? '<span class="note">来源会话标签</span>' + listLabelChips(inherited, "") : "") +
+    '<div class="bar end">' + btn("取消", "closeTag()", "sec xs") + btn("保存", "saveOutputLabelEdit()", "pri xs") + "</div>", saveOutputLabelEdit);
+  input.addEventListener("input", () => syncOutputLabelChoices(input));
+  syncOutputLabelChoices(input);
+  input.setSelectionRange(input.value.length, input.value.length);
+}
+function outputLabelValues(value) {
+  return value.split(/[，,]/).map(label => label.trim().replace(/^[#＃]+/, "").trim().replace(/\s+/g, " ")).filter(Boolean);
+}
+function syncOutputLabelChoices(input) {
+  const labels = new Set(outputLabelValues(input.value).map(l => l.toLowerCase()));
+  for (const button of document.querySelectorAll(".out-label-choices button")) {
+    button.setAttribute("aria-pressed", String(labels.has(button.dataset.label.toLowerCase())));
+  }
+}
+function toggleOutputLabel(label) {
+  const input = document.getElementById("out-label-value"), key = label.toLowerCase(), values = outputLabelValues(input.value);
+  const kept = values.filter(x => x.toLowerCase() !== key);
+  input.value = (kept.length === values.length ? kept.concat(label) : kept).join("，");
+  syncOutputLabelChoices(input);
+}
+async function saveOutputLabelEdit() {
+  const editing = tagEdit, input = document.getElementById("out-label-value");
+  if (editing?.kind !== "output-labels" || editing.saving || !input) return;
+  const labels = outputLabelValues(input.value);
+  const controls = document.querySelectorAll("#tagpop input, #tagpop button");
+  editing.saving = true;
+  controls.forEach(el => { el.disabled = true; });
+  try {
+    const res = await post("out_labels", editing.key, { labels, previous: editing.previous });
+    if (!res.ok) { toast(res.message || "标签没保存成功"); return; }
+    if (tagEdit === editing) closeTag();
+    await refreshOutputViews();
+    toast(res.message);
+  } catch (e) { toast("暂时读不到保存结果，请刷新后核对"); }
+  finally {
+    editing.saving = false;
+    controls.forEach(el => { el.disabled = false; });
+  }
 }
 function sessionLabelChips(item, query = "") {
   const tags = (item.labels || []).map(label => '<span class="chip" title="' + esc(label) + '">' + hl("#" + label, query) + "</span>");
@@ -1971,6 +2040,7 @@ function outFavMore(el, x) {
   const hit = { kind: "link", ts: x.ts, url: x.url, text: x.railText };
   showMenu(el, x.key, mi(ico("open", 14) + "打开", "closeMenu();openOutFav(clips[" + clip(x) + "])") +
     (x.sessionKey ? mi("看它是在哪说的", "closeMenu();goHit(clips[" + clip(x.sessionKey) + "],clips[" + clip(hit) + "])") : "") +
+    mi("编辑标签…", "editOutputLabels(clips[" + clip(x.key) + "],menu.el)") +
     (tab === "favoriteOutputs" ? mi("改分类…", "openOutFavEditor(clips[" + clip(x.key) + "])") : "") +
     mi("取消收藏", "toggleOutFav(clips[" + clip(x) + "])"));
 }
@@ -1983,7 +2053,7 @@ function goOutFavList() {
 function renderOutFavLabelFilters(favs) {
   const bar = document.getElementById("out-fav-list-labels"), active = document.activeElement;
   const focusKey = bar.contains(active) ? active.dataset.label : null;
-  const labels = labelGroups(favs);
+  const labels = labelGroups(favs, outFavLabels);
   if (!labels.some(g => g.key === outFavLabel)) outFavLabel = "";
   bar.hidden = !labels.length;
   const choices = [["", "全部标签"], ...labels.map(g => [g.key, "#" + g.label])];
@@ -2013,13 +2083,13 @@ function renderOutFavList() {
   for (const p of scoped) for (const g of p.groups) {
     if (group.value && g.key !== group.value) continue;
     for (const x of g.items) {
-      const title = x.railText || x.text || x.name, tags = x.labels || [];
+      const title = x.railText || x.text || x.name, tags = outFavLabels(x);
       if (outFavLabel && !tags.some(l => l.toLowerCase() === outFavLabel)) continue;
       const searchText = [title, x.url, x.name, p.label, p.key, g.label, ...tags.map(l => "#" + l)].join(" ").toLowerCase();
       if (!words.every(w => searchText.includes(w))) continue;
       const time = x.ts ? when(x.ts) : "";
       const source = x.name && x.name !== title && x.name !== g.label ? '<span class="of-source">' + esc(x.name) + "</span>" : "";
-      rows += "<tr><td>" + outLink(x, "of-name", hl(title, q)) + source +
+      rows += "<tr><td>" + outLink(x, "of-name", hl(title, q)) + outLabelEdit(x) + source +
         '<span class="of-source of-mobile">' + esc([p.label, g.label, time].filter(Boolean).join(" · ")) + "</span>" +
         listLabelChips(tags, q, "setOutFavLabel") + "</td>" +
         '<td class="of-desktop of-project">' + esc(p.label) + '</td><td class="of-desktop">' + esc(g.label) +
@@ -2050,8 +2120,12 @@ function fillSelect(select, all, choices) {
 }
 function listLabelChips(labels, q, action) {
   if (!labels.length) return "";
-  return '<span class="list-labels">' + labels.map(label => '<button type="button" class="chip sm" data-label="' + esc(label.toLowerCase()) +
-    '" title="按「#' + esc(label) + '」筛选" onclick="' + action + '(this.dataset.label)"><span>' + hl("#" + label, q) + '</span></button>').join("") + "</span>";
+  return '<span class="list-labels">' + labels.map(label => {
+    const text = "<span>" + hl("#" + label, q) + "</span>";
+    return action ? '<button type="button" class="chip sm" data-label="' + esc(label.toLowerCase()) +
+      '" title="按「#' + esc(label) + '」筛选" onclick="' + action + '(this.dataset.label)">' + text + "</button>"
+      : '<span class="chip sm">' + text + "</span>";
+  }).join("") + "</span>";
 }
 
 // ---------------- 左栏各块的列表页：收藏的对话、标签、定时任务（会话一行一个，能搜、按项目和标签筛）
@@ -2932,7 +3006,7 @@ function outSec(it) {
   if (got && !got.loading && (got.total !== d.linksTotal || got.version !== (d.linksVersion || 0))) expandOut(it.key, true);   // 新产物、自动标题或手动名称变了：悄悄重取
   let html = '<div class="part dsec dout"><div class="sec-hd"><span class="sec-t">AI 给的产出物</span><span class="mono">' + num(d.linksTotal) + " 个</span></div>";
   html += '<div class="ocats" id="dout-cats">' + outCats(it.key) + '</div>';
-  html += '<input class="lfilter" id="dout-search" type="search" aria-label="搜索当前分类的产出物" autocomplete="off" placeholder="在当前分类里找：名字、链接、AI 的原话" value="' +
+  html += '<input class="lfilter" id="dout-search" type="search" aria-label="搜索当前分类的产出物" autocomplete="off" placeholder="在当前分类里找：名字、链接、标签或 AI 的原话" value="' +
     esc(dOutQ[it.key] || "") + '" oninput="filterOut(\'' + k + '\',this.value)">';
   html += '<span class="lmore" id="dout-summary" role="status">' + outSummary(it.key) + '</span>';
   html += '<div id="dout-list" aria-busy="' + !!(outData(it.key) || {}).loading + '">' + outRows(it.key) + '</div>';
@@ -4883,8 +4957,9 @@ function orow(o, q) {
     (o.cat === "file" ? '<span class="op">' + hl(o.path || o.url, q) + (o.gone ? (o.arch ? "　原文件已经不在了，点开是看板留档的副本" : "　已经不在了") : o.twin === "file" ? "　原 worktree 已清理，这是主工作区里的同名文件"
       : o.twin === "web" ? "　原 worktree 已清理，点开是仓库默认分支上的版本" : "") + "</span>" : "") +
     (o.ctx ? '<p class="oc" title="AI 给出它时说的话">「<span' + markAttrs(s0?.key, o.ctxId) + ">" + hl(o.ctx, q) + "</span>」</p>" : "") +
+    listLabelChips(outputLabels(o.key), q) +
     '<div class="os">' + (MR_STATE[o.state] ? '<span class="chip sm">' + MR_STATE[o.state] + "</span>" : "") + o.sessions.map(x => sessLink(x, q, o)).join("") + more + "</div></div>" +
-    '<div class="oa"><span class="ostm">' + outEdit(o) + outStar(o) + '<span class="otm">' + esc(when(o.ts)) + '</span></span><span class="oacts">' + acts + "</span></div></div>";
+    '<div class="oa"><span class="ostm">' + outLabelEdit(o) + outEdit(o) + outStar(o) + '<span class="otm">' + esc(when(o.ts)) + '</span></span><span class="oacts">' + acts + "</span></div></div>";
 }
 function outCount(cat) {
   return cat === "all" ? CATS.slice(1).reduce((total, [c]) => total + (oCounts[c] || 0), 0) : oCounts[cat] || 0;

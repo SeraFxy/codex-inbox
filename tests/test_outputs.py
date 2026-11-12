@@ -61,6 +61,14 @@ class OutputCategoriesTest(unittest.TestCase):
         result = ledger.search_outputs(self.conn, '', key=self.key)
         self.assertEqual([x['cat'] for x in result['items']], ['code', 'web', 'file', 'feishu'])
 
+    def test_search_combines_output_labels_with_text_and_uses_the_shared_document_key(self):
+        key = ledger.feishu_doc('https://example.feishu.cn/docx/ABCDEFGHIJKLMNOP')
+        self.assertTrue(ledger.save_output_labels(self.conn, key, ['Résumé audit'], [])[0])
+        result = ledger.search_outputs(self.conn, '#RÉSUMÉ document', 'feishu', self.key)
+        self.assertEqual([x['key'] for x in result['items']], [key])
+        self.assertEqual(result['counts']['feishu'], 1)
+        self.assertEqual(ledger.search_outputs(self.conn, '#RÉSUMÉ', 'web', self.key)['total'], 0)
+
     def test_session_picker_includes_older_sources_without_prompts(self):
         older = 'claude:historical'
         self.add('https://github.com/example/project/pull/2', 10, 'Historical review', older)

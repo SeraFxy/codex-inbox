@@ -75,6 +75,23 @@ class FavoriteOutputOriginsTest(unittest.TestCase):
         self.assertEqual(item['projectKey'], 'History')
         self.assertIsNone(item['topic'])
 
+    def test_manual_labels_are_independent_of_source_labels_and_favorites(self):
+        source, url = 'claude:source', 'https://example.feishu.cn/docx/ABCDEFGHIJKLMNOP'
+        self.add(source, url + '#block', 100)
+        key = ledger.feishu_doc(url)
+        self.assertTrue(ledger.save_session_labels(self.conn, source, ['Source label'])[0])
+        self.assertTrue(self.action('out_labels', {'labels': [' #Review ', 'review'], 'previous': []}, key)[0])
+        self.assertFalse(self.action('out_labels', {'labels': ['Stale edit'], 'previous': []}, key)[0])
+        self.assertFalse(self.action('out_labels', {'labels': ['Unknown'], 'previous': []}, 'https://example.com/missing')[0])
+        self.assertTrue(self.action('out_fav', {'on': True}, key)[0])
+        self.assertTrue(self.action('out_fav', {'on': False}, key)[0])
+        self.assertEqual(ledger.output_labels(self.conn), {key: ['Review']})
+        [item] = self.favorites([key])
+        self.assertEqual(item['labels'], ['Source label'])
+        self.assertTrue(self.action('out_labels', {'labels': [], 'previous': ['Review']}, key)[0])
+        self.assertEqual(ledger.output_labels(self.conn), {})
+        self.assertEqual(ledger.session_labels(self.conn, source), ['Source label'])
+
     def test_historical_hashtag_uses_existing_topic_without_creating_one(self):
         key, url = 'claude:historical', 'https://example.com/hashtag.html'
         self.add(key, url, 100)

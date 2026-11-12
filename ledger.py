@@ -123,6 +123,8 @@ CREATE TABLE IF NOT EXISTS links (session_key TEXT, url TEXT, label TEXT, ts REA
 CREATE TABLE IF NOT EXISTS doc_titles (token TEXT PRIMARY KEY, title TEXT, at REAL);
 CREATE TABLE IF NOT EXISTS web_titles (url TEXT PRIMARY KEY, title TEXT, at REAL);
 CREATE TABLE IF NOT EXISTS output_names (key TEXT PRIMARY KEY, title TEXT, at REAL);
+CREATE TABLE IF NOT EXISTS output_labels (
+  key TEXT NOT NULL, label TEXT NOT NULL, folded TEXT NOT NULL, PRIMARY KEY (key, folded));
 CREATE TABLE IF NOT EXISTS output_fav_places (key TEXT PRIMARY KEY, project TEXT NOT NULL, topic_id INTEGER);
 CREATE TABLE IF NOT EXISTS message_favorites (
   id TEXT PRIMARY KEY, session_key TEXT NOT NULL, message_id TEXT NOT NULL, kind TEXT NOT NULL,
@@ -2361,20 +2363,29 @@ def session_labels(conn, key):
     return [r[0] for r in conn.execute("SELECT label FROM session_labels WHERE session_key=? ORDER BY rowid", (key,))]
 
 
-def save_session_labels(conn, key, labels):
-    if not session_known(conn, key):
-        return False, "找不到这个会话"
+def normalize_labels(labels, owner):
     if not isinstance(labels, list) or any(not isinstance(x, str) for x in labels):
-        return False, "标签格式不对"
+        return None, "标签格式不对"
     unique = {}
     for raw in labels:
         label = " ".join(raw.strip().lstrip("#＃").split())
         if len(label) > 32:
-            return False, "每个标签最多 32 个字"
+            return None, "每个标签最多 32 个字"
+        if re.search(r"[\ud800-\udfff]", label):
+            return None, "标签里有无法保存的字符"
         if label:
             unique.setdefault(label.casefold(), label)
     if len(unique) > 12:
-        return False, "一个会话最多 12 个标签"
+        return None, owner + "最多 12 个标签"
+    return unique, ""
+
+
+def save_session_labels(conn, key, labels):
+    if not session_known(conn, key):
+        return False, "找不到这个会话"
+    unique, error = normalize_labels(labels, "一个会话")
+    if error:
+        return False, error
     with conn:
         conn.execute("DELETE FROM session_labels WHERE session_key=?", (key,))
         conn.executemany("INSERT INTO session_labels (session_key,label,folded) VALUES (?,?,?)",
@@ -2800,7 +2811,7 @@ def session_prompts(conn, key):
 
 
 def _out_where(q, cat="", key="", tool="", favs=None):
-    """产出物的搜索条件：每个词都要在链接 / 文件路径、真实标题、AI 写的说明和原话、会话名或项目里出现。
+    """产出物的搜索条件：匹配链接、标题、AI 的说明和原话、产出物标签、会话名或项目。
     cat 空着 = 只看产物（不含 MR 和流水线），any = 全都要，mr_open = 还开着的 MR（没查过的也算），fav = 收藏的（favs 是它们的 key），其余 = 只看这一类。"""
     conds, args = [], []
     target = link_target(q)
@@ -2812,6 +2823,10 @@ def _out_where(q, cat="", key="", tool="", favs=None):
         for sfx, name in HOST_NAMES.items():   # 搜配置的名字（如「应用商店」）时，这个域名下的都算
             if w.lower() in name.lower():
                 urlc, urla = urlc + " OR l.url LIKE ? ESCAPE '\\'", urla + [_like("." + sfx.strip("."))]
+        label_word = w.lstrip("#＃").casefold()
+        if label_word and not target:
+            urlc += " OR " + OUT_KEY + " IN (SELECT key FROM output_labels WHERE folded LIKE ? ESCAPE '\\')"
+            urla.append(_like(label_word))
         conds.append("(" + urlc + " OR l.label LIKE ? ESCAPE '\\' OR l.ctx LIKE ? ESCAPE '\\' OR d.title LIKE ? ESCAPE '\\' OR m.title LIKE ? ESCAPE '\\' "
                      "OR w.title LIKE ? ESCAPE '\\' OR n.title LIKE ? ESCAPE '\\' "
                      "OR l.session_key IN (SELECT session_key FROM names WHERE title LIKE ? ESCAPE '\\') "
@@ -2848,6 +2863,31 @@ OUT_FROM = (" FROM links l LEFT JOIN doc_titles d ON l.doc != '' AND d.token = l
             " LEFT JOIN web_titles w ON w.url = " + WEB_CACHE_URL +
             " LEFT JOIN output_names n ON n.key = " + OUT_KEY)
 OUT_CATS = ("feishu", "code", "file", "web", "mr")
+
+
+def output_labels(conn):
+    labels = {}
+    for key, label in conn.execute("SELECT key, label FROM output_labels ORDER BY rowid"):
+        labels.setdefault(key, []).append(label)
+    return labels
+
+
+def save_output_labels(conn, key, labels, previous):
+    if not isinstance(key, str) or not conn.execute("SELECT 1 FROM links l WHERE " + OUT_KEY + "=? LIMIT 1", (key,)).fetchone():
+        return False, "找不到这个产出物"
+    unique, error = normalize_labels(labels, "一份产出物")
+    if error:
+        return False, error
+    with conn:
+        current = [r[0] for r in conn.execute("SELECT label FROM output_labels WHERE key=? ORDER BY rowid", (key,))]
+        if current == list(unique.values()):
+            return True, "标签已保存"
+        if current != previous:
+            return False, "标签已在别处更新，请重新打开编辑"
+        conn.execute("DELETE FROM output_labels WHERE key=?", (key,))
+        conn.executemany("INSERT INTO output_labels (key,label,folded) VALUES (?,?,?)",
+                         [(key, label, folded) for folded, label in unique.items()])
+    return True, "标签已保存" if unique else "已清除手动标签"
 
 
 def count_outputs(conn, q, tool=""):
@@ -3982,6 +4022,7 @@ def build_board(conn, cfg, now=None):
         "staleHours": cfg["stale_hours"], "interruptedMin": cfg["interrupted_min"], "ctxWarn": CTX_WARN_PCT, "windowDays": cfg["window_days"], "doneDays": max(cfg["window_days"], DONE_KEEP_DAYS),
         "scanMs": int(meta_get(conn, "last_scan_ms", 0) or 0), "scanIntervalMin": cfg["scan_interval_min"],
         "groups": groups, "hidden": hidden, "order": load_order(conn), "pins": pins, "archived": archived, "archivedTopics": archived_topics, "favs": board_favs(conn, items + hidden, now), "outFavs": board_out_favs(conn, now, items + hidden), "autos": board_autos(conn, items + hidden, now), "labeled": board_labeled(conn, items + hidden, now), "digestTime": cfg["digest_time"], "tzText": tz_text(cfg), "home": HOME, "projectDirs": USER_DIRS,
+        "outputLabels": output_labels(conn),
         "topics": [{"id": t["id"], "name": t["name"], "project": t["project"], "projectLabel": tag_of(ctx["tags"], t["project"])[0]}
                    for t in topics if not t["deleted"]],
     }
@@ -4477,6 +4518,8 @@ class App:
             c = self.conn
             if action == "session_labels" and isinstance(arg, dict):
                 return save_session_labels(c, key, arg.get("labels"))
+            if action == "out_labels" and isinstance(arg, dict):
+                return save_output_labels(c, key, arg.get("labels"), arg.get("previous"))
             if action == "out_name" and isinstance(arg, dict):
                 if not c.execute("SELECT 1 FROM links l WHERE " + OUT_KEY + "=? LIMIT 1", (key,)).fetchone():
                     return False, "找不到这个产出物"
