@@ -1292,6 +1292,10 @@ function findBoardItem(key) { return key ? allItems(state).find(it => it.key ===
 function findItem(key) { return findBoardItem(key) || (key && historicTask?.key === key ? historicTask.item : null); }
 const TOOLS = { claude: "CC", codex: "Codex" };
 function toolName(x) { return TOOLS[x.tool] || x.toolLabel || ""; }
+function openSessionLabel(key) {
+  const name = TOOLS[key.split(":", 1)[0]];
+  return name ? "打开 " + name : "打开会话";
+}
 function toolChip(x) { return '<span class="chip sm tool" title="' + (x.tool === "codex" ? "Codex" : "Claude Code") + '">' + esc(toolName(x)) + "</span>" + autoChip(x); }
 function autoChip(x) {
   // Codex 定时任务在跑的会话：标「定时」，悬停看是哪个定时任务、什么时候跑；暂停了的标浅一点
@@ -2592,7 +2596,7 @@ function row(it, i) {
   const f = faceOf(it), on = it.key === selKey, k = esc(it.key), hidden = it.group === "hidden";
   const ra = (icon, onclick, title, attrs) => '<button type="button" class="ra" title="' + title + '" aria-label="' + title + '"' + (attrs || "") +
     ' onclick="event.stopPropagation();' + onclick + '">' + icon + "</button>";
-  const acts = ra(ico("open", 15), "openSession('" + k + "',this)", "打开会话（O）") + (hidden
+  const acts = ra(ico("open", 15), "openSession('" + k + "',this)", openSessionLabel(it.key) + "（O）") + (hidden
     ? ra(ico("undo", 15), "act('" + k + "','restore')", "恢复跟踪")
     : ra(ico("check", 15, 2.2), "act('" + k + "','done')", (f === "review" ? "确认完成" : "完成") + "（E）") +
       ra(ico("more", 15), "openMenu(this,'" + k + "',true)", f === "run" ? "更多" : "推迟和更多（S）", ' aria-haspopup="menu" aria-expanded="false"'));
@@ -2731,7 +2735,7 @@ function renderDetail() {
     return;
   }
   const f = faceOf(it), d = it.details, k = esc(it.key), hidden = it.group === "hidden";
-  let acts = btn((waitOf(it) ? waitOf(it)[0] : "打开会话") + ico("open"), "openSession('" + k + "',this)", "pri", "", 'id="open-btn"');
+  let acts = btn((waitOf(it) ? waitOf(it)[0] : openSessionLabel(it.key)) + ico("open"), "openSession('" + k + "',this)", "pri", "", 'id="open-btn"');
   if (!old && hidden) acts += btn("恢复跟踪", "act('" + k + "','restore')", "sec");
   else if (!old) {
     if (f !== "run") acts += btn("推迟" + ico("down"), "openMenu(this,'" + k + "')", "ghost", "",
@@ -2751,7 +2755,7 @@ function renderDetail() {
   const secs = [
     ["reply", decisionsOf(it).length ? (todoOf(it) ? "要你做、待你决定" : "待你决定") : todoOf(it) ? "要你做" : oldAsksOf(it).length ? "没答的" : "推它一下", old ? "" : replyBox(it)],
     ["calls", "替你定的", callsSec(it)],
-    ["convo", "对话"],
+    ["convo", "对话历史"],
     ["handoff", "上下文压缩", handoffSec(it)],
     ["out", "产出物", outSec(it)],
     ["mr", "MR", mrSec(it)],
@@ -3012,7 +3016,7 @@ async function loadAll(key) {
   if (selKey === key && !typing()) laterRender(renderDetail);
 }
 // 对话历史：右边滑出的侧边栏，专心读完整段对话：你说的每一句（和「我说过的话」同一份）加上它每一轮最后的回复，按时间排，一路滚到底。
-// 从「看全部对话」打开时停在最新一条；从搜索结果打开时停在命中的那一条，搜索词标亮
+// 直接打开时回到上次的阅读位置，第一次停在最新一条；从命中入口打开时定位到对应消息
 let hist = null, histReadTimer = 0, histFindTimer = 0;
 const histBody = document.getElementById("hist-body"), histQuery = document.getElementById("hist-q");
 const histSessions = document.getElementById("hist-sessions"), histSessionList = document.getElementById("hist-session-list"),
@@ -3588,7 +3592,7 @@ function renderHist() {
     '<button type="button" aria-pressed="' + (!h.saved && !h.only) + '" onclick="setHistOnly(false)">全部' + (h.items ? '<span class="n">' + num(h.you + h.it) + "</span>" : "") + "</button>" +
     '<button type="button" aria-pressed="' + (!h.saved && h.only) + '" onclick="setHistOnly(true)">只看我说的' + (h.items ? '<span class="n">' + num(h.you) + "</span>" : "") + "</button></div>" : "";
   const links = h.key ? btn("查看本会话产出物", "goHistOutputs()", "pri sm") +
-    btn("打开会话" + ico("open"), "openSession(clips[" + k + "],this)", "ghost sm") : "";
+    btn(openSessionLabel(h.key) + ico("open"), "openSession(clips[" + k + "],this)", "ghost sm") : "";
   document.getElementById("hist-h").innerHTML = '<div class="hist-t"><h2 id="hist-t">' + (h.saved ? "收藏的消息" : "对话历史") + "</h2>" +
     (h.key ? '<p title="' + esc(title) + '">' + esc(title) + "</p>" : "") + '</div><div class="hist-acts">' + seg + '<div class="hist-links">' +
     links + btn(ico("close", 16), "closeHist()", "ghost icon", "关闭（Esc）", 'aria-label="关闭"') + "</div></div>";
@@ -4379,9 +4383,9 @@ function hitSpot() {
   dHit.scroll = false;
   (el.querySelector("mark") || el).scrollIntoView({ block: "center" });
 }
-function hitBtn(key, hit, title, cls) {
+function hitBtn(key, hit, title, cls = "ghost xs", label = "") {
   const on = !!findBoardItem(key);
-  return btn(on ? "在看板里看" : "看对话", "goHit(clips[" + clip(key) + "],clips[" + clip(hit) + "],clips[" + clip(title || "") + "])", cls || "ghost xs",
+  return btn(label || (on ? "在看板里看" : "看对话"), "goHit(clips[" + clip(key) + "],clips[" + clip(hit) + "],clips[" + clip(title || "") + "])", cls,
     (on ? "回到看板，" : "打开对话历史，") + (hit ? "定位到这一条" : "打开这个会话"));
 }
 // 卡片底部的按钮去第一条命中；只是标题、项目对上的没有具体位置，打开会话详情就好
@@ -4555,6 +4559,7 @@ function ctxAfterRender(list) {
 }
 function scard(s, si, faces) {
   const k = esc(s.key), open = hOpen[s.key], full = hFull[s.key];
+  const key = "clips[" + clip(s.key) + "]", hit = firstHit(s);
   const items = open ? (full ? full.items : []) : s.preview;
   const fk = faces[s.key];
   const meta = [hq && s.hits ? "命中 " + s.hits : "", hq && s.labelHit ? "标签匹配" : "", hq && s.handoff ? "压缩摘要里有" : "",
@@ -4569,9 +4574,10 @@ function scard(s, si, faces) {
     '<div class="hlines">' + items.map((it, i) => line(it, (open ? "f" : "p") + si + "_" + i, s.key, each)).join("") + (s.handoff ? hoLine(s.handoff, s.key, each) : "") +
     (s.notes || []).map(n => noteLine(n, s.key, each)).join("") + "</div>" + ctxPanel(s.key) +
     '<div class="hfoot">' + btn(more, "toggleSession('" + k + "')", "ghost sm") +
-    btn("任务详情", "goTaskDetail(clips[" + clip(s.key) + "])", "sec sm") +
-    (firstHit(s) || !findBoardItem(s.key) ? hitBtn(s.key, firstHit(s), s.title, "ghost sm") : "") +
-    btn("打开会话" + ico("open"), "openSession('" + k + "',this)", "ghost sm") +
+    (hit ? hitBtn(s.key, hit, s.title, "ghost sm", "定位命中") : "") +
+    btn("任务详情", "goTaskDetail(" + key + ")", "sec sm") +
+    btn(ico("chat", 14) + "查看对话历史", "openHist(" + key + ",null,clips[" + clip(s.title) + "])", "sec sm", "", 'aria-haspopup="dialog" aria-controls="hist"') +
+    btn(openSessionLabel(s.key) + ico("open"), "openSession(" + key + ",this)", "ghost sm") +
     (s.linksTotal ? btn("AI 给的产出物 " + num(s.linksTotal) + " 个", "goOutputs('', '" + k + "')", "ghost sm", "到「产出物」里只看这个会话的") : "") + "</div></div></article>";
 }
 function dayHead(ts) {
@@ -4727,7 +4733,7 @@ const CAT_NAME = { feishu: "飞书", code: "代码", file: "文件", web: "网�
 function orow(o, q) {
   const s0 = o.sessions[0], k0 = s0 ? clip(s0.key) : 0;
   const acts = (s0 ? hitBtn(s0.key, { kind: "link", ts: s0.ts, url: o.url, text: o.ctx || o.text }, s0.title) : "") +
-    (s0 ? btn("打开会话" + ico("open", 12), "openSession(clips[" + k0 + "],this)", "ghost xs") : "") +
+    (s0 ? btn(openSessionLabel(s0.key) + ico("open", 12), "openSession(clips[" + k0 + "],this)", "ghost xs") : "") +
     (o.cat === "file" && !o.gone && o.twin !== "web" ? btn("在访达里显示", "openFile(clips[" + clip(o.url) + "],true)", "ghost xs") : "") +
     btn(o.cat === "file" ? "复制路径" : "复制链接", "copyClip(" + clip(o.url) + ")", "ghost xs");
   const more = o.nSessions > o.sessions.length ? "<span>等 " + num(o.nSessions) + " 个会话都给过</span>" : "";
