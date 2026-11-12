@@ -3616,12 +3616,13 @@ def saved_session_topic(conn, key):
 
 
 def board_out_favs(conn, now, items=()):
-    """收藏按最近收藏的排序。手动分类优先，其余沿用最近提供它的会话。"""
+    """按收藏顺序列出产出物。分类沿用最近来源或手动分类，标签来自提供过它的所有会话。"""
     out = []
     for k in meta_keys(conn, "out_favs"):
         by_doc = "://" not in k and not k.startswith("/")
+        match = " WHERE l.doc=?" if by_doc else " WHERE l.url=?"
         r = conn.execute("SELECT l.session_key, l.url, l.label, l.ts, " + OUT_TITLE + " AS title, n.title AS custom_title, " + OUT_TITLE_AT + " AS title_at, m.state" + OUT_FROM +
-                         (" WHERE l.doc=?" if by_doc else " WHERE l.url=?") + " ORDER BY l.ts DESC, l.session_key, l.url LIMIT 1", (k,)).fetchone()
+                         match + " ORDER BY l.ts DESC, l.session_key, l.url LIMIT 1", (k,)).fetchone()
         if not r:
             continue
         it = out_brief(r["url"], r["label"], r["title"], r["ts"], now, r["state"], r["custom_title"], r["title_at"])
@@ -3629,7 +3630,11 @@ def board_out_favs(conn, now, items=()):
         if ar and ar["title"] and not r["custom_title"]:
             it["text"] = ar["title"]
         bare = not r["title"] and not r["label"] and it["cat"] != "file"
-        it.update(key=k, ts=r["ts"] or 0, sessionKey=r["session_key"])
+        labels = {}
+        for label, folded in conn.execute("SELECT sl.label, sl.folded FROM links l JOIN session_labels sl ON sl.session_key=l.session_key" +
+                                          match + " ORDER BY l.ts DESC, l.session_key, l.url, sl.rowid", (k,)):
+            labels.setdefault(folded, label)
+        it.update(key=k, ts=r["ts"] or 0, sessionKey=r["session_key"], labels=list(labels.values()))
         out.append((it, bare))
     if not out:
         return []

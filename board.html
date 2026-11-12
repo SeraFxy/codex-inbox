@@ -191,11 +191,14 @@ kbd.k.lg { min-width: 22px; height: 22px; padding: 0 6px; border-radius: 6px; fo
   background: transparent; color: var(--bk-ink-1); font-size: 13px; text-align: left; cursor: pointer; transition: background-color .12s, box-shadow .12s;
 }
 .ri:hover { background: var(--bk-sunken); }
-.ri[aria-current="true"] { background: var(--bk-surface); box-shadow: var(--bk-on); font-weight: 600; }
+.ri:is([aria-current="true"], [aria-current="page"]) { background: var(--bk-surface); box-shadow: var(--bk-on); font-weight: 600; }
 .ri:focus-visible, .rfold:focus-visible { outline: 2px solid var(--bk-ink-1); outline-offset: 1px; }
 .ri .nm { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .ri .n { font: 500 12px/1 var(--bk-mono); color: var(--bk-ink-3); }
-.ri.all { height: 34px; font-weight: 600; }
+.ri.top { height: 36px; gap: 4px; padding: 0 28px 0 24px; font-weight: 600; text-decoration: none; }
+.ri.top.rnav-link { padding-right: 8px; }
+.ri.top .count:not(.hot) { background: var(--bk-sunken); color: var(--bk-ink-2); }
+.ri.top svg { flex: none; color: var(--bk-ink-3); }
 .ri.proj { padding-left: 4px; font-weight: 600; }
 .ri.sub { padding-left: 28px; }
 .rp .ri, .rt .ri { flex: 1; width: auto; }
@@ -213,15 +216,13 @@ kbd.k.lg { min-width: 22px; height: 22px; padding: 0 6px; border-radius: 6px; fo
 .rp:hover .ra, .rp:focus-within .ra, .rp .ra.on, .rt:hover .ra, .rt:focus-within .ra, .rt .ra.on { display: inline-flex; }
 .rp:hover .ri .n, .rp:hover .ri .count, .rp:focus-within .ri .n, .rp:focus-within .ri .count,
 .rt:hover .ri .n, .rt:hover .ri .count, .rt:focus-within .ri .n, .rt:focus-within .ri .count { visibility: hidden; }
-.rsec { display: flex; align-items: center; gap: 4px; width: 100%; height: 28px; margin-top: 16px; padding: 0 10px 0 4px; border: 0; border-radius: 8px;
-  background: transparent; color: var(--bk-ink-3); font-size: 12px; line-height: 16px; font-weight: 600; text-align: left; cursor: pointer; }
-.rsec:hover { color: var(--bk-ink-1); }
-.rsec:focus-visible { outline: 2px solid var(--bk-ink-1); outline-offset: 1px; }
-.rsec .n { margin-left: auto; font: 500 12px/1 var(--bk-mono); }
-.rfav-head { display: flex; align-items: center; gap: 4px; margin-top: 16px; }
-.rfav-head .rsec { flex: 1; min-width: 0; margin-top: 0; padding-right: 0; }
-.rfav-head .rsec > span:first-of-type { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.rfav-head .btn { flex: none; height: 28px; }
+.rnav-list, .rnav-children { flex: none; display: flex; flex-direction: column; gap: 2px; }
+.rnav-list { margin-top: 8px; }
+.rnav-children { padding-left: 12px; }
+.rnav-row { position: relative; }
+.rnav-row > .rfold, .rnav-caret { position: absolute; inset: 0 auto 0 0; width: 24px; height: 100%; }
+.rnav-row > .rfold:hover { background: var(--bk-sunken); color: var(--bk-ink-1); }
+.rnav-caret { display: grid; place-items: center; }
 .ri.fav { padding-left: 26px; gap: 6px; }
 .rfg { flex: none; padding: 8px 10px 2px 26px; font-size: 12px; line-height: 16px; color: var(--bk-ink-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }   /* 收藏里的主题小标题 */
 .rof-tree .of-fold { gap: 4px; padding-left: 12px; }
@@ -755,6 +756,9 @@ mark.kmark { background: var(--bk-mark); color: inherit; border-radius: 2px; box
 .of-list-head h2 { margin: 0; font-size: 20px; line-height: 26px; }
 .of-list-filters { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 168px) minmax(0, 216px); gap: 8px; }
 .of-list-filters .search, .of-list-filters select { height: 40px; }
+.of-list-labels { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; }
+.of-list-labels .btn { max-width: 100%; height: auto; min-height: 28px; padding: 4px 8px; white-space: normal; overflow-wrap: anywhere; }
+.of-list-labels .btn[aria-pressed="true"] { background: var(--bk-sunken); border-color: var(--bk-line-strong); font-weight: 600; }
 .of-list-status { min-height: 28px; color: var(--bk-ink-3); font-size: 13px; }
 .of-list-table { overflow: hidden; border: 1px solid var(--bk-line); border-radius: 14px; background: var(--bk-surface); box-shadow: var(--bk-e1); }
 .of-list-table table { width: 100%; table-layout: fixed; border-collapse: collapse; }
@@ -776,8 +780,9 @@ mark.kmark { background: var(--bk-mark); color: inherit; border-radius: 2px; box
 .sess-name { display: inline-flex; align-items: flex-start; gap: 8px; max-width: 100%; padding: 0; border: 0; background: none; text-align: left; cursor: pointer; font-family: inherit; }
 .sess-name .chip { flex: none; margin-top: 3px; }
 .sess-name:focus-visible { outline: 2px solid var(--bk-ink-1); outline-offset: 2px; border-radius: 6px; }
-.sess-labels { display: flex; flex-wrap: wrap; gap: 4px; }
-.sess-labels .chip { cursor: pointer; max-width: 100%; white-space: normal; overflow-wrap: anywhere; }
+.list-labels { display: flex; flex-wrap: wrap; gap: 4px; }
+.list-labels .chip { max-width: 100%; height: auto; min-height: 18px; white-space: normal; overflow-wrap: anywhere; }
+#out-fav-list-rows .list-labels { margin-top: 4px; }
 .of-list-empty { margin: 0; padding: 24px; border: 1px solid var(--bk-line); border-radius: 14px; background: var(--bk-surface); color: var(--bk-ink-3); font-size: 14px; }
 @media (max-width: 640px) {
   .of-list-filters { grid-template-columns: repeat(2, minmax(0, 1fr)); }
@@ -802,7 +807,8 @@ mark.kmark { background: var(--bk-mark); color: inherit; border-radius: 2px; box
 .toast button:hover { background: rgba(255, 255, 255, .16); }
 
 @media (max-width: 640px) {
-  .btn, .tab, .opt, .seg.src button, .dnav button, .rof-tree .ri, .rof-tree .ra, .rfav-head .rsec, .rsec.rfavs, .of-edit .lfilter, .out-session-menu button { min-height: 40px; }
+  .btn, .tab, .opt, .seg.src button, .dnav button, .rof-tree .ri, .rof-tree .ra, .of-edit .lfilter, .out-session-menu button,
+  .of-list-labels .btn, .list-labels .chip { min-height: 40px; }
   .of-edit { padding: 16px; }
   .dq .dctx { margin-left: 0; }
   .row .s { min-height: 32px; padding-right: 40px; }
@@ -879,11 +885,12 @@ mark.kmark { background: var(--bk-mark); color: inherit; border-radius: 2px; box
         <div class="of-list-filters">
           <div class="search">
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
-            <input id="out-fav-list-q" type="search" autocomplete="off" aria-label="搜索收藏的产出物" placeholder="搜标题、链接、项目或主题" oninput="renderOutFavList()">
+            <input id="out-fav-list-q" type="search" autocomplete="off" aria-label="搜索收藏的产出物" placeholder="搜标题、链接、项目、主题或标签" oninput="renderOutFavList()">
           </div>
           <select class="lfilter" id="out-fav-list-project" aria-label="按项目筛选" onchange="renderOutFavList()"><option value="">全部项目</option></select>
           <select class="lfilter" id="out-fav-list-group" aria-label="按主题或分类筛选" onchange="renderOutFavList()"><option value="">全部主题 / 分类</option></select>
         </div>
+        <div class="of-list-labels" id="out-fav-list-labels" role="group" aria-label="按标签筛选收藏的产出物" hidden></div>
         <div class="of-list-status">
           <span class="mono" id="out-fav-list-count" role="status"></span>
           <button type="button" class="btn ghost xs" id="out-fav-list-clear" onclick="clearOutFavList()" hidden>清空筛选</button>
@@ -912,7 +919,7 @@ mark.kmark { background: var(--bk-mark); color: inherit; border-radius: 2px; box
             <input id="sess-list-q" type="search" autocomplete="off" aria-label="搜索这一页的会话" placeholder="搜会话名、项目、主题或标签" oninput="renderSessList()">
           </div>
           <select class="lfilter" id="sess-list-project" aria-label="按项目筛选" onchange="renderSessList()"><option value="">全部项目</option></select>
-          <select class="lfilter" id="sess-list-label" aria-label="按标签筛选" onchange="renderSessList()"><option value="">全部标签</option></select>
+          <select class="lfilter" id="sess-list-label" aria-label="按标签筛选" onchange="setSessLabel(this.value)"><option value="">全部标签</option></select>
         </div>
         <div class="of-list-status">
           <span class="mono" id="sess-list-count" role="status"></span>
@@ -1101,6 +1108,7 @@ const outFavOpen = new Set(store("ledger.outfav.open") || []); // 收藏产出�
 const outFavEditor = document.getElementById("out-fav-editor");
 const outFavFields = outFavEditor.querySelector("form").elements;
 let outFavDraft = null;
+let outFavLabel = "";
 let autoOpen = store("ledger.autox") !== true;           // 左栏「定时任务」展开着（默认展开）
 let autoOff = false;                                     // 「定时任务」里暂停了的那几个展开着
 let labelsOpen = store("ledger.labelx") !== true;        // 左栏「标签」展开着
@@ -1642,15 +1650,19 @@ function setView(v) {
 }
 
 // ---------------- 左栏：项目与主题
-function cntHtml(c) { return c.hot ? '<span class="count hot">' + c.hot + "</span>" : c.n ? '<span class="n">' + c.n + "</span>" : ""; }
+function cntHtml(c, top = false) {
+  if (c.hot) return '<span class="count hot">' + num(c.hot) + "</span>";
+  if (top) return '<span class="count">' + num(c.n) + "</span>";
+  return c.n ? '<span class="n">' + num(c.n) + "</span>" : "";
+}
 function sameScope(a, b) { return a.t === b.t && a.p === b.p && a.id === b.id; }
 function doneAll() { return view === "hidden" && scope.t === "all"; }   // 在看「归档」里的「已完成的会话」
 function scopeData(sc) { return ' data-scope="' + esc(JSON.stringify(sc)) + '" aria-current="' + (tab === "board" && sameScope(sc, scope) && !(sc.t === "all" && doneAll())) + '"'; }
 function railItem(label, sc, c, cls, drop) {
   return '<button type="button" class="ri ' + cls + '"' + scopeData(sc) + (drop != null ? ' data-drop="' + drop + '"' : "") + ' onclick="setScope(this,event)">' +
-    '<span class="nm" title="' + esc(label) + '">' + esc(label) + "</span>" + cntHtml(c) + "</button>";
+    '<span class="nm" title="' + esc(label) + '">' + esc(label) + "</span>" + cntHtml(c, cls === "top") + "</button>";
 }
-function renderRail() {
+function renderRail(focusId) {
   const d = railData();
   fixScope(d);
   document.getElementById("split").classList.toggle("railx", !railOpen);
@@ -1658,42 +1670,40 @@ function renderRail() {
   let html = '<div class="rhead"><span>项目与主题</span>' +
     '<button type="button" class="btn ghost icon" aria-label="新建主题" title="新建主题" onclick="event.stopPropagation();newTopic(this)">' + ico("plus", 15) + "</button>" +
     '<button type="button" class="btn ghost icon" aria-label="收起侧栏" title="收起侧栏（[）" onclick="toggleRail()">' + ico("railL", 16) + "</button></div>" +
-    railItem("全部", { t: "all" }, d.all, "all");
+    railItem("全部", { t: "all" }, d.all, "top");
   const live = d.projects.filter(p => !p.archived), arch = d.projects.filter(p => p.archived);
-  live.forEach(p => { html += railGroup(p); });
+  if (live.length) html += '<div class="rnav-children">' + live.map(railGroup).join("") + "</div>";
   const favs = (state.favs || []).filter(srcOk), ofavs = state.outFavs || [];
-  html += '<div class="rfav-head"><button type="button" class="rsec rfavs" id="chat-fav-toggle" aria-expanded="' + favOpen + '" onclick="toggleFavs()">' +
-    ico(favOpen ? "down" : "right", 14) + '<span>收藏的对话</span><span class="n">' + num(favs.length) + "</span></button>" +
-    railListLink("favoriteSessions", "查看收藏的对话列表") + "</div>";
+  html += '<div class="rnav-list">' + railListRow("favoriteSessions", favs.length, favOpen, "toggleFavs");
   if (favOpen) {
-    html += '<button type="button" class="ri fav" aria-haspopup="dialog" onclick="openHist()">' + ico("star", 14) + '<span class="nm">收藏的消息</span></button>';
+    html += '<div class="rnav-children"><button type="button" class="ri fav" aria-haspopup="dialog" onclick="openHist()">' + ico("star", 14) + '<span class="nm">收藏的消息</span></button>';
     html += favGroups(favs).map(g => (g.label ? '<div class="rfg" title="' + esc(g.label) + '">' + esc(g.label) + "</div>" : "") + g.items.map(x => '<div class="rt">' +
       '<button type="button" class="ri fav" data-key="' + esc(x.key) + '" title="' + esc(x.title) + (x.onBoard ? "" : "（点一下打开会话）") +
       '" onclick="goFav(this.dataset.key)">' + toolChip(x) + '<span class="nm">' + esc(x.title) + "</span></button>" +
       '<button type="button" class="ra" title="打开或取消收藏" aria-label="「' + esc(x.title) + '」打开或取消收藏" aria-haspopup="menu" aria-expanded="false"' +
       ' data-key="' + esc(x.key) + '" onclick="event.stopPropagation();favMore(this,this.dataset.key)">' + ico("more", 15) + "</button></div>").join("")).join("");
     if (!favs.length) html += '<div class="rfg">当前没有收藏的对话</div>';
+    html += "</div>";
   }
-  html += '<div class="rfav-head"><button type="button" class="rsec" id="out-fav-toggle" aria-expanded="' + outFavsOpen +
-    '" onclick="toggleOutFavs()">' + ico(outFavsOpen ? "down" : "right", 14) + '<span>收藏的产出物</span><span class="n">' + num(ofavs.length) + "</span></button>" +
-    '<a href="#favorite-outputs" class="btn ghost icon' + (tab === "favoriteOutputs" ? " on" : "") +
-    '" aria-current="' + (tab === "favoriteOutputs" ? "page" : "false") + '" title="打开收藏列表" aria-label="查看收藏的产出物列表" onclick="event.preventDefault();goOutFavList()">' +
-    ico("send", 16) + "</a></div>";
-  if (outFavsOpen) html += ofavs.length ? outFavTree(ofavs, (state.order || {}).rail || []) : '<div class="rfg">还没有收藏的产出物</div>';
+  html += railListRow("favoriteOutputs", ofavs.length, outFavsOpen, "toggleOutFavs");
+  if (outFavsOpen) html += '<div class="rnav-children">' + (ofavs.length ? outFavTree(ofavs, (state.order || {}).rail || []) : '<div class="rfg">还没有收藏的产出物</div>') + "</div>";
   html += labelSec();
   html += autoSec();
   const nDone = viewItems("hidden", true).length;
   if (arch.length || d.archTopics.length || nDone) {
-    html += '<button type="button" class="rsec" aria-expanded="' + archOpen + '" onclick="toggleArch()">' + ico(archOpen ? "down" : "right", 14) +
-      "<span>归档</span><span class=\"n\">" + (arch.length + d.archTopics.length + (nDone ? 1 : 0)) + "</span></button>";
+    html += '<div class="rnav-row"><button type="button" class="ri top" id="archive-toggle" aria-expanded="' + archOpen +
+      '" onclick="toggleArch(this.id)"><span class="rnav-caret">' + ico(archOpen ? "down" : "right", 14) + '</span><span class="nm">归档</span>' +
+      cntHtml({ n: arch.length + d.archTopics.length + (nDone ? 1 : 0) }, true) + "</button></div>";
     if (archOpen) {
+      html += '<div class="rnav-children">';
       if (nDone) html += '<button type="button" class="ri sub" aria-current="' + (tab === "board" && doneAll()) + '" title="最近 ' + doneDays() +
         ' 天点了完成或不再跟踪的会话，所有项目的都在这里；你再和它说话，它会自己回到看板" onclick="goDone()"><span class="nm">已完成的会话</span><span class="n">' + nDone + "</span></button>";
       arch.forEach(p => { html += railGroup(p); });
-      html += d.archTopics.map(x => topicRow(x, plabel(x.t.project) + " · " + x.t.name)).join("");
+      html += d.archTopics.map(x => topicRow(x, plabel(x.t.project) + " · " + x.t.name)).join("") + "</div>";
     }
   }
-  document.getElementById("rail").innerHTML = html + '<p class="rfoot">把会话拖到项目或主题上就移过去了，也可以在发给 AI 的消息里写 #主题。双击项目或主题改名，拖项目换位置。红色数字 = 里面有轮到你的事。</p>';
+  document.getElementById("rail").innerHTML = html + '</div><p class="rfoot">把会话拖到项目或主题上就移过去了，也可以在发给 AI 的消息里写 #主题。双击项目或主题改名，拖项目换位置。红色数字 = 里面有轮到你的事。</p>';
+  if (focusId) document.getElementById(focusId)?.focus({ preventScroll: true });
 }
 function railGroup(p) {
   // 左栏一个项目：项目行（⋯ 改名、归档）和它下面的主题
@@ -1717,29 +1727,30 @@ function autoSec() {
   const row = x => '<div class="rt"><button type="button" class="ri fav' + (x.auto.paused ? " off" : "") + '" data-key="' + esc(x.key) +
     '" title="' + esc(x.title + "\n定时任务「" + x.auto.name + "」，" + (x.auto.paused ? "已暂停" : (x.auto.when || "定时") + " 跑") + (x.onBoard ? "" : "\n不在看板上，点一下打开会话")) +
     '" onclick="goFav(this.dataset.key)"><span class="nm">' + esc(x.title) + '</span><span class="n">' + esc(x.auto.paused ? "已暂停" : x.auto.short) + "</span></button></div>";
-  let html = '<div class="rfav-head"><button type="button" class="rsec" aria-expanded="' + autoOpen + '" onclick="toggleAutos()" title="Codex 定时任务在跑的会话，自动列在这里">' +
-    ico(autoOpen ? "down" : "right", 14) + "<span>定时任务</span><span class=\"n\">" + on.length + "</span></button>" +
-    railListLink("autos", "查看定时任务列表") + "</div>";
+  let html = railListRow("autos", on.length, autoOpen, "toggleAutos");
   if (!autoOpen) return html;
-  html += on.map(row).join("");
+  html += '<div class="rnav-children">' + on.map(row).join("");
   if (off.length) html += '<div class="rt"><button type="button" class="ri fav off" aria-expanded="' + autoOff + '" onclick="autoOff=!autoOff;renderRail()">' +
     '<span class="nm">' + (autoOff ? "收起" : "已暂停的 " + off.length + " 个") + "</span>" + ico(autoOff ? "down" : "right", 14) + "</button></div>" + (autoOff ? off.map(row).join("") : "");
-  return html;
+  return html + "</div>";
 }
-function toggleAutos() {
+function toggleAutos(focusId) {
   autoOpen = !autoOpen; store("ledger.autox", !autoOpen);
-  renderRail();
+  renderRail(focusId);
 }
-// 左栏每一块的标题右边都有箭头，点进去是这一块的列表页（能搜、能筛、看全部）
-function railListLink(kind, label) {
-  const on = tab === kind;
-  return '<a href="' + SESS_PAGES[kind].hash + '" class="btn ghost icon' + (on ? " on" : "") + '" aria-current="' + (on ? "page" : "false") +
-    '" title="打开列表" aria-label="' + esc(label) + '" onclick="event.preventDefault();goSessList(\'' + kind + '\')">' + ico("send", 16) + "</a>";
+function railListRow(kind, count, open, toggle) {
+  const outputs = kind === "favoriteOutputs", label = outputs ? "收藏的产出物" : SESS_PAGES[kind].title;
+  const action = outputs ? "goOutFavList()" : "goSessList('" + kind + "')";
+  const foldLabel = (open ? "收起" : "展开") + "「" + label + "」";
+  return '<div class="rnav-row"><button type="button" class="rfold" id="rail-fold-' + kind + '" aria-expanded="' + open +
+    '" aria-label="' + foldLabel + '" title="' + foldLabel + '" onclick="' + toggle + '(this.id)">' + ico(open ? "down" : "right", 14) + '</button>' +
+    '<a href="' + TAB_HASH[kind] + '" class="ri top rnav-link" aria-current="' + (tab === kind ? "page" : "false") +
+    '" onclick="event.preventDefault();' + action + '"><span class="nm" title="' + label + '">' + label + "</span>" + cntHtml({ n: count }, true) + ico("send", 16) + "</a></div>";
 }
 // 左栏「标签」：会话详情里打的搜索标签，每个标签几个会话；点一个标签进列表页只看它
-function labelGroups() {
+function labelGroups(items) {
   const by = new Map();
-  for (const x of state.labeled || []) for (const label of x.labels || []) {
+  for (const x of items) for (const label of x.labels || []) {
     const k = label.toLowerCase();
     if (!by.has(k)) by.set(k, { key: k, label, n: 0 });
     by.get(k).n++;
@@ -1747,29 +1758,25 @@ function labelGroups() {
   return [...by.values()].sort((a, b) => b.n - a.n || a.label.localeCompare(b.label, "zh"));
 }
 function labelSec() {
-  const groups = labelGroups(), cur = tab === "labels" ? document.getElementById("sess-list-label").value : null;
-  let html = '<div class="rfav-head"><button type="button" class="rsec" id="label-toggle" aria-expanded="' + labelsOpen + '" onclick="toggleLabels()" title="会话详情里打的搜索标签">' +
-    ico(labelsOpen ? "down" : "right", 14) + '<span>标签</span><span class="n">' + num(groups.length) + "</span></button>" +
-    railListLink("labels", "查看打过标签的会话") + "</div>";
+  const groups = labelGroups(state.labeled || []), cur = tab === "labels" ? document.getElementById("sess-list-label").value : null;
+  const html = railListRow("labels", groups.length, labelsOpen, "toggleLabels");
   if (!labelsOpen) return html;
-  if (!groups.length) return html + '<div class="rfg">还没有标签，在会话详情里点「+ 标签」加</div>';
-  return html + groups.map(g => '<div class="rt"><button type="button" class="ri fav" aria-current="' + (cur === g.key) + '" title="看打了「#' + esc(g.label) +
-    '」的会话" onclick="goSessList(\'labels\',clips[' + clip(g.key) + '])"><span class="nm">#' + esc(g.label) + '</span><span class="n">' + num(g.n) + "</span></button></div>").join("");
+  const children = groups.length ? groups.map(g => '<div class="rt"><button type="button" class="ri fav" aria-current="' + (cur === g.key) + '" title="看打了「#' + esc(g.label) +
+    '」的会话" onclick="goSessList(\'labels\',clips[' + clip(g.key) + '])"><span class="nm">#' + esc(g.label) + '</span><span class="n">' + num(g.n) + "</span></button></div>").join("")
+    : '<div class="rfg">还没有标签，在会话详情里点「+ 标签」加</div>';
+  return html + '<div class="rnav-children">' + children + "</div>";
 }
-function toggleLabels() {
+function toggleLabels(focusId) {
   labelsOpen = !labelsOpen; store("ledger.labelx", !labelsOpen);
-  renderRail();
-  document.getElementById("label-toggle").focus({ preventScroll: true });
+  renderRail(focusId);
 }
-function toggleFavs() {
+function toggleFavs(focusId) {
   favOpen = !favOpen; store("ledger.favx", !favOpen);
-  renderRail();
-  document.getElementById("chat-fav-toggle").focus({ preventScroll: true });
+  renderRail(focusId);
 }
-function toggleOutFavs() {
+function toggleOutFavs(focusId) {
   outFavsOpen = !outFavsOpen; store("ledger.outfavx", !outFavsOpen);
-  renderRail();
-  document.getElementById("out-fav-toggle").focus({ preventScroll: true });
+  renderRail(focusId);
 }
 // 收藏：存在服务端；完成了、过了 30 天也留着，点一下找到它，不在看板上的直接打开会话
 function favGroups(favs) {
@@ -1933,7 +1940,7 @@ function toggleOutFav(l) {
   closeMenu();
   const on = !outFavOn(l.key), had = oCat === "fav";
   const occurrence = (l.sessions || [])[0] || {}, source = findItem(occurrence.key || selKey) || occurrence, topic = source.topic;
-  setLocal({ outFavs: on ? [Object.assign({ railText: l.text, ts: l.ts || 0, sessionKey: source.key, topic,
+  setLocal({ outFavs: on ? [Object.assign({ railText: l.text, ts: l.ts || 0, sessionKey: source.key, topic, labels: source.labels || [],
     projectKey: topic ? topic.project : source.projectKey, project: topic ? plabel(topic.project) : source.project }, l)].concat(state.outFavs || [])
     : (state.outFavs || []).filter(x => x.key !== l.key) });
   if (on && !outFavsOpen) { outFavsOpen = true; store("ledger.outfavx", false); }
@@ -1964,27 +1971,48 @@ function goOutFavList() {
   window.scrollTo(0, 0);
   document.getElementById("out-fav-list-title").focus({ preventScroll: true });
 }
+function renderOutFavLabelFilters(favs) {
+  const bar = document.getElementById("out-fav-list-labels"), active = document.activeElement;
+  const focusKey = bar.contains(active) ? active.dataset.label : null;
+  const labels = labelGroups(favs);
+  if (!labels.some(g => g.key === outFavLabel)) outFavLabel = "";
+  bar.hidden = !labels.length;
+  const choices = [["", "全部标签"], ...labels.map(g => [g.key, "#" + g.label])];
+  bar.innerHTML = labels.length ? choices.map(([key, label]) => btn(esc(label), "setOutFavLabel(this.dataset.label)", "sec xs", "",
+    'data-label="' + esc(key) + '" aria-pressed="' + (outFavLabel === key) + '"')).join("") : "";
+  if (focusKey != null) {
+    const target = [...bar.children].find(button => button.dataset.label === focusKey) || bar.querySelector('[aria-pressed="true"]');
+    target?.focus({ preventScroll: true });
+  }
+}
+function setOutFavLabel(key) {
+  outFavLabel = key;
+  renderOutFavList();
+  document.querySelector('#out-fav-list-labels [aria-pressed="true"]')?.focus();
+}
 function renderOutFavList() {
   const q = document.getElementById("out-fav-list-q").value.trim(), words = qWords(q).map(w => w.toLowerCase());
   const project = document.getElementById("out-fav-list-project"), group = document.getElementById("out-fav-list-group");
   const favs = state?.outFavs || [], projects = outFavGroups(favs, state?.order?.rail || []);
-  const options = fillSelect;
-  options(project, "全部项目", projects.map(p => [p.key, p.label]));
+  fillSelect(project, "全部项目", projects.map(p => [p.key, p.label]));
   const scoped = projects.filter(p => !project.value || p.key === project.value);
   const groups = new Map(scoped.flatMap(p => p.groups.map(g =>
     [g.key, !project.value && g.key.startsWith("topic:") ? g.label + " · " + p.label : g.label])));
-  options(group, "全部主题 / 分类", groups);
+  fillSelect(group, "全部主题 / 分类", groups);
+  renderOutFavLabelFilters(favs);
   let n = 0, rows = "";
   for (const p of scoped) for (const g of p.groups) {
     if (group.value && g.key !== group.value) continue;
     for (const x of g.items) {
-      const title = x.railText || x.text || x.name;
-      const searchText = [title, x.url, x.name, p.label, p.key, g.label].join(" ").toLowerCase();
+      const title = x.railText || x.text || x.name, tags = x.labels || [];
+      if (outFavLabel && !tags.some(l => l.toLowerCase() === outFavLabel)) continue;
+      const searchText = [title, x.url, x.name, p.label, p.key, g.label, ...tags.map(l => "#" + l)].join(" ").toLowerCase();
       if (!words.every(w => searchText.includes(w))) continue;
       const time = x.ts ? when(x.ts) : "";
       const source = x.name && x.name !== title && x.name !== g.label ? '<span class="of-source">' + esc(x.name) + "</span>" : "";
       rows += "<tr><td>" + outLink(x, "of-name", hl(title, q)) + source +
-        '<span class="of-source of-mobile">' + esc([p.label, g.label, time].filter(Boolean).join(" · ")) + "</span></td>" +
+        '<span class="of-source of-mobile">' + esc([p.label, g.label, time].filter(Boolean).join(" · ")) + "</span>" +
+        listLabelChips(tags, q, "setOutFavLabel") + "</td>" +
         '<td class="of-desktop of-project">' + esc(p.label) + '</td><td class="of-desktop">' + esc(g.label) +
         '</td><td class="of-desktop of-time">' + esc(time || "—") + "</td><td>" +
         btn(ico("more", 16), "outFavMore(this,clips[" + clip(x) + "])", "ghost icon", "更多操作",
@@ -1992,7 +2020,7 @@ function renderOutFavList() {
       n++;
     }
   }
-  const filtered = !!(q || project.value || group.value), total = favs.length;
+  const filtered = !!(q || project.value || group.value || outFavLabel), total = favs.length;
   document.getElementById("out-fav-list-count").textContent = state
     ? (filtered ? "显示 " + num(n) + " / " + num(total) : num(total)) + " 个收藏"
     : failed ? "收藏加载失败，可以刷新重试。" : "正在读取收藏…";
@@ -2011,14 +2039,19 @@ function fillSelect(select, all, choices) {
     [...choices].map(([key, label]) => '<option value="' + esc(key) + '">' + esc(label) + "</option>").join("");
   if ([...select.options].some(o => o.value === previous)) select.value = previous;
 }
+function listLabelChips(labels, q, action) {
+  if (!labels.length) return "";
+  return '<span class="list-labels">' + labels.map(label => '<button type="button" class="chip sm" data-label="' + esc(label.toLowerCase()) +
+    '" title="按「#' + esc(label) + '」筛选" onclick="' + action + '(this.dataset.label)"><span>' + hl("#" + label, q) + '</span></button>').join("") + "</span>";
+}
 
 // ---------------- 左栏各块的列表页：收藏的对话、标签、定时任务（会话一行一个，能搜、按项目和标签筛）
 const SESS_PAGES = {
-  favoriteSessions: { hash: "#favorite-sessions", title: "收藏的对话", time: "最后动静", list: () => state.favs || [],
+  favoriteSessions: { title: "收藏的对话", time: "最后动静", list: () => state.favs || [],
     empty: "还没有收藏的对话。在会话详情右上角点星标，或在会话的 ⋯ 菜单里选「收藏」。" },
-  labels: { hash: "#labels", title: "标签", time: "最后动静", list: () => state.labeled || [],
+  labels: { title: "标签", time: "最后动静", list: () => state.labeled || [],
     empty: "还没有打过标签。在会话详情的标题下点「+ 标签」，写下次可能搜的词。" },
-  autos: { hash: "#autos", title: "定时任务", time: "什么时候跑", list: () => state.autos || [], empty: "还没有 Codex 定时任务。" },
+  autos: { title: "定时任务", time: "什么时候跑", list: () => state.autos || [], empty: "还没有 Codex 定时任务。" },
 };
 function isPane(t) { return t === "favoriteOutputs" || !!SESS_PAGES[t]; }
 function sessRef(key) {
@@ -2030,13 +2063,14 @@ function sessPlace(x) {
 }
 function goSessList(kind, label) {
   for (const id of ["sess-list-q", "sess-list-project", "sess-list-label"]) document.getElementById(id).value = "";
-  if (tab === kind) renderSessList();
+  const samePage = tab === kind;
+  if (samePage) renderSessList();
   else setTab(kind);
   if (label) {
     document.getElementById("sess-list-label").value = label;
     renderSessList();
-    renderRail();
   }
+  if (kind === "labels" && (samePage || label)) renderRail();
   document.getElementById("session-pane").scrollTop = 0;
   window.scrollTo(0, 0);
   document.getElementById("sess-list-title").focus({ preventScroll: true });
@@ -2066,8 +2100,7 @@ function renderSessList() {
     if (!words.every(w => text.includes(w))) continue;
     const k = clip(x.key);
     const time = tab === "autos" && x.auto ? (x.auto.paused ? "已暂停" : x.auto.when || "定时") : x.last ? when(x.last) : "—";
-    const chips = tags.length ? '<span class="sess-labels">' + tags.map(l => '<button type="button" class="chip sm" title="只看打了「#' + esc(l) +
-      '」的会话" onclick="setSessLabel(clips[' + clip(l.toLowerCase()) + '])">' + hl("#" + l, q) + "</button>").join("") + "</span>" : "";
+    const chips = listLabelChips(tags, q, "setSessLabel");
     rows += '<tr><td><button type="button" class="of-name sess-name" title="在看板里看这个会话的详情" onclick="goTaskDetail(clips[' + k + '])">' +
       toolChip(x) + "<span>" + hl(x.title, q) + "</span></button>" +
       '<span class="of-source of-mobile">' + esc([place, time].join(" · ")) + "</span>" + (chips ? '<span class="of-mobile">' + chips + "</span>" : "") + "</td>" +
@@ -2113,6 +2146,7 @@ function clearOutFavList() {
   q.value = "";
   document.getElementById("out-fav-list-project").value = "";
   document.getElementById("out-fav-list-group").value = "";
+  outFavLabel = "";
   renderOutFavList();
   q.focus();
 }
@@ -2277,9 +2311,9 @@ function topicRow(x, label) {
     '<button type="button" class="ra" title="改名、归档、删除" aria-label="「' + esc(x.t.name) + '」改名、归档、删除" aria-haspopup="menu" aria-expanded="false" data-tid="' + x.t.id +
     '" onclick="event.stopPropagation();topicMore(this)">' + ico("more", 15) + "</button></div>";
 }
-function toggleArch() {
+function toggleArch(focusId) {
   archOpen = !archOpen; store("ledger.arch", archOpen);
-  renderRail();
+  renderRail(focusId);
 }
 function doneDays() { return (state && (state.doneDays || state.windowDays)) || 30; }
 function goDone() {

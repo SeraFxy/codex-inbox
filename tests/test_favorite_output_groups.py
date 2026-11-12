@@ -50,16 +50,21 @@ class FavoriteOutputOriginsTest(unittest.TestCase):
         self.assertEqual(item['projectKey'], 'ArchivedProject')
         self.assertEqual(item['topic']['name'], 'Archive topic')
 
-    def test_shared_feishu_document_uses_one_latest_source(self):
+    def test_shared_feishu_document_uses_latest_source_for_classification_and_all_sources_for_labels(self):
         url = 'https://example.feishu.cn/docx/ABCDEFGHIJKLMNOP'
         self.add('codex:older', url, 100)
         self.add('codex:newer', url + '#anchor', 900)
+        self.add('claude:unrelated', 'https://example.com/another-report', 950)
+        self.assertTrue(ledger.save_session_labels(self.conn, 'codex:older', ['plan', 'Research'])[0])
+        self.assertTrue(ledger.save_session_labels(self.conn, 'codex:newer', ['Plan'])[0])
+        self.assertTrue(ledger.save_session_labels(self.conn, 'claude:unrelated', ['Unrelated'])[0])
         items = [{'key': 'codex:older', 'projectKey': 'Older', 'topic': None},
                  {'key': 'codex:newer', 'projectKey': 'Newer', 'topic': None}]
         [item] = self.favorites([ledger.feishu_doc(url)], items)
         self.assertEqual(item['projectKey'], 'Newer')
         self.assertEqual(item['sessionKey'], 'codex:newer')
         self.assertEqual(item['cat'], 'feishu')
+        self.assertEqual(item['labels'], ['Plan', 'Research'])
 
     def test_older_source_with_only_prompt_history_has_project(self):
         key, url = 'claude:old', 'https://example.com/old.html'
