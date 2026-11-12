@@ -1609,7 +1609,12 @@ function openPop(anchor, html, onEnter) {
   input.addEventListener("keydown", e => {
     if (ime(e)) return;
     if (e.key === "Enter") onEnter();
-    if (e.key === "Escape") closeTag();
+    if (e.key === "Escape") {
+      e.preventDefault();
+      e.stopPropagation();
+      closeTag();
+      if (anchor.isConnected) anchor.focus({ preventScroll: true });
+    }
   });
   input.focus(); input.select();
   return input;
