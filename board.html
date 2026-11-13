@@ -3269,19 +3269,19 @@ function clearHistSearch() {
   searchHist("");
   histQuery.focus();
 }
-const HIST_CLAUSE_BREAK = /[\r\n。！？；，、：.!?;,:]+/;
+const HIST_PREVIOUS_QUESTION = /([^\r\n。！？；，、：.!?;,:]+)[？?][ \t]*$/;
 const HIST_HAN_PHRASE = /\p{Script=Han}{8,}/gu;
 function histSearchClues(query, exactTexts) {
   if (/[\s/#\\]/.test(query)) return [];
   const phrases = new Set(query.match(HIST_HAN_PHRASE) || []);
   if (!phrases.size) return [];
   if (exactTexts.length === 1) {
-    // 单条原话里，结论前面常紧接着提问。用同一行的上一小句补搜这个问题的其他说法。
+    // 原句紧跟一个问题时，用同一行的问句补搜这个问题的其他说法。
     const text = exactTexts[0], at = text.indexOf(query);
     if (at > 0) {
-      const before = text.slice(Math.max(0, at - 64), at).split(/\r?\n/).at(-1);
-      const clause = before.split(HIST_CLAUSE_BREAK).map(s => s.trim()).filter(Boolean).at(-1) || "";
-      for (const phrase of clause.match(HIST_HAN_PHRASE) || []) phrases.add(phrase);
+      const before = text.slice(Math.max(0, at - 64), at);
+      const question = before.match(HIST_PREVIOUS_QUESTION)?.[1] || "";
+      for (const phrase of question.match(HIST_HAN_PHRASE) || []) phrases.add(phrase);
     }
   }
   return [...phrases].map(phrase => {

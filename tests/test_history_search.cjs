@@ -5,8 +5,8 @@ const vm = require('node:vm');
 const { test } = require('node:test');
 const html = fs.readFileSync(path.join(__dirname, '..', 'board.html'), 'utf8');
 const ctx = vm.createContext({});
-const source = html.match(/const HIST_CLAUSE_BREAK = [\s\S]+?(?=function applyHistSearch\()/)?.[0];
-vm.runInContext(source || '', ctx);
+const source = html.slice(html.indexOf('const HIST_PREVIOUS_QUESTION = '), html.indexOf('function applyHistSearch('));
+vm.runInContext(source, ctx);
 
 const query = '按空间总量收费很容易被规避';
 const later = '一个存了五百份文件的共享目录算是一个独立空间吗？' + query + '。';
@@ -21,6 +21,11 @@ test('a long phrase can recover an earlier question from the context of its exac
 test('long Chinese searches tolerate a small wording change without an exact hit', () => {
   const clues = ctx.histSearchClues('审批完以后保留合同版本', []);
   assert.equal(ctx.histRelatedPhrase('审批完之后要保留合同版本。', clues), '审批完之后要保留合同版本');
+});
+
+test('unrelated statements next to the exact phrase do not broaden the search', () => {
+  const clues = ctx.histSearchClues(query, ['共享目录算一个独立空间吗。\n' + query + '。']);
+  assert.equal(ctx.histRelatedPhrase(earlier, clues), '');
 });
 
 test('short terms and links keep literal matching', () => {
