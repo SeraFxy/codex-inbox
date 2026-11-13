@@ -3269,6 +3269,48 @@ function clearHistSearch() {
   searchHist("");
   histQuery.focus();
 }
+const HIST_CLAUSE_BREAK = /[\r\n。！？；，、：.!?;,:]+/;
+const HIST_HAN_PHRASE = /\p{Script=Han}{8,}/gu;
+function histSearchClues(query, exactTexts) {
+  if (/[\s/#\\]/.test(query)) return [];
+  const phrases = new Set(query.match(HIST_HAN_PHRASE) || []);
+  if (!phrases.size) return [];
+  if (exactTexts.length === 1) {
+    // 单条原话里，结论前面常紧接着提问。用同一行的上一小句补搜这个问题的其他说法。
+    const text = exactTexts[0], at = text.indexOf(query);
+    if (at > 0) {
+      const before = text.slice(Math.max(0, at - 64), at).split(/\r?\n/).at(-1);
+      const clause = before.split(HIST_CLAUSE_BREAK).map(s => s.trim()).filter(Boolean).at(-1) || "";
+      for (const phrase of clause.match(HIST_HAN_PHRASE) || []) phrases.add(phrase);
+    }
+  }
+  return [...phrases].map(phrase => {
+    const grams = new Set();
+    for (let i = 0; i <= phrase.length - 3; i++) grams.add(phrase.slice(i, i + 3));
+    return { grams, minimum: Math.max(5, Math.min(8, Math.ceil(grams.size * .45))) };
+  });
+}
+function histRelatedPhrase(text, clues) {
+  let best = "", bestScore = 0;
+  for (const phrase of text.match(HIST_HAN_PHRASE) || []) {
+    for (const { grams, minimum } of clues) {
+      // 只认聚在同一句里的共享三字片段，容许中间改几个字。
+      const shared = new Set();
+      let start = 0, last = -Infinity;
+      for (let i = 0; i <= phrase.length - 3; i++) {
+        const gram = phrase.slice(i, i + 3);
+        if (!grams.has(gram)) continue;
+        if (i - last > 6) { shared.clear(); start = i; }
+        shared.add(gram);
+        last = i;
+        if (shared.size < minimum || shared.size <= bestScore || i - start + 1 > shared.size * 2) continue;
+        best = phrase.slice(start, i + 3);
+        bestScore = shared.size;
+      }
+    }
+  }
+  return best;
+}
 function applyHistSearch(scroll) {
   clearTimeout(histFindTimer); histFindTimer = 0;
   const h = hist;
@@ -3284,15 +3326,32 @@ function applyHistSearch(scroll) {
   marks.forEach(m => m.replaceWith(...m.childNodes));
   if (marks.length) histBody.normalize();   // 下一个词可以跨过上次高亮拆开的文字
   histBody.querySelectorAll("a[data-hit]").forEach(a => delete a.dataset.hit);
+  histBody.querySelectorAll(".hist-related:not([hidden])").forEach(label => { label.hidden = true; });
   h.matches = [];
+  h.relatedCount = 0;
   const words = qWords(h.query).map(w => w.toLowerCase());
   if (words.length) {
+    const exactYou = [], otherYou = [];
     for (const body of histBody.querySelectorAll(".hmsg > .tm-b")) {
       const text = body.textContent.toLowerCase();
-      if (!words.every(w => text.includes(w) || (/^https?:\/\//.test(w) && [...body.querySelectorAll("a[href]")].some(a => a.href.toLowerCase().includes(w))))) continue;
+      const you = body.classList.contains("you");
+      if (!words.every(w => text.includes(w) || (/^https?:\/\//.test(w) && [...body.querySelectorAll("a[href]")].some(a => a.href.toLowerCase().includes(w))))) {
+        if (you) otherYou.push({ body, text });
+        continue;
+      }
+      if (you) exactYou.push(text);
       markIn(body, h.query);
       const hits = body.querySelectorAll("mark");
       h.matches.push(...(hits.length ? hits : [body]));
+    }
+    const clues = histSearchClues(h.query.toLowerCase(), exactYou);
+    if (clues.length) for (const { body, text } of otherYou) {
+      const phrase = histRelatedPhrase(text, clues);
+      if (!phrase) continue;
+      markIn(body, phrase, "", true);
+      body.parentElement.querySelector(".hist-related").hidden = false;
+      h.matches.push(body.querySelector("mark") || body);
+      h.relatedCount++;
     }
   } else if (h.hit) {
     const b = h.hit.favorite;
@@ -3313,7 +3372,8 @@ function showHistMatch(scroll) {
   document.getElementById("hist-find-nav").hidden = h.saved || !h.query;
   document.getElementById("hist-prev").disabled = n < 2;
   document.getElementById("hist-next").disabled = n < 2;
-  document.getElementById("hist-find-status").textContent = n ? num(h.matchIndex + 1) + " / " + num(n) + " 处" : h.loading ? "读取中…" : "无匹配";
+  const related = h.relatedCount ? " · 相关原话 " + num(h.relatedCount) : "";
+  document.getElementById("hist-find-status").textContent = n ? num(h.matchIndex + 1) + " / " + num(n) + " 处" + related : h.loading ? "读取中…" : "无匹配";
   if (target) {
     target.classList.add("hist-current");
     if (scroll) target.scrollIntoView({ block: "center" });
@@ -3789,7 +3849,8 @@ function histMsg(m, at, lost, who) {
   return '<div class="tm hmsg ' + (you ? "you" : "it") + (at ? " at" : "") + '"' +
     (m.id ? ' data-message-id="' + esc(m.id) + '"' : "") + '><div class="tm-h">' +
     (you ? '<span class="who you">你</span>' : face("mark", 20) + '<span class="who">' + esc(who) + "</span>") +
-    "<span>" + esc(tag) + (m.ts ? esc(messageTime(m.ts)) : "") + '</span><div class="hm-actions">' +
+    "<span>" + (you ? '<span class="hist-related" hidden>相关原话 · </span>' : "") +
+    esc(tag) + (m.ts ? esc(messageTime(m.ts)) : "") + '</span><div class="hm-actions">' +
     btn(ico("copy", 13) + "复制", "copyClip(" + clip(m.text) + ")", "ghost xs cp") + star + "</div></div>" +
     (you ? '<div class="tm-b you"' + attrs + '><div class="tx">' + esc(m.text) + "</div>" + imgs + "</div>"
       : '<div class="tm-b md"' + attrs + ">" + mdHtml(m.text) + "</div>") + "</div>";
