@@ -1,5 +1,6 @@
 import json
 import sqlite3
+import threading
 import unittest
 from unittest.mock import patch
 
@@ -41,6 +42,29 @@ class SessionLabelsTest(unittest.TestCase):
         self.assertFalse(ledger.search_sessions(self.conn, "健康诊断", tool="claude", cross=False)["sessions"])
         self.assertTrue(ledger.save_session_labels(self.conn, self.old, [])[0])
         self.assertEqual(ledger.search_sessions(self.conn, "健康诊断", cross=False)["total"], 0)
+
+    def test_editing_labels_adds_to_current_set_and_removes_only_explicit_labels(self):
+        self.assertTrue(ledger.save_session_labels(self.conn, self.old, ["Review", "Source"])[0])
+        app = ledger.App.__new__(ledger.App)
+        app.conn, app.lock = self.conn, threading.RLock()
+
+        def edit(labels, remove=()):
+            return app.action({"action": "session_labels_edit", "key": self.old,
+                               "arg": {"add": labels, "remove": list(remove)}})
+
+        self.assertTrue(edit(["Design"])[0])
+        self.assertTrue(edit(["Pricing", "design"], ["source"])[0])
+        self.assertEqual(ledger.session_labels(self.conn, self.old), ["Review", "Design", "Pricing"])
+        self.assertTrue(edit(["Pricing", "design"], ["source"])[0])
+        self.assertEqual(ledger.session_labels(self.conn, self.old), ["Review", "Design", "Pricing"])
+
+    def test_label_edit_validates_the_count_after_merging(self):
+        labels = ["Topic " + str(i) for i in range(12)]
+        self.assertTrue(ledger.save_session_labels(self.conn, self.old, labels)[0])
+        self.assertFalse(ledger.save_session_labels(self.conn, self.old, ["New"], remove=[])[0])
+        self.assertEqual(ledger.session_labels(self.conn, self.old), labels)
+        self.assertTrue(ledger.save_session_labels(self.conn, self.old, ["New"], remove=labels[:1])[0])
+        self.assertEqual(ledger.session_labels(self.conn, self.old), labels[1:] + ["New"])
 
     def test_label_search_finds_session_with_no_prompt_index(self):
         key = "codex:output-only"

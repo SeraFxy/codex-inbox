@@ -794,7 +794,9 @@ mark { background: var(--bk-lime-mark); color: #1B2026; border-radius: 3px; box-
 .list-labels { display: flex; flex-wrap: wrap; gap: 4px; }
 .list-labels .chip { max-width: 100%; height: auto; min-height: 18px; white-space: normal; overflow-wrap: anywhere; }
 #out-fav-list-rows .list-labels { margin-top: 4px; }
-.out-label-choices { max-height: 120px; overflow: auto; overscroll-behavior: contain; }
+.out-label-choices, #session-label-current { max-height: 120px; overflow: auto; overscroll-behavior: contain; }
+#session-label-current .chip { gap: 4px; }
+#session-label-current .chip svg { flex: none; }
 .of-list-empty { margin: 0; padding: 24px; border: 1px solid var(--bk-line); border-radius: 14px; background: var(--bk-surface); color: var(--bk-ink-3); font-size: 14px; }
 @media (max-width: 640px) {
   .of-list-filters { grid-template-columns: repeat(2, minmax(0, 1fr)); }
@@ -1609,8 +1611,11 @@ function showMenu(el, key, html, opts) {
   const first = pop.querySelector("input, button");
   if (first) first.focus({ preventScroll: true });
 }
-let popInit = "";   // 浮层打开时输入框里的字：改过了，点外面就不关，免得改到一半的丢了
-function popDirty() { const i = document.querySelector("#tagpop input"); return !!(tagEdit && i && i.value !== popInit); }
+let popInit = "";
+function popDirty() {
+  const input = document.querySelector("#tagpop input");
+  return !!(tagEdit && (tagEdit.dirty || (input && input.value !== popInit)));
+}
 function openPop(anchor, html, onEnter) {
   // 小浮层：改项目短码、新建主题、给主题改名共用；调用前先设好 tagEdit
   const pop = document.getElementById("tagpop"), r = anchor.getBoundingClientRect();
@@ -1789,6 +1794,9 @@ function labelGroups(items, labelsOf = x => x.labels || []) {
   }
   return [...by.values()].sort((a, b) => b.n - a.n || a.label.localeCompare(b.label, "zh"));
 }
+function knownLabelGroups() {
+  return labelGroups([...(state?.labeled || []), ...Object.values(state?.outputLabels || {}).map(labels => ({ labels }))]);
+}
 function labelSec() {
   const groups = labelGroups(state.labeled || []), cur = tab === "labels" ? document.getElementById("sess-list-label").value : null;
   const html = railListRow("labels", groups.length, labelsOpen, "toggleLabels");
@@ -1957,7 +1965,7 @@ function outLabelEdit(item) {
 function editOutputLabels(key, anchor) {
   closeMenu();
   const previous = outputLabels(key), inherited = state?.outFavs?.find(x => x.key === key)?.labels || [];
-  const choices = labelGroups([...(state?.labeled || []), ...Object.values(state?.outputLabels || {}).map(labels => ({ labels }))]);
+  const choices = knownLabelGroups();
   tagEdit = { kind: "output-labels", key, previous };
   const input = openPop(anchor, '<label for="out-label-value">产出物标签</label>' +
     '<input id="out-label-value" maxlength="800" placeholder="输入标签，用逗号隔开" value="' + esc(previous.join("，")) + '">' +
@@ -1970,17 +1978,17 @@ function editOutputLabels(key, anchor) {
   syncOutputLabelChoices(input);
   input.setSelectionRange(input.value.length, input.value.length);
 }
-function outputLabelValues(value) {
+function labelValues(value) {
   return value.split(/[，,]/).map(label => label.trim().replace(/^[#＃]+/, "").trim().replace(/\s+/g, " ")).filter(Boolean);
 }
 function syncOutputLabelChoices(input) {
-  const labels = new Set(outputLabelValues(input.value).map(l => l.toLowerCase()));
+  const labels = new Set(labelValues(input.value).map(l => l.toLowerCase()));
   for (const button of document.querySelectorAll(".out-label-choices button")) {
     button.setAttribute("aria-pressed", String(labels.has(button.dataset.label.toLowerCase())));
   }
 }
 function toggleOutputLabel(label) {
-  const input = document.getElementById("out-label-value"), key = label.toLowerCase(), values = outputLabelValues(input.value);
+  const input = document.getElementById("out-label-value"), key = label.toLowerCase(), values = labelValues(input.value);
   const kept = values.filter(x => x.toLowerCase() !== key);
   input.value = (kept.length === values.length ? kept.concat(label) : kept).join("，");
   syncOutputLabelChoices(input);
@@ -1988,7 +1996,7 @@ function toggleOutputLabel(label) {
 async function saveOutputLabelEdit() {
   const editing = tagEdit, input = document.getElementById("out-label-value");
   if (editing?.kind !== "output-labels" || editing.saving || !input) return;
-  const labels = outputLabelValues(input.value);
+  const labels = labelValues(input.value);
   const controls = document.querySelectorAll("#tagpop input, #tagpop button");
   editing.saving = true;
   controls.forEach(el => { el.disabled = true; });
@@ -2010,22 +2018,74 @@ function sessionLabelChips(item, query = "") {
     btn(ico("plus", 12) + "标签", "editSessionLabels(clips[" + clip(item.key) + "],this)", "ghost xs session-label-edit",
       "添加或编辑搜索标签", 'aria-label="编辑搜索标签"') + "</span>";
 }
+function sessionLabelDraftChips(labels) {
+  return labels.map(label => '<button type="button" class="chip sm" data-label="' + esc(label) +
+    '" aria-label="移除标签「' + esc(label) + '」" onclick="toggleSessionLabel(this)"><span>' +
+    esc("#" + label) + "</span>" + ico("close", 12) + "</button>").join("");
+}
 function editSessionLabels(key, anchor) {
-  const item = findItem(key) || hSessions.find(s => s.key === key) || sessRef(key);
+  const item = findItem(key) || sessRef(key) || hSessions.find(s => s.key === key);
   if (!item) return;
   closeMenu();
-  tagEdit = { kind: "session-labels", key };
-  openPop(anchor, '<label for="session-label-value">会话的搜索标签</label>' +
-    '<input id="session-label-value" maxlength="512" value="' + esc((item.labels || []).join("，")) + '">' +
-    '<p class="note">写下次可能搜的词，用逗号隔开。留空可清除标签。</p><div class="bar end">' +
+  const previous = item.labels || [], choices = knownLabelGroups();
+  const selected = new Set(previous.map(label => label.toLowerCase()));
+  const hasChoices = choices.some(({ key }) => !selected.has(key));
+  tagEdit = { kind: "session-labels", key, previous, labels: [...previous], choices };
+  const input = openPop(anchor, '<label for="session-label-value">会话的搜索标签</label>' +
+    '<div class="list-labels" id="session-label-current" role="group" aria-label="已选标签"' + (previous.length ? "" : " hidden") +
+    ">" + sessionLabelDraftChips(previous) + "</div>" +
+    '<input id="session-label-value" maxlength="512" autocomplete="off" placeholder="搜索已有标签或输入新标签">' +
+    '<div id="session-label-choices"' + (hasChoices ? "" : " hidden") +
+    '><span class="note">已有标签</span><div class="of-list-labels out-label-choices" role="group" aria-label="已有标签">' +
+    choices.map(({ key, label }) => btn(esc("#" + label), "toggleSessionLabel(this)", "sec xs", "",
+      'data-label="' + esc(label) + '"' + (selected.has(key) ? " hidden" : ""))).join("") + "</div></div>" +
+    '<p class="note">输入多个新标签时，用逗号隔开。</p><div class="bar end">' +
     btn("取消", "closeTag()", "sec xs") + btn("保存", "saveSessionLabelEdit()", "pri xs") + "</div>", saveSessionLabelEdit);
+  input.addEventListener("input", filterSessionLabelChoices);
+}
+function filterSessionLabelChoices() {
+  const group = document.getElementById("session-label-choices");
+  const input = document.getElementById("session-label-value");
+  const query = input.value.trim().replace(/^[#＃]+/, "").trim().toLowerCase();
+  const selected = new Set(tagEdit.labels.map(label => label.toLowerCase()));
+  let matches = false;
+  for (const button of group.querySelectorAll("button")) {
+    const key = button.dataset.label.toLowerCase();
+    button.hidden = selected.has(key) || !key.includes(query);
+    matches ||= !button.hidden;
+  }
+  group.hidden = !matches;
+}
+function toggleSessionLabel(button) {
+  const editing = tagEdit;
+  if (editing?.kind !== "session-labels" || editing.saving) return;
+  const label = button.dataset.label, input = document.getElementById("session-label-value");
+  const index = editing.labels.indexOf(label);
+  if (index >= 0) editing.labels.splice(index, 1);
+  else {
+    editing.labels.push(label);
+    input.value = "";
+  }
+  editing.dirty = true;
+  const current = document.getElementById("session-label-current");
+  current.innerHTML = sessionLabelDraftChips(editing.labels);
+  current.hidden = !editing.labels.length;
+  filterSessionLabelChoices();
+  input.focus({ preventScroll: true });
 }
 async function saveSessionLabelEdit() {
   const editing = tagEdit, input = document.getElementById("session-label-value");
   if (editing?.kind !== "session-labels" || editing.saving || !input) return;
+  const names = new Map(editing.choices.map(({ key, label }) => [key, label]));
+  const typed = labelValues(input.value).map(label => names.get(label.toLowerCase()) || label);
+  const selected = new Set([...editing.labels, ...typed]), previous = new Set(editing.previous);
+  const add = [...selected].filter(label => !previous.has(label));
+  const remove = editing.previous.filter(label => !selected.has(label));
+  const controls = document.querySelectorAll("#tagpop input, #tagpop button");
   editing.saving = true;
+  controls.forEach(el => { el.disabled = true; });
   try {
-    const res = await post("session_labels", editing.key, { labels: input.value.split(/[，,]/) });
+    const res = await post("session_labels_edit", editing.key, { add, remove });
     if (!res.ok) { toast(res.message || "标签没保存成功"); return; }
     if (tagEdit === editing) closeTag();
     await load();   // 左栏「标签」和列表页都要跟着变
@@ -2034,7 +2094,10 @@ async function saveSessionLabelEdit() {
     else hLoaded = false;
     toast(res.message);
   } catch (e) { toast("暂时读不到保存结果，请刷新后核对"); }
-  finally { editing.saving = false; }
+  finally {
+    editing.saving = false;
+    controls.forEach(el => { el.disabled = false; });
+  }
 }
 function toggleOutFav(l) {
   closeMenu();

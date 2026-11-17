@@ -2380,13 +2380,25 @@ def normalize_labels(labels, owner):
     return unique, ""
 
 
-def save_session_labels(conn, key, labels):
+def save_session_labels(conn, key, labels, *, remove=None):
     if not session_known(conn, key):
         return False, "找不到这个会话"
-    unique, error = normalize_labels(labels, "一个会话")
+    owner = "一个会话"
+    unique, error = normalize_labels(labels, owner)
     if error:
         return False, error
+    removed = None
+    if remove is not None:
+        removed, error = normalize_labels(remove, owner)
+        if error:
+            return False, error
     with conn:
+        if removed is not None:
+            # 按本次增删和当前标签合并，另一个页面刚加的标签也能保留。
+            kept = [label for label in session_labels(conn, key) if label.casefold() not in removed]
+            unique, error = normalize_labels(kept + list(unique.values()), owner)
+            if error:
+                return False, error
         conn.execute("DELETE FROM session_labels WHERE session_key=?", (key,))
         conn.executemany("INSERT INTO session_labels (session_key,label,folded) VALUES (?,?,?)",
                          [(key, label, folded) for folded, label in unique.items()])
@@ -4518,6 +4530,10 @@ class App:
             c = self.conn
             if action == "session_labels" and isinstance(arg, dict):
                 return save_session_labels(c, key, arg.get("labels"))
+            if action == "session_labels_edit" and isinstance(arg, dict):
+                if arg.get("remove") is None:
+                    return False, "标签格式不对"
+                return save_session_labels(c, key, arg.get("add"), remove=arg["remove"])
             if action == "out_labels" and isinstance(arg, dict):
                 return save_output_labels(c, key, arg.get("labels"), arg.get("previous"))
             if action == "out_name" and isinstance(arg, dict):
