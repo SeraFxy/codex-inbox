@@ -86,3 +86,23 @@ test('empty results and failed requests have explicit states; folding invalidate
   assert.equal(s.run('dOut.demo'), undefined);
   assert.equal(s.run("outRows('demo')"), 'doc,file');
 });
+
+
+test('saved labels are visible beside the matching output title', () => {
+  const renderLinks = html.slice(html.indexOf('function linkList('), html.indexOf('// MR 和流水线：临时的'));
+  const renderLabels = html.slice(html.indexOf('function listLabelChips('), html.indexOf('// ---------------- 左栏各块的列表页'));
+  const labels = { doc: ['Review', '<draft>'] };
+  const context = vm.createContext({
+    links: [{ key: 'doc', text: 'Document', cat: 'feishu' }, { key: 'other', text: 'Other', cat: 'web' }],
+    MR_STATE: {}, esc: s => String(s ?? '').replace(/</g, '&lt;').replace(/>/g, '&gt;'),
+    outLink: l => '<a>' + l.text + '</a>', hl: s => context.esc(s),
+    outputLabels: key => labels[key] || [],
+    outFavOn: () => false, archMark: () => '', outLabelEdit: () => '', outEdit: () => '', outStar: () => ''
+  });
+  vm.runInContext(renderLinks + renderLabels, context);
+  const [documentRow, otherRow] = vm.runInContext('linkList(links)', context).split('</li>');
+  assert.match(documentRow, /Document<\/a>.*#Review.*#&lt;draft&gt;/);
+  assert.doesNotMatch(otherRow, /list-labels/);
+  delete labels.doc;
+  assert.doesNotMatch(vm.runInContext('linkList(links)', context), /list-labels/);
+});

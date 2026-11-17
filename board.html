@@ -225,9 +225,10 @@ kbd.k.lg { min-width: 22px; height: 22px; padding: 0 6px; border-radius: 6px; fo
 .rnav-caret { display: grid; place-items: center; }
 .ri.fav { padding-left: 26px; gap: 6px; }
 .rfg { flex: none; padding: 8px 10px 2px 26px; font-size: 12px; line-height: 16px; color: var(--bk-ink-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }   /* 收藏里的主题小标题 */
-.rof-tree .of-fold { gap: 4px; padding-left: 12px; }
-.rof-tree .of-fold svg { flex: none; color: var(--bk-ink-3); }
-.rof-tree .of-sub { padding-left: 28px; color: var(--bk-ink-2); }
+.rof-tree .rnav-row > .rfold { width: 28px; }
+.rof-tree .ri.of-scope { padding-left: 28px; }
+.rof-tree .of-sub { margin-left: 16px; }
+.rof-tree .of-sub > .ri { color: var(--bk-ink-2); }
 .rof-tree .ri.fav { padding-left: 44px; padding-right: 36px; }
 @media (hover: none) { .rof-tree .rt .ra { display: inline-flex; } }
 .ri.off .nm { color: var(--bk-ink-3); }   /* 暂停了的定时任务，和「已暂停的 N 个」那一行 */
@@ -758,6 +759,7 @@ mark { background: var(--bk-lime-mark); color: #1B2026; border-radius: 3px; box-
 .of-list-head, .of-list-status { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; }
 .of-list-head h2 { margin: 0; font-size: 20px; line-height: 26px; }
 .of-list-filters { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 168px) minmax(0, 216px); gap: 8px; }
+#out-fav-list .of-list-filters { grid-template-columns: minmax(0, 1fr) repeat(3, minmax(0, 144px)); }
 .of-list-filters .search, .of-list-filters select { height: 40px; }
 .of-list-labels { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; }
 .of-list-labels .btn { max-width: 100%; height: auto; min-height: 28px; padding: 4px 8px; white-space: normal; overflow-wrap: anywhere; }
@@ -777,6 +779,7 @@ mark { background: var(--bk-lime-mark); color: #1B2026; border-radius: 3px; box-
 .of-list-table .of-name:hover { text-decoration: underline; }
 .of-list-table .out-label-edit { margin-left: 4px; vertical-align: middle; }
 .links .out-label-edit { flex: none; }
+.links .link-title { display: grid; gap: 4px; min-width: 0; }
 .of-list-table .of-project { font-family: var(--bk-mono); }
 .of-list-table .of-source, .of-list-table .of-time { color: var(--bk-ink-3); font-size: 12px; line-height: 16px; }
 .of-list-table .of-source { display: block; }
@@ -792,6 +795,7 @@ mark { background: var(--bk-lime-mark); color: #1B2026; border-radius: 3px; box-
 .of-list-empty { margin: 0; padding: 24px; border: 1px solid var(--bk-line); border-radius: 14px; background: var(--bk-surface); color: var(--bk-ink-3); font-size: 14px; }
 @media (max-width: 640px) {
   .of-list-filters { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  #out-fav-list .of-list-filters { grid-template-columns: repeat(3, minmax(0, 1fr)); }
   .of-list-filters .search { grid-column: 1 / -1; }
   .of-list-table .of-project-col, .of-list-table .of-group-col, .of-list-table .of-time-col,
   .of-list-table .of-desktop { display: none; }
@@ -894,7 +898,8 @@ mark { background: var(--bk-lime-mark); color: #1B2026; border-radius: 3px; box-
             <input id="out-fav-list-q" type="search" autocomplete="off" aria-label="搜索收藏的产出物" placeholder="搜标题、链接、项目、主题或标签" oninput="renderOutFavList()">
           </div>
           <select class="lfilter" id="out-fav-list-project" aria-label="按项目筛选" onchange="renderOutFavList()"><option value="">全部项目</option></select>
-          <select class="lfilter" id="out-fav-list-group" aria-label="按主题或分类筛选" onchange="renderOutFavList()"><option value="">全部主题 / 分类</option></select>
+          <select class="lfilter" id="out-fav-list-group" aria-label="按主题筛选" onchange="renderOutFavList()"><option value="">全部主题</option></select>
+          <select class="lfilter" id="out-fav-list-type" aria-label="按链接类型筛选" onchange="renderOutFavList()"><option value="">全部类型</option></select>
         </div>
         <div class="of-list-labels" id="out-fav-list-labels" role="group" aria-label="按标签筛选收藏的产出物" hidden></div>
         <div class="of-list-status">
@@ -1549,10 +1554,15 @@ function outLink(l, cls, inner) {
   return '<a href="' + esc(l.url) + '"' + c + ' target="_blank" rel="noopener" title="' + esc(l.url) + '">' + t + "</a>";
 }
 function linkList(links) {
-  return '<ul class="links">' + links.map(l => '<li class="' + (l.cat === "mr" && !mrLive(l) ? "done" : "") + (outFavOn(l.key) ? " fav" : "") + '"><span class="lk">' + esc(l.text !== l.name ? l.name : "") +
-    "</span>" + outLink(l, l.gone && !l.arch ? "gone" : "") + (MR_STATE[l.state] ? '<span class="chip sm lst">' + MR_STATE[l.state] + "</span>" : "") + archMark(l) +
-    (l.cat === "mr" ? "" : outLabelEdit(l)) + outEdit(l) + outStar(l) +
-    '<span class="lt">' + esc(l.timeText) + "</span></li>").join("") + "</ul>";
+  return '<ul class="links">' + links.map(l => {
+    const name = outLink(l, l.gone && !l.arch ? "gone" : ""), tags = listLabelChips(outputLabels(l.key), "");
+    return '<li class="' + (l.cat === "mr" && !mrLive(l) ? "done" : "") + (outFavOn(l.key) ? " fav" : "") +
+      '"><span class="lk">' + esc(l.text !== l.name ? l.name : "") + "</span>" +
+      (tags ? '<span class="link-title">' + name + tags + "</span>" : name) +
+      (MR_STATE[l.state] ? '<span class="chip sm lst">' + MR_STATE[l.state] + "</span>" : "") + archMark(l) +
+      (l.cat === "mr" ? "" : outLabelEdit(l)) + outEdit(l) + outStar(l) +
+      '<span class="lt">' + esc(l.timeText) + "</span></li>";
+  }).join("") + "</ul>";
 }
 // MR 和流水线：临时的，开着的 MR 列出来，合并了、关了的和流水线、提交收起来
 const MR_STATE = { opened: "待合并", locked: "待合并", merged: "已合并", closed: "已关闭" };
@@ -1721,6 +1731,7 @@ function renderRail(focusId) {
     }
   }
   document.getElementById("rail").innerHTML = html + '</div><p class="rfoot">把会话拖到项目或主题上就移过去了，也可以在发给 AI 的消息里写 #主题。双击项目或主题改名，拖项目换位置。红色数字 = 里面有轮到你的事。</p>';
+  if (tab === "favoriteOutputs") syncOutFavRailSelection();
   if (focusId) document.getElementById(focusId)?.focus({ preventScroll: true });
 }
 function railGroup(p) {
@@ -1809,15 +1820,15 @@ function favGroups(favs) {
   return out;
 }
 
+function outFavType(cat) { return OUT_FAV_TYPES.has(cat) ? cat : "other"; }
 function outFavGroups(favs, order) {
   const projects = new Map(), ranks = new Map(order.map((key, i) => [key, i]));
-  const types = new Map(CATS.slice(1).concat([["mr", "MR 和流水线"], ["other", "其他产出物"]]));
-  const categories = [...types.keys()];
+  const categories = [...OUT_FAV_TYPES.keys()];
   for (const x of favs) {
-    const project = x.projectKey || "其他", type = types.has(x.cat) ? x.cat : "other";
+    const project = x.projectKey || "其他", type = outFavType(x.cat);
     if (!projects.has(project)) projects.set(project, { key: project, label: x.project || project, count: 0, buckets: new Map() });
     const p = projects.get(project), key = x.topic ? "topic:" + x.topic.id : "cat:" + type;
-    if (!p.buckets.has(key)) p.buckets.set(key, { key, label: x.topic ? "# " + x.topic.name : types.get(type),
+    if (!p.buckets.has(key)) p.buckets.set(key, { key, label: x.topic ? "# " + x.topic.name : OUT_FAV_TYPES.get(type),
       rank: x.topic ? -1 : categories.indexOf(type), items: [] });
     p.buckets.get(key).items.push(x);
     p.count++;
@@ -1830,9 +1841,12 @@ function outFavGroups(favs, order) {
 }
 function outFavFold(key, label, n, sub) {
   const open = outFavOpen.has(key);
-  return '<button type="button" class="ri of-fold ' + (sub ? "of-sub" : "proj") + '" aria-expanded="' + open +
-    '" data-out-fav-fold="' + esc(key) + '" onclick="toggleOutFavFold(this)">' + ico(open ? "down" : "right", 14) +
-    '<span class="nm" title="' + esc(label) + '">' + esc(label) + '</span><span class="n">' + num(n) + '</span></button>';
+  const foldLabel = (open ? "收起" : "展开") + "「" + label + "」";
+  return '<div class="rnav-row' + (sub ? " of-sub" : "") + '"><button type="button" class="rfold" aria-label="' + esc(foldLabel) +
+    '" aria-expanded="' + open + '" data-out-fav-fold="' + esc(key) + '" onclick="toggleOutFavFold(this)">' +
+    ico(open ? "down" : "right", 14) + '</button><button type="button" class="ri of-scope' + (sub ? "" : " proj") +
+    '" data-out-fav-scope="' + esc(key) + '" onclick="goOutFavList(this.dataset.outFavScope)">' +
+    '<span class="nm" title="' + esc(label) + '">' + esc(label) + '</span><span class="n">' + num(n) + "</span></button></div>";
 }
 function outFavRow(x) {
   const id = clip(x);
@@ -2049,8 +2063,16 @@ function outFavMore(el, x) {
     (tab === "favoriteOutputs" ? mi("改分类…", "openOutFavEditor(clips[" + clip(x.key) + "])") : "") +
     mi("取消收藏", "toggleOutFav(clips[" + clip(x) + "])"));
 }
-function goOutFavList() {
-  setTab("favoriteOutputs");
+function goOutFavList(scopeKey) {
+  let filters;
+  if (scopeKey) {
+    const [, project, bucket = ""] = JSON.parse(scopeKey);
+    const type = bucket.startsWith("cat:") ? bucket.slice(4) : "";
+    filters = { project, group: type ? "none" : bucket, type };
+    document.getElementById("out-fav-list-q").value = "";
+    outFavLabel = "";
+  }
+  setTab("favoriteOutputs", filters);
   document.getElementById("favorite-pane").scrollTop = 0;
   window.scrollTo(0, 0);
   document.getElementById("out-fav-list-title").focus({ preventScroll: true });
@@ -2074,23 +2096,42 @@ function setOutFavLabel(key) {
   renderOutFavList();
   document.querySelector('#out-fav-list-labels [aria-pressed="true"]')?.focus();
 }
-function renderOutFavList() {
+function syncOutFavRailSelection() {
+  const project = document.getElementById("out-fav-list-project").value;
+  const group = document.getElementById("out-fav-list-group").value;
+  const type = document.getElementById("out-fav-list-type").value;
+  const bucket = group === "none" ? (type ? "cat:" + type : "") : group;
+  const key = JSON.stringify(bucket ? ["group", project, bucket] : ["project", project]);
+  for (const button of document.querySelectorAll("#out-fav-tree [data-out-fav-scope]")) {
+    button.setAttribute("aria-current", String(button.dataset.outFavScope === key));
+  }
+}
+function renderOutFavList(filters = {}) {
   const q = document.getElementById("out-fav-list-q").value.trim(), words = qWords(q).map(w => w.toLowerCase());
   const project = document.getElementById("out-fav-list-project"), group = document.getElementById("out-fav-list-group");
+  const type = document.getElementById("out-fav-list-type");
   const favs = state?.outFavs || [], projects = outFavGroups(favs, state?.order?.rail || []);
-  fillSelect(project, "全部项目", projects.map(p => [p.key, p.label]));
+  fillSelect(project, "全部项目", projects.map(p => [p.key, p.label]), filters.project);
   const scoped = projects.filter(p => !project.value || p.key === project.value);
-  const groups = new Map(scoped.flatMap(p => p.groups.map(g =>
-    [g.key, !project.value && g.key.startsWith("topic:") ? g.label + " · " + p.label : g.label])));
-  fillSelect(group, "全部主题 / 分类", groups);
+  const groups = new Map(), types = new Set();
+  for (const p of scoped) for (const g of p.groups) {
+    if (g.key.startsWith("topic:")) groups.set(g.key, project.value ? g.label : g.label + " · " + p.label);
+    else groups.set("none", "未归主题");
+    for (const x of g.items) types.add(outFavType(x.cat));
+  }
+  fillSelect(group, "全部主题", groups, filters.group);
+  fillSelect(type, "全部类型", [...OUT_FAV_TYPES].filter(([key]) => types.has(key)), filters.type);
+  syncOutFavRailSelection();
   renderOutFavLabelFilters(favs);
   let n = 0, rows = "";
   for (const p of scoped) for (const g of p.groups) {
-    if (group.value && g.key !== group.value) continue;
+    if (group.value && group.value !== (g.key.startsWith("topic:") ? g.key : "none")) continue;
     for (const x of g.items) {
+      const cat = outFavType(x.cat);
+      if (type.value && cat !== type.value) continue;
       const title = x.railText || x.text || x.name, tags = outFavLabels(x);
       if (outFavLabel && !tags.some(l => l.toLowerCase() === outFavLabel)) continue;
-      const searchText = [title, x.url, x.name, p.label, p.key, g.label, ...tags.map(l => "#" + l)].join(" ").toLowerCase();
+      const searchText = [title, x.url, x.name, p.label, p.key, g.label, OUT_FAV_TYPES.get(cat), ...tags.map(l => "#" + l)].join(" ").toLowerCase();
       if (!words.every(w => searchText.includes(w))) continue;
       const time = x.ts ? when(x.ts) : "";
       const source = x.name && x.name !== title && x.name !== g.label ? '<span class="of-source">' + esc(x.name) + "</span>" : "";
@@ -2104,7 +2145,7 @@ function renderOutFavList() {
       n++;
     }
   }
-  const filtered = !!(q || project.value || group.value || outFavLabel), total = favs.length;
+  const filtered = !!(q || project.value || group.value || type.value || outFavLabel), total = favs.length;
   document.getElementById("out-fav-list-count").textContent = state
     ? (filtered ? "显示 " + num(n) + " / " + num(total) : num(total)) + " 个收藏"
     : failed ? "收藏加载失败，可以刷新重试。" : "正在读取收藏…";
@@ -2116,12 +2157,11 @@ function renderOutFavList() {
   empty.hidden = !state || n > 0;
   empty.textContent = total ? "没有符合当前筛选的收藏。" : "还没有收藏的产出物。点产出物旁的星标就能加到这里。";
 }
-function fillSelect(select, all, choices) {
-  // 筛选下拉框：选项按当前数据重建，之前选的还在就留着
-  const previous = select.value;
+function fillSelect(select, all, choices, selected = select.value) {
+  // 筛选下拉框：选项按当前数据重建，选中的还在就留着
   select.innerHTML = '<option value="">' + all + "</option>" +
     [...choices].map(([key, label]) => '<option value="' + esc(key) + '">' + esc(label) + "</option>").join("");
-  if ([...select.options].some(o => o.value === previous)) select.value = previous;
+  if ([...select.options].some(o => o.value === selected)) select.value = selected;
 }
 function listLabelChips(labels, q, action) {
   if (!labels.length) return "";
@@ -2234,6 +2274,7 @@ function clearOutFavList() {
   q.value = "";
   document.getElementById("out-fav-list-project").value = "";
   document.getElementById("out-fav-list-group").value = "";
+  document.getElementById("out-fav-list-type").value = "";
   outFavLabel = "";
   renderOutFavList();
   q.focus();
@@ -4531,7 +4572,7 @@ let hq = "", hSessions = [], hTotal = 0, hAll = 0, hAllSessions = 0, hSince = ""
 const hFull = {};      // 会话 key -> 这个会话里你说过的全部话、目标
 const hOpen = {};      // 展开的会话
 const hLong = {};      // 展开全文的单条
-function setTab(t) {
+function setTab(t, outFavFilters) {
   if (tab !== t) closeMenu();
   const wasPane = isPane(tab);
   if (t !== "board" && historicTask) {
@@ -4551,7 +4592,7 @@ function setTab(t) {
   history.replaceState(null, "", TAB_HASH[t] || "#");
   if (state && (wasPane || pane)) renderRail();
   if (board) return;
-  if (favorites) { renderOutFavList(); return; }
+  if (favorites) { renderOutFavList(outFavFilters); return; }
   if (sessions) { renderSessList(); return; }
   // 三个标签页共用一个搜索框和同一个词：切过去就按这个词搜那一边
   const q = document.getElementById("q"), out = t === "outputs";
@@ -4903,6 +4944,7 @@ function renderHistory() {
 // ---------------- 产出物：AI 在回复里给你的链接和本机文件，能搜，能跳回给出它的会话
 // 产物一直留着；MR 和流水线是临时的，单独一组，「全部产物」里不算它们
 const CATS = [["all", "全部产物"], ["feishu", "飞书文档"], ["file", "本机文件"], ["web", "网页"], ["code", "代码"]];
+const OUT_FAV_TYPES = new Map([...CATS.slice(1), ["mr", "MR 和流水线"], ["other", "其他产出物"]]);
 let oq = "", oCat = "all", oKey = "", oSessionTitle = "", oItems = [], oTotal = 0, oCounts = {}, oAll = 0, oAllSessions = 0, oWider = 0, oWide = false, oPromptHits = 0, oLoaded = false, oReady = false, oRequest = 0;
 function openOutSessionPicker(el) {
   const all = mi("全部会话", "setOutSession()", !oKey ? ico("check", 14) : "", ' aria-current="' + !oKey + '"');
