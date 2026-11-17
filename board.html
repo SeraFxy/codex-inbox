@@ -20,6 +20,7 @@
   --bk-review: #32B36E; --bk-review-ink: #0B7643; --bk-review-tint: #E7FAEC; --bk-review-soft: #CCF3D8; --bk-review-line: #C0EACD;
   --bk-timer: #F3AB2A; --bk-timer-ink: #955816; --bk-timer-tint: #FFF5DC; --bk-timer-soft: #FFEAB8; --bk-timer-line: #FADDA9;
   --bk-peer: #9867E1; --bk-peer-ink: #7444B4; --bk-peer-tint: #F6F2FF; --bk-peer-soft: #EAE0FF; --bk-peer-line: #E3D7FB;
+  --bk-fav-tint: #DDF2D6;
   --bk-lime: #CCFB5B; --bk-lime-mark: #DBFE7D;
   --bk-mark: #FFE58F;   /* 收藏的消息里你标黄的关键信息，像荧光笔 */
   --bk-logo: #1B2026; --bk-logo-rim: transparent; --bk-load-box: #2F363E; --bk-toast: #1B2026;
@@ -47,6 +48,7 @@
     --bk-review-ink: #71D79D; --bk-review-tint: rgba(50, 179, 110, .14); --bk-review-soft: #1C3D2A; --bk-review-line: rgba(50, 179, 110, .36);
     --bk-timer-ink: #F4C56C; --bk-timer-tint: rgba(243, 171, 42, .14); --bk-timer-soft: #45341A; --bk-timer-line: rgba(243, 171, 42, .36);
     --bk-peer-ink: #C3A5F6; --bk-peer-tint: rgba(152, 103, 225, .16); --bk-peer-soft: #352850; --bk-peer-line: rgba(152, 103, 225, .38);
+    --bk-fav-tint: #243A2D;
     --bk-mark: rgba(250, 204, 21, .32);
     --bk-logo: #2C333B; --bk-logo-rim: rgba(255, 255, 255, .18); --bk-load-box: #1B2026; --bk-toast: #2A3038;
     --bk-e1: 0 1px 2px rgba(0, 0, 0, .3);
@@ -522,8 +524,9 @@ body.hist-on { overflow: hidden; }
 .links .oedit { flex: none; color: var(--bk-ink-3); }
 .links .ostar + .lt { margin-left: 0; }
 .orow .ostm { display: flex; align-items: center; gap: 4px; }
-/* 收藏过的整行高亮：灰底、名字加粗（颜色只表达状态，这里不用彩色）。.links 里左右各伸出 8，文字不跟着挪 */
-.links li.fav { margin: 0 -8px; padding: 4px 8px; border-bottom-color: transparent; border-radius: 8px; background: var(--bk-sunken); }
+/* 详情里收藏过的产出物用浅绿底，底色左右各伸出 8，和其他行的文字对齐 */
+.links li.fav { margin: 0 -8px; padding: 4px 8px; border-bottom-color: transparent; border-radius: 8px; background: var(--bk-fav-tint); }
+.links li.fav :is(.lk, .lt, .oedit) { color: var(--bk-ink-2); }
 .orow.fav { background: var(--bk-sunken); }
 .links li.fav a, .orow.fav .ot { font-weight: 600; }
 .ostar.on:hover { background: var(--bk-line); }
